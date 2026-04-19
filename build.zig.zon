@@ -1,0 +1,23 @@
+.{
+    .name = .kata,
+    .version = "0.1.0",
+    .fingerprint = 0xf590e335ce173336,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .tree_sitter = .{
+            .url = "git+https://github.com/tree-sitter/zig-tree-sitter#b55d4977d61330390fc733944da06106ff972660",
+            .hash = "tree_sitter-0.26.0-8heIf3CaAQB4SSumoGzq3gLSz2rkvXxcKFyskRWqDGBz",
+        },
+        .tree_sitter_typescript = .{
+            .url = "https://github.com/tree-sitter/tree-sitter-typescript/archive/refs/tags/v0.23.2.tar.gz",
+            .hash = "N-V-__8AALhpIQFpocCrfuYTb_Vzvxj3QG0T-yqi9x1QNRNM",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "tools",
+        "rules",
+    },
+}
