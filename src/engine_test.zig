@@ -16,6 +16,18 @@ const no_as_any_rule =
     \\
 ;
 
+const no_weak_assertions_rule =
+    \\((call_expression
+    \\  function: (member_expression
+    \\    object: (call_expression
+    \\      function: (identifier) @expect)
+    \\    property: (property_identifier) @name)) @match
+    \\ (#eq? @expect "expect")
+    \\ (#any-of? @name "toBeDefined" "toBeUndefined" "toBeNull" "toBeTruthy" "toBeFalsy" "toHaveBeenCalled" "toContain")
+    \\ (#set! message "weak assertion - use .toEqual() with explicit values"))
+    \\
+;
+
 const Fixture = struct {
     allocator: std.mem.Allocator,
     registry: language.Registry,
@@ -23,6 +35,15 @@ const Fixture = struct {
     engine: engine_mod.Engine,
 
     fn init(allocator: std.mem.Allocator, langs: []const language.Name) !*Fixture {
+        return initRule(allocator, langs, "no-as-any", no_as_any_rule);
+    }
+
+    fn initRule(
+        allocator: std.mem.Allocator,
+        langs: []const language.Name,
+        id: []const u8,
+        source: []const u8,
+    ) !*Fixture {
         const self = try allocator.create(Fixture);
         self.* = .{
             .allocator = allocator,
@@ -33,9 +54,9 @@ const Fixture = struct {
 
         for (langs) |l| {
             try self.rule_set.append(l, .{
-                .id = try allocator.dupe(u8, "no-as-any"),
+                .id = try allocator.dupe(u8, id),
                 .language = l,
-                .source = try allocator.dupe(u8, no_as_any_rule),
+                .source = try allocator.dupe(u8, source),
             });
         }
 
@@ -157,4 +178,26 @@ test "engine: per-language rule filtering" {
     const tsx_diags = try f.engine.lint(gpa, src, .tsx);
     defer gpa.free(tsx_diags);
     try std.testing.expectEqual(@as(usize, 0), tsx_diags.len);
+}
+
+test "engine: weak assertions only match expect chains" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initRule(gpa, &.{ .ts, .tsx }, "no-weak-assertions", no_weak_assertions_rule);
+    defer f.deinit();
+
+    const src =
+        "expect(value).toBeDefined();\n" ++
+        "console.log(\"foo\");\n" ++
+        "value.toBeDefined();\n";
+
+    const ts_diags = try f.engine.lint(gpa, src, .ts);
+    defer gpa.free(ts_diags);
+    try std.testing.expectEqual(@as(usize, 1), ts_diags.len);
+    try std.testing.expectEqualStrings("no-weak-assertions", ts_diags[0].rule_id);
+    try std.testing.expectEqualStrings("weak assertion - use .toEqual() with explicit values", ts_diags[0].message);
+
+    const tsx_diags = try f.engine.lint(gpa, src, .tsx);
+    defer gpa.free(tsx_diags);
+    try std.testing.expectEqual(@as(usize, 1), tsx_diags.len);
+    try std.testing.expectEqualStrings("tsx", tsx_diags[0].language);
 }
