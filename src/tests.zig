@@ -11,4 +11,5 @@ comptime {
     _ = @import("cli_test.zig");
     _ = @import("protocol_test.zig");
     _ = @import("daemon_test.zig");
+    _ = @import("config_test.zig");
 }

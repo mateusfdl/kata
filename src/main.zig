@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const cli = @import("cli.zig");
+const config = @import("config.zig");
 const engine_mod = @import("engine.zig");
 const language = @import("language.zig");
 const loader_mod = @import("loader.zig");
@@ -31,6 +32,13 @@ pub fn main(init: std.process.Init) !void {
     }) catch |err| die(stderr, "load rules", err);
     defer rule_set.deinit();
 
+    var diag: config.Diagnostic = .{};
+    var cfg_opt = config.loadFromDisk(gpa, io, init.environ_map, &diag) catch |err| dieConfig(stderr, diag, err);
+    if (cfg_opt) |*cfg| {
+        defer cfg.deinit();
+        config.filterDisabled(&rule_set, cfg.*);
+    }
+
     var engine = engine_mod.Engine.init(gpa, &registry, &rule_set);
     defer engine.deinit();
 
@@ -55,6 +63,16 @@ pub fn main(init: std.process.Init) !void {
 
 fn die(stderr: *std.Io.Writer, context: []const u8, err: anyerror) noreturn {
     stderr.print("{s}: {s}\n", .{ context, @errorName(err) }) catch {};
+    stderr.flush() catch {};
+    std.process.exit(cli.exit_internal_error);
+}
+
+fn dieConfig(stderr: *std.Io.Writer, diag: config.Diagnostic, err: anyerror) noreturn {
+    if (diag.line > 0) {
+        stderr.print("kata: rules.yaml: line {d}: {s}\n", .{ diag.line, config.errorMessage(err) }) catch {};
+    } else {
+        stderr.print("kata: rules.yaml: {s}\n", .{@errorName(err)}) catch {};
+    }
     stderr.flush() catch {};
     std.process.exit(cli.exit_internal_error);
 }

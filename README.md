@@ -70,3 +70,33 @@ it after a rebuild. Sending `0` skips the check.
 
 The opencode hook at `harness/opencode/hooks/kata.ts` connects to the socket,
 autostarts the daemon if absent, and restarts it on a `stale` reply.
+
+## Configuration
+
+Builtin rules are all active by default. To disable specific rules, create
+`$XDG_CONFIG_HOME/kata/rules.yaml` (or `$HOME/.config/kata/rules.yaml`):
+
+```yaml
+disabled:
+  - ts/no-console
+  - tsx/no-any
+  - no-comments
+```
+
+Schema:
+
+- One top-level key `disabled:` whose value is a list of rule ids.
+- Scoped form `lang/id` disables that rule in one language.
+- Bare form `id` disables every rule with that id across all languages.
+- `#` starts a comment to end of line. Blank lines are ignored.
+- Indentation is exactly two spaces. Tabs are rejected.
+- Unknown top-level keys are rejected to prevent silent typos.
+
+Errors are reported with a line number and abort startup:
+
+```
+kata: rules.yaml: line 1: unknown top-level key (expected 'disabled')
+```
+
+The daemon reads `rules.yaml` once at startup. Edit the file then `kata stop`
+and relaunch to apply changes.
