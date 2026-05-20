@@ -27,10 +27,15 @@ pub fn main(init: std.process.Init) !void {
     var registry = language.Registry.init();
     defer registry.deinit();
 
+    const user_dir = resolveUserRulesDir(arena, init.environ_map) catch |err| die(stderr, "resolve user rules dir", err);
+
     var rule_set = loader_mod.load(arena, io, .{
         .external_dir = init.environ_map.get("KATA_RULES_DIR"),
+        .user_dir = user_dir,
     }) catch |err| die(stderr, "load rules", err);
     defer rule_set.deinit();
+
+    drainWarnings(stderr, &rule_set);
 
     var diag: config.Diagnostic = .{};
     var cfg_opt = config.loadFromDisk(gpa, io, init.environ_map, &diag) catch |err| dieConfig(stderr, diag, err);
@@ -65,6 +70,25 @@ fn die(stderr: *std.Io.Writer, context: []const u8, err: anyerror) noreturn {
     stderr.print("{s}: {s}\n", .{ context, @errorName(err) }) catch {};
     stderr.flush() catch {};
     std.process.exit(cli.exit_internal_error);
+}
+
+fn resolveUserRulesDir(arena: std.mem.Allocator, environ: *const std.process.Environ.Map) !?[]const u8 {
+    if (environ.get("XDG_CONFIG_HOME")) |xdg| {
+        return try std.fmt.allocPrint(arena, "{s}/kata/rules", .{xdg});
+    }
+    if (environ.get("HOME")) |home| {
+        return try std.fmt.allocPrint(arena, "{s}/.config/kata/rules", .{home});
+    }
+    return null;
+}
+
+fn drainWarnings(stderr: *std.Io.Writer, rule_set: *const loader_mod.RuleSet) void {
+    for (rule_set.warnings.items) |w| {
+        stderr.print("kata: warning: {s} rule {s}/{s} overrides previous definition\n", .{
+            @tagName(w.source), w.lang.toString(), w.id,
+        }) catch return;
+    }
+    stderr.flush() catch {};
 }
 
 fn dieConfig(stderr: *std.Io.Writer, diag: config.Diagnostic, err: anyerror) noreturn {

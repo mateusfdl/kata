@@ -6,20 +6,31 @@ const rule = @import("rule.zig");
 
 const scm_suffix = ".scm";
 
+pub const Source = enum { embedded, external, user };
+
+pub const Warning = struct {
+    source: Source,
+    lang: language.Name,
+    id: []const u8,
+};
+
 pub const Sources = struct {
     external_dir: ?[]const u8 = null,
+    user_dir: ?[]const u8 = null,
     skip_embedded: bool = false,
 };
 
 pub const RuleSet = struct {
     allocator: std.mem.Allocator,
     by_lang: std.EnumArray(language.Name, std.ArrayList(rule.RawRule)) = .initFill(.empty),
+    warnings: std.ArrayList(Warning) = .empty,
 
     pub fn deinit(self: *RuleSet) void {
         var it = self.by_lang.iterator();
         while (it.next()) |entry| {
             entry.value.deinit(self.allocator);
         }
+        self.warnings.deinit(self.allocator);
     }
 
     pub fn get(self: *const RuleSet, name: language.Name) []const rule.RawRule {
@@ -28,6 +39,22 @@ pub const RuleSet = struct {
 
     pub fn append(self: *RuleSet, name: language.Name, r: rule.RawRule) !void {
         try self.by_lang.getPtr(name).append(self.allocator, r);
+    }
+
+    pub fn upsert(self: *RuleSet, name: language.Name, r: rule.RawRule, source: Source) !void {
+        const list = self.by_lang.getPtr(name);
+        for (list.items, 0..) |existing, idx| {
+            if (std.mem.eql(u8, existing.id, r.id)) {
+                list.items[idx] = r;
+                try self.warnings.append(self.allocator, .{
+                    .source = source,
+                    .lang = name,
+                    .id = r.id,
+                });
+                return;
+            }
+        }
+        try list.append(self.allocator, r);
     }
 };
 
@@ -41,6 +68,7 @@ pub fn load(
 
     if (!sources.skip_embedded) try addEmbedded(&set);
     if (sources.external_dir) |dir_path| try addExternal(allocator, io, &set, dir_path);
+    if (sources.user_dir) |dir_path| try addUserDir(allocator, io, &set, dir_path);
 
     return set;
 }
@@ -48,17 +76,17 @@ pub fn load(
 fn addEmbedded(set: *RuleSet) !void {
     if (@hasDecl(embedded_rules, "embedded_ts")) {
         for (embedded_rules.embedded_ts) |entry| {
-            try set.append(.ts, .{ .id = entry.id, .language = .ts, .source = entry.source });
+            try set.upsert(.ts, .{ .id = entry.id, .language = .ts, .source = entry.source }, .embedded);
         }
     }
     if (@hasDecl(embedded_rules, "embedded_tsx")) {
         for (embedded_rules.embedded_tsx) |entry| {
-            try set.append(.tsx, .{ .id = entry.id, .language = .tsx, .source = entry.source });
+            try set.upsert(.tsx, .{ .id = entry.id, .language = .tsx, .source = entry.source }, .embedded);
         }
     }
     if (@hasDecl(embedded_rules, "embedded_go")) {
         for (embedded_rules.embedded_go) |entry| {
-            try set.append(.go, .{ .id = entry.id, .language = .go, .source = entry.source });
+            try set.upsert(.go, .{ .id = entry.id, .language = .go, .source = entry.source }, .embedded);
         }
     }
 }
@@ -71,19 +99,42 @@ fn addExternal(
 ) !void {
     var root = try openRulesRoot(io, dir_path);
     defer root.close(io);
+    try walkLanguages(allocator, io, set, &root, .external);
+}
 
+fn addUserDir(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    set: *RuleSet,
+    dir_path: []const u8,
+) !void {
+    var root = openRulesRoot(io, dir_path) catch |err| switch (err) {
+        error.RulesDirMissing => return,
+        else => return err,
+    };
+    defer root.close(io);
+    try walkLanguages(allocator, io, set, &root, .user);
+}
+
+fn walkLanguages(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    set: *RuleSet,
+    root: *std.Io.Dir,
+    source: Source,
+) !void {
     var root_iter = root.iterate();
     while (try root_iter.next(io)) |entry| {
         if (entry.kind != .directory) continue;
-        try loadLanguageDir(allocator, io, set, &root, entry.name);
+        try loadLanguageDir(allocator, io, set, root, entry.name, source);
     }
 }
 
 fn openRulesRoot(io: std.Io, dir_path: []const u8) !std.Io.Dir {
     const cwd = std.Io.Dir.cwd();
     return cwd.openDir(io, dir_path, .{ .iterate = true }) catch |err| switch (err) {
-        error.FileNotFound => error.ExternalRulesMissing,
-        error.NotDir => error.ExternalRulesNotADirectory,
+        error.FileNotFound => error.RulesDirMissing,
+        error.NotDir => error.RulesDirNotADirectory,
         else => err,
     };
 }
@@ -94,6 +145,7 @@ fn loadLanguageDir(
     set: *RuleSet,
     root: *std.Io.Dir,
     lang_subdir: []const u8,
+    source: Source,
 ) !void {
     const lang_name = language.Name.fromString(lang_subdir) orelse return error.InvalidRule;
 
@@ -104,7 +156,7 @@ fn loadLanguageDir(
     while (try file_iter.next(io)) |fentry| {
         if (fentry.kind != .file) continue;
         if (!std.mem.endsWith(u8, fentry.name, scm_suffix)) continue;
-        try loadRuleFile(allocator, io, set, lang_name, &lang_dir, fentry.name);
+        try loadRuleFile(allocator, io, set, lang_name, &lang_dir, fentry.name, source);
     }
 }
 
@@ -115,6 +167,7 @@ fn loadRuleFile(
     lang_name: language.Name,
     lang_dir: *std.Io.Dir,
     file_name: []const u8,
+    source: Source,
 ) !void {
     const id_raw = stripScmSuffix(file_name);
     if (id_raw.len == 0) return error.InvalidRule;
@@ -122,11 +175,11 @@ fn loadRuleFile(
     const data = try lang_dir.readFileAlloc(io, file_name, allocator, .limited(std.math.maxInt(usize)));
     const id = try allocator.dupe(u8, id_raw);
 
-    try set.append(lang_name, .{
+    try set.upsert(lang_name, .{
         .id = id,
         .language = lang_name,
         .source = data,
-    });
+    }, source);
 }
 
 fn stripScmSuffix(name: []const u8) []const u8 {

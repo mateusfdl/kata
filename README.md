@@ -100,3 +100,21 @@ kata: rules.yaml: line 1: unknown top-level key (expected 'disabled')
 
 The daemon reads `rules.yaml` once at startup. Edit the file then `kata stop`
 and relaunch to apply changes.
+
+### Custom rules
+
+Drop `.scm` files under `$XDG_CONFIG_HOME/kata/rules/<lang>/` (or
+`$HOME/.config/kata/rules/<lang>/`) to add your own rules. The basename of the
+file is the rule id; the layout mirrors the embedded `rules/` tree.
+
+If a user rule shares an id with a builtin (or with a rule from
+`KATA_RULES_DIR`), the user rule wins and kata prints a warning on startup:
+
+```
+kata: warning: user rule ts/no-console overrides previous definition
+```
+
+`KATA_RULES_DIR` is still honored as an additional source. Unlike the
+auto-discovered user dir, an explicit `KATA_RULES_DIR` that points at a
+missing directory is an error. Load order is embedded → `KATA_RULES_DIR` →
+user dir, so the later sources always win.
