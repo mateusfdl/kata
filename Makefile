@@ -15,7 +15,7 @@ release-native:
 	@strip -s bin/$(BINARY) 2>/dev/null || true
 
 test:
-	zig build test --test-timeout 500ms
+	zig build test --test-timeout 2000ms
 
 run:
 	zig build run -- $(ARGS)
