@@ -35,10 +35,10 @@ pub const Predicate = struct {
 pub const PatternMeta = struct {
     predicates: []Predicate,
     message: ?[]const u8,
+    rule_id: []const u8,
 };
 
 pub const CompiledRule = struct {
-    id: []const u8,
     language: language.Name,
     query: *ts.Query,
     patterns: []PatternMeta,
@@ -62,50 +62,58 @@ pub fn compile(
     registry: *language.Registry,
     raws: []const RawRule,
 ) CompileError![]CompiledRule {
-    var out = try allocator.alloc(CompiledRule, raws.len);
-    var built: usize = 0;
-    errdefer {
-        for (out[0..built]) |*r| r.deinit();
-        allocator.free(out);
-    }
+    if (raws.len == 0) return allocator.alloc(CompiledRule, 0);
 
-    for (raws, 0..) |raw, i| {
-        out[i] = try compileOne(allocator, registry, raw);
-        built += 1;
-    }
-
-    return out;
-}
-
-fn compileOne(
-    allocator: std.mem.Allocator,
-    registry: *language.Registry,
-    raw: RawRule,
-) CompileError!CompiledRule {
-    const ts_lang = registry.get(raw.language);
-
-    var error_offset: u32 = 0;
-    const query = ts.Query.create(ts_lang, raw.source, &error_offset) catch
-        return error.RuleCompileFailed;
-    errdefer query.destroy();
+    const ts_lang = registry.get(raws[0].language);
 
     const arena_ptr = try allocator.create(std.heap.ArenaAllocator);
     errdefer allocator.destroy(arena_ptr);
     arena_ptr.* = std.heap.ArenaAllocator.init(allocator);
     errdefer arena_ptr.deinit();
+    const arena = arena_ptr.allocator();
 
-    const match_id = captureIdForName(query, match_capture);
-    const patterns = try buildPatternMeta(arena_ptr.allocator(), query);
+    var source: std.ArrayList(u8) = .empty;
+    for (raws) |raw| {
+        try source.appendSlice(arena, raw.source);
+        try source.append(arena, '\n');
+    }
 
-    return .{
-        .id = raw.id,
-        .language = raw.language,
+    var error_offset: u32 = 0;
+    const query = ts.Query.create(ts_lang, source.items, &error_offset) catch
+        return error.RuleCompileFailed;
+    errdefer query.destroy();
+
+    const total = query.patternCount();
+    const owners = try arena.alloc([]const u8, total);
+    var gp: u32 = 0;
+    for (raws) |raw| {
+        var raw_offset: u32 = 0;
+        const probe = ts.Query.create(ts_lang, raw.source, &raw_offset) catch
+            return error.RuleCompileFailed;
+        const count = probe.patternCount();
+        probe.destroy();
+        var k: u32 = 0;
+        while (k < count) : (k += 1) {
+            if (gp >= total) return error.RuleCompileFailed;
+            owners[gp] = raw.id;
+            gp += 1;
+        }
+    }
+    if (gp != total) return error.RuleCompileFailed;
+
+    const patterns = try buildPatternMeta(arena, query);
+    for (patterns, owners) |*pattern, owner| pattern.rule_id = owner;
+
+    var out = try allocator.alloc(CompiledRule, 1);
+    out[0] = .{
+        .language = raws[0].language,
         .query = query,
         .patterns = patterns,
-        .match_capture_id = match_id,
+        .match_capture_id = captureIdForName(query, match_capture),
         .arena = arena_ptr,
         .allocator = allocator,
     };
+    return out;
 }
 
 fn captureIdForName(query: *ts.Query, name: []const u8) u32 {
@@ -157,6 +165,7 @@ fn parsePattern(
     return .{
         .predicates = try predicates.toOwnedSlice(arena),
         .message = message,
+        .rule_id = "",
     };
 }
 

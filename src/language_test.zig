@@ -4,10 +4,12 @@ const language = @import("language.zig");
 test "Name.fromString / toString round-trip" {
     try std.testing.expectEqual(@as(?language.Name, .ts), language.Name.fromString("ts"));
     try std.testing.expectEqual(@as(?language.Name, .tsx), language.Name.fromString("tsx"));
+    try std.testing.expectEqual(@as(?language.Name, .go), language.Name.fromString("go"));
     try std.testing.expectEqual(@as(?language.Name, null), language.Name.fromString("python"));
 
     try std.testing.expectEqualStrings("ts", language.Name.toString(.ts));
     try std.testing.expectEqualStrings("tsx", language.Name.toString(.tsx));
+    try std.testing.expectEqualStrings("go", language.Name.toString(.go));
 }
 
 test "Registry lazily caches" {
@@ -20,4 +22,7 @@ test "Registry lazily caches" {
 
     const c = r.get(.tsx);
     try std.testing.expect(a != c);
+
+    const d = r.get(.go);
+    try std.testing.expect(c != d);
 }

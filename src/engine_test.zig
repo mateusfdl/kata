@@ -16,6 +16,30 @@ const no_as_any_rule =
     \\
 ;
 
+const blank_identifier_rule =
+    \\((short_var_declaration
+    \\  left: (expression_list (identifier) @blank)) @match
+    \\ (#eq? @blank "_")
+    \\ (#set! message "blank identifier discarding function return - errors must be handled explicitly"))
+    \\
+;
+
+const go_no_console_rule =
+    \\((call_expression
+    \\  function: (identifier) @name) @match
+    \\ (#any-of? @name "print" "println")
+    \\ (#set! message "console output is not allowed - use proper instrumentation"))
+    \\
+    \\((call_expression
+    \\  function: (selector_expression
+    \\    operand: (identifier) @pkg
+    \\    field: (field_identifier) @name)) @match
+    \\ (#any-of? @pkg "fmt" "log")
+    \\ (#any-of? @name "Print" "Printf" "Println")
+    \\ (#set! message "console output is not allowed - use proper instrumentation"))
+    \\
+;
+
 const no_weak_assertions_rule =
     \\((call_expression
     \\  function: (member_expression
@@ -200,4 +224,97 @@ test "engine: weak assertions only match expect chains" {
     defer gpa.free(tsx_diags);
     try std.testing.expectEqual(@as(usize, 1), tsx_diags.len);
     try std.testing.expectEqualStrings("tsx", tsx_diags[0].language);
+}
+
+test "engine: go detects blank identifier short declaration" {
+    const gpa = std.testing.allocator;
+
+    var registry = language.Registry.init();
+    defer registry.deinit();
+
+    var rule_set: loader.RuleSet = .{ .allocator = gpa };
+    defer {
+        var it = rule_set.by_lang.iterator();
+        while (it.next()) |entry| {
+            for (entry.value.items) |r| {
+                gpa.free(r.id);
+                gpa.free(r.source);
+            }
+        }
+        rule_set.deinit();
+    }
+
+    try rule_set.append(.go, .{
+        .id = try gpa.dupe(u8, "no-swallowed-errors"),
+        .language = .go,
+        .source = try gpa.dupe(u8, blank_identifier_rule),
+    });
+
+    var engine = engine_mod.Engine.init(gpa, &registry, &rule_set);
+    defer engine.deinit();
+
+    const src =
+        "package main\n" ++
+        "func f() {\n" ++
+        "    _, err := foo()\n" ++
+        "    _ = err\n" ++
+        "}\n";
+    const diags = try engine.lint(gpa, src, .go);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("no-swallowed-errors", diags[0].rule_id);
+    try std.testing.expectEqualStrings("go", diags[0].language);
+    try std.testing.expectEqualStrings(
+        "blank identifier discarding function return - errors must be handled explicitly",
+        diags[0].message,
+    );
+}
+
+test "engine: go detects console output" {
+    const gpa = std.testing.allocator;
+
+    var registry = language.Registry.init();
+    defer registry.deinit();
+
+    var rule_set: loader.RuleSet = .{ .allocator = gpa };
+    defer {
+        var it = rule_set.by_lang.iterator();
+        while (it.next()) |entry| {
+            for (entry.value.items) |r| {
+                gpa.free(r.id);
+                gpa.free(r.source);
+            }
+        }
+        rule_set.deinit();
+    }
+
+    try rule_set.append(.go, .{
+        .id = try gpa.dupe(u8, "no-console"),
+        .language = .go,
+        .source = try gpa.dupe(u8, go_no_console_rule),
+    });
+
+    var engine = engine_mod.Engine.init(gpa, &registry, &rule_set);
+    defer engine.deinit();
+
+    const src =
+        "package main\n" ++
+        "import (\n" ++
+        "    \"fmt\"\n" ++
+        "    \"log\"\n" ++
+        ")\n" ++
+        "func f() {\n" ++
+        "    print(1)\n" ++
+        "    fmt.Println(2)\n" ++
+        "    log.Printf(\"x\")\n" ++
+        "}\n";
+    const diags = try engine.lint(gpa, src, .go);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 3), diags.len);
+    for (diags) |d| {
+        try std.testing.expectEqualStrings("no-console", d.rule_id);
+        try std.testing.expectEqualStrings("console output is not allowed - use proper instrumentation", d.message);
+    }
 }

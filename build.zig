@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
     });
     const tree_sitter_module = tree_sitter_dep.module("tree_sitter");
     const ts_typescript_dep = b.dependency("tree_sitter_typescript", .{});
+    const ts_go_dep = b.dependency("tree_sitter_go", .{});
 
     const ts_typescript_module = b.createModule(.{
         .target = target,
@@ -56,6 +57,31 @@ pub fn build(b: *std.Build) void {
         .root_module = ts_tsx_module,
     });
 
+    const ts_go_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    ts_go_module.addCSourceFiles(.{
+        .root = ts_go_dep.path("src"),
+        .files = &.{
+            "parser.c",
+        },
+        .flags = &.{
+            "-std=c11",
+            "-Wno-unused-but-set-variable",
+            "-Wno-unused-parameter",
+            "-Wno-unused-variable",
+            "-Wno-unused-function",
+        },
+    });
+    ts_go_module.addIncludePath(ts_go_dep.path("src"));
+    const go_lib = b.addLibrary(.{
+        .name = "ts_go",
+        .linkage = .static,
+        .root_module = ts_go_module,
+    });
+
     const gen_exe = b.addExecutable(.{
         .name = "gen_embedded_rules",
         .root_module = b.createModule(.{
@@ -67,6 +93,7 @@ pub fn build(b: *std.Build) void {
 
     const run_gen = b.addRunArtifact(gen_exe);
     run_gen.addDirectoryArg(b.path("rules"));
+    _ = run_gen.step.addDirectoryWatchInput(b.path("rules")) catch @panic("failed to watch rules directory");
     const embedded_rules_zig = run_gen.addOutputFileArg("embedded_rules.zig");
 
     const exe_module = b.createModule(.{
@@ -82,6 +109,7 @@ pub fn build(b: *std.Build) void {
 
     exe_module.linkLibrary(typescript_lib);
     exe_module.linkLibrary(tsx_lib);
+    exe_module.linkLibrary(go_lib);
     const exe = b.addExecutable(.{
         .name = "kata",
         .root_module = exe_module,
@@ -101,6 +129,7 @@ pub fn build(b: *std.Build) void {
 
     test_module.linkLibrary(typescript_lib);
     test_module.linkLibrary(tsx_lib);
+    test_module.linkLibrary(go_lib);
     const unit_tests = b.addTest(.{
         .root_module = test_module,
     });

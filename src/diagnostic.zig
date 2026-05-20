@@ -17,3 +17,9 @@ pub const Diagnostic = struct {
     message: []const u8,
     range: Range,
 };
+
+pub const Report = struct {
+    language: []const u8,
+    diagnostics: []const Diagnostic,
+    clean: bool,
+};

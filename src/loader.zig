@@ -56,6 +56,11 @@ fn addEmbedded(set: *RuleSet) !void {
             try set.append(.tsx, .{ .id = entry.id, .language = .tsx, .source = entry.source });
         }
     }
+    if (@hasDecl(embedded_rules, "embedded_go")) {
+        for (embedded_rules.embedded_go) |entry| {
+            try set.append(.go, .{ .id = entry.id, .language = .go, .source = entry.source });
+        }
+    }
 }
 
 fn addExternal(

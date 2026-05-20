@@ -4,6 +4,7 @@ const ts = @import("tree_sitter");
 const diagnostic = @import("diagnostic.zig");
 const language = @import("language.zig");
 const loader = @import("loader.zig");
+const matcher = @import("matcher.zig");
 const rule = @import("rule.zig");
 
 const initial_diagnostic_capacity: usize = 16;
@@ -13,6 +14,8 @@ pub const Engine = struct {
     registry: *language.Registry,
     rules: *loader.RuleSet,
     compiled: std.EnumArray(language.Name, ?[]rule.CompiledRule) = .initFill(null),
+    parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
+    cursor: ?*ts.QueryCursor = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -34,6 +37,41 @@ pub const Engine = struct {
                 entry.value.* = null;
             }
         }
+        var pit = self.parsers.iterator();
+        while (pit.next()) |entry| {
+            if (entry.value.*) |parser| {
+                parser.destroy();
+                entry.value.* = null;
+            }
+        }
+        if (self.cursor) |c| {
+            c.destroy();
+            self.cursor = null;
+        }
+    }
+
+    pub fn prewarm(self: *Engine) !void {
+        for (std.enums.values(language.Name)) |lang| {
+            _ = try self.ensureCompiled(lang);
+            _ = try self.ensureParser(lang);
+        }
+        _ = self.ensureCursor();
+    }
+
+    fn ensureCursor(self: *Engine) *ts.QueryCursor {
+        if (self.cursor) |cached| return cached;
+        const cursor = ts.QueryCursor.create();
+        self.cursor = cursor;
+        return cursor;
+    }
+
+    fn ensureParser(self: *Engine, lang: language.Name) !*ts.Parser {
+        if (self.parsers.get(lang)) |cached| return cached;
+        const parser = ts.Parser.create();
+        errdefer parser.destroy();
+        parser.setLanguage(self.registry.get(lang)) catch return error.SetLanguageFailed;
+        self.parsers.set(lang, parser);
+        return parser;
     }
 
     fn ensureCompiled(self: *Engine, lang: language.Name) ![]rule.CompiledRule {
@@ -53,15 +91,14 @@ pub const Engine = struct {
         const rules = try self.ensureCompiled(lang);
         if (rules.len == 0) return allocator.alloc(diagnostic.Diagnostic, 0);
 
-        const ts_lang = self.registry.get(lang);
-        const tree = try parseSource(ts_lang, source);
+        const parser = try self.ensureParser(lang);
+        const tree = parser.parseString(source, null) orelse return error.ParseFailed;
         defer tree.destroy();
 
         var out: std.ArrayList(diagnostic.Diagnostic) = try .initCapacity(allocator, initial_diagnostic_capacity);
         errdefer out.deinit(allocator);
 
-        const cursor = ts.QueryCursor.create();
-        defer cursor.destroy();
+        const cursor = self.ensureCursor();
 
         for (rules) |*r| {
             try runRule(allocator, r, cursor, tree.rootNode(), source, lang, &out);
@@ -70,13 +107,6 @@ pub const Engine = struct {
         return out.toOwnedSlice(allocator);
     }
 };
-
-fn parseSource(ts_lang: *const ts.Language, source: []const u8) !*ts.Tree {
-    const parser = ts.Parser.create();
-    defer parser.destroy();
-    parser.setLanguage(ts_lang) catch return error.SetLanguageFailed;
-    return parser.parseString(source, null) orelse error.ParseFailed;
-}
 
 fn runRule(
     allocator: std.mem.Allocator,
@@ -94,16 +124,17 @@ fn runRule(
 
     while (cursor.nextMatch()) |match| {
         const meta = r.patterns[match.pattern_index];
-        if (!evaluatePredicates(meta.predicates, match, source)) continue;
+        if (!matcher.evaluate(meta.predicates, match, source)) continue;
 
-        const message = meta.message orelse r.id;
-        try emitMatchDiagnostics(allocator, r, match, lang_str, message, out);
+        const message = meta.message orelse meta.rule_id;
+        try emitMatchDiagnostics(allocator, r, meta.rule_id, match, lang_str, message, out);
     }
 }
 
 fn emitMatchDiagnostics(
     allocator: std.mem.Allocator,
     r: *const rule.CompiledRule,
+    rule_id: []const u8,
     match: ts.Query.Match,
     lang_str: []const u8,
     message: []const u8,
@@ -114,7 +145,7 @@ fn emitMatchDiagnostics(
         const sp = cap.node.startPoint();
         const ep = cap.node.endPoint();
         try out.append(allocator, .{
-            .rule_id = r.id,
+            .rule_id = rule_id,
             .language = lang_str,
             .severity = diagnostic.severity_error,
             .message = message,
@@ -124,75 +155,4 @@ fn emitMatchDiagnostics(
             },
         });
     }
-}
-
-fn evaluatePredicates(
-    predicates: []const rule.Predicate,
-    match: ts.Query.Match,
-    source: []const u8,
-) bool {
-    for (predicates) |pred| {
-        switch (pred.op) {
-            .eq => if (!evalEq(pred, match, source, false)) return false,
-            .not_eq => if (!evalEq(pred, match, source, true)) return false,
-            .any_of => if (!evalAnyOf(pred, match, source, false)) return false,
-            .not_any_of => if (!evalAnyOf(pred, match, source, true)) return false,
-            .unknown => {},
-        }
-    }
-    return true;
-}
-
-fn evalEq(
-    pred: rule.Predicate,
-    match: ts.Query.Match,
-    source: []const u8,
-    negate: bool,
-) bool {
-    if (pred.args.len != 2) return false;
-    const left_text = resolveText(pred.args[0], match, source) orelse return false;
-    const right_text = resolveText(pred.args[1], match, source) orelse return false;
-    const eq = std.mem.eql(u8, left_text, right_text);
-    return if (negate) !eq else eq;
-}
-
-fn evalAnyOf(
-    pred: rule.Predicate,
-    match: ts.Query.Match,
-    source: []const u8,
-    negate: bool,
-) bool {
-    if (pred.args.len < 2) return false;
-    const left_text = resolveText(pred.args[0], match, source) orelse return false;
-    for (pred.args[1..]) |arg| {
-        const candidate = resolveText(arg, match, source) orelse continue;
-        if (std.mem.eql(u8, left_text, candidate)) return if (negate) false else true;
-    }
-    return if (negate) true else false;
-}
-
-fn resolveText(
-    operand: rule.PredicateOperand,
-    match: ts.Query.Match,
-    source: []const u8,
-) ?[]const u8 {
-    return switch (operand) {
-        .string => |s| s,
-        .capture => |id| findCaptureText(id, match, source),
-    };
-}
-
-fn findCaptureText(
-    id: u32,
-    match: ts.Query.Match,
-    source: []const u8,
-) ?[]const u8 {
-    for (match.captures) |cap| {
-        if (cap.index != id) continue;
-        const start = cap.node.startByte();
-        const end = cap.node.endByte();
-        if (end > source.len) return null;
-        return source[start..end];
-    }
-    return null;
 }
