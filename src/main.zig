@@ -5,6 +5,7 @@ const config = @import("config.zig");
 const engine_mod = @import("engine.zig");
 const language = @import("language.zig");
 const loader_mod = @import("loader.zig");
+const new_rule = @import("new_rule.zig");
 const stats = @import("stats.zig");
 
 const io_buffer_size: usize = 8192;
@@ -24,10 +25,23 @@ pub fn main(init: std.process.Init) !void {
     var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buf);
     const stderr = &stderr_writer.interface;
 
-    var registry = language.Registry.init();
-    defer registry.deinit();
+    const argv = try init.minimal.args.toSlice(arena);
+    const user_args = if (argv.len > 0) argv[1..] else argv;
 
     const user_dir = resolveUserRulesDir(arena, init.environ_map) catch |err| die(stderr, "resolve user rules dir", err);
+
+    if (user_args.len > 0 and std.mem.eql(u8, user_args[0], "new-rule")) {
+        const code = new_rule.run(gpa, arena, io, .{
+            .args = user_args,
+            .user_rules_dir = user_dir,
+            .stdout = &stdout_writer.interface,
+            .stderr = stderr,
+        }) catch |err| die(stderr, "new-rule", err);
+        std.process.exit(code);
+    }
+
+    var registry = language.Registry.init();
+    defer registry.deinit();
 
     var rule_set = loader_mod.load(arena, io, .{
         .external_dir = init.environ_map.get("KATA_RULES_DIR"),
@@ -46,9 +60,6 @@ pub fn main(init: std.process.Init) !void {
 
     var engine = engine_mod.Engine.init(gpa, &registry, &rule_set);
     defer engine.deinit();
-
-    const argv = try init.minimal.args.toSlice(arena);
-    const user_args = if (argv.len > 0) argv[1..] else argv;
 
     const code = cli.dispatch(.{
         .gpa = gpa,

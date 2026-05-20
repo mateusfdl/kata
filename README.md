@@ -22,6 +22,7 @@ make test             # unit tests
 | `kata` | Start the daemon (foreground). Accepts `--socket=<path>`. |
 | `kata check <path>` | Lint a file or, recursively, a directory. `kata check .` for the whole tree. |
 | `kata stop` | Tell a running daemon to shut down. |
+| `kata new-rule <lang> <id>` | Scaffold a `.scm` template under `$XDG_CONFIG_HOME/kata/rules/<lang>/<id>.scm`. Refuses to overwrite. |
 | `kata --lang=<ts\|tsx\|go> < src` | One-shot: read source on stdin, emit a JSON report. `--filename=<path>` infers the language. |
 
 Exit codes: `0` clean, `2` violations, `64` usage, `70` internal error.
@@ -118,3 +119,12 @@ kata: warning: user rule ts/no-console overrides previous definition
 auto-discovered user dir, an explicit `KATA_RULES_DIR` that points at a
 missing directory is an error. Load order is embedded → `KATA_RULES_DIR` →
 user dir, so the later sources always win.
+
+To bootstrap a new custom rule, use:
+
+```
+kata new-rule ts no-throw-literal
+```
+
+It creates the parent directory if needed, refuses to overwrite an existing
+file, and prints the path of the new `.scm` file ready for editing.

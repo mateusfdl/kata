@@ -13,4 +13,5 @@ comptime {
     _ = @import("daemon_test.zig");
     _ = @import("config_test.zig");
     _ = @import("loader_test.zig");
+    _ = @import("new_rule_test.zig");
 }
