@@ -96,11 +96,14 @@ pub fn build(b: *std.Build) void {
     _ = run_gen.step.addDirectoryWatchInput(b.path("rules")) catch @panic("failed to watch rules directory");
     const embedded_rules_zig = run_gen.addOutputFileArg("embedded_rules.zig");
 
+    const strip = b.option(bool, "strip", "Strip debug info from the executable") orelse false;
+
     const exe_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .strip = strip,
     });
     exe_module.addImport("tree_sitter", tree_sitter_module);
     exe_module.addAnonymousImport("embedded_rules", .{
