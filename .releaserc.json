@@ -1,0 +1,29 @@
+{
+  "branches": ["main"],
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "./scripts/release-build.sh ${nextRelease.version}"
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": ["build.zig.zon"],
+        "message": "chore(release): ${nextRelease.version} [skip ci]"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          { "path": "dist/kata-*.tar.gz", "label": "kata ${nextRelease.gitTag} (POSIX)" },
+          { "path": "dist/kata-*.zip", "label": "kata ${nextRelease.gitTag} (Windows)" }
+        ]
+      }
+    ]
+  ]
+}
