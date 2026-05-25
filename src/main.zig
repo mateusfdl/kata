@@ -6,14 +6,11 @@ const engine_mod = @import("engine.zig");
 const language = @import("language.zig");
 const loader_mod = @import("loader.zig");
 const new_rule = @import("new_rule.zig");
-const stats = @import("stats.zig");
 
 const io_buffer_size: usize = 8192;
 
 pub fn main(init: std.process.Init) !void {
-    const stats_enabled = init.environ_map.get("KATA_STATS") != null;
-    var counting: stats.Counting = .{ .child = init.gpa };
-    const gpa = if (stats_enabled) counting.allocator() else init.gpa;
+    const gpa = init.gpa;
     const arena = init.arena.allocator();
     const io = init.io;
 
@@ -73,7 +70,6 @@ pub fn main(init: std.process.Init) !void {
         .stderr = stderr,
     }) catch |err| die(stderr, "kata", err);
 
-    if (stats_enabled) counting.report(stderr) catch {};
     std.process.exit(code);
 }
 
