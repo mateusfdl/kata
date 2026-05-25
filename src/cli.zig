@@ -168,9 +168,11 @@ pub fn run(
 ) !u8 {
     const parsed = parseFlags(opts.args) catch return try usageError(opts.stderr);
 
-    const lang = switch (try pickLanguage(opts.stderr, parsed)) {
-        .lang => |n| n,
-        .exit => |code| return code,
+    const lang = switch (language.resolve(parsed.lang_flag, parsed.filename)) {
+        .ok => |n| n,
+        .missing => return try printAndExit(opts.stderr, "missing --lang (or provide --filename with a known extension)\n", exit_usage),
+        .unknown_extension => |ext| return try printfAndExit(opts.stderr, "cannot infer language from extension \"{s}\"\n", .{ext}, exit_usage),
+        .unsupported_language => |name| return try printfAndExit(opts.stderr, "lint: unsupported language: \"{s}\"\n", .{name}, exit_internal_error),
     };
 
     const source = opts.stdin.allocRemaining(allocator, .unlimited) catch |err|
@@ -187,6 +189,18 @@ pub fn run(
     return if (diagnostics.len > 0) exit_violations else exit_clean;
 }
 
+fn printAndExit(stderr: *std.Io.Writer, message: []const u8, code: u8) !u8 {
+    try stderr.writeAll(message);
+    try stderr.flush();
+    return code;
+}
+
+fn printfAndExit(stderr: *std.Io.Writer, comptime fmt: []const u8, args: anytype, code: u8) !u8 {
+    try stderr.print(fmt, args);
+    try stderr.flush();
+    return code;
+}
+
 fn usageError(stderr: *std.Io.Writer) !u8 {
     try stderr.writeAll(usage_line);
     try stderr.flush();
@@ -197,32 +211,6 @@ fn internalError(stderr: *std.Io.Writer, context: []const u8, err: anyerror) !u8
     try stderr.print("{s}: {s}\n", .{ context, @errorName(err) });
     try stderr.flush();
     return exit_internal_error;
-}
-
-const LangOrExit = union(enum) {
-    lang: language.Name,
-    exit: u8,
-};
-
-fn pickLanguage(stderr: *std.Io.Writer, parsed: ParsedFlags) !LangOrExit {
-    switch (language.resolve(parsed.lang_flag, parsed.filename)) {
-        .ok => |n| return .{ .lang = n },
-        .missing => {
-            try stderr.writeAll("missing --lang (or provide --filename with a known extension)\n");
-            try stderr.flush();
-            return .{ .exit = exit_usage };
-        },
-        .unknown_extension => |ext| {
-            try stderr.print("cannot infer language from extension \"{s}\"\n", .{ext});
-            try stderr.flush();
-            return .{ .exit = exit_usage };
-        },
-        .unsupported_language => |name| {
-            try stderr.print("lint: unsupported language: \"{s}\"\n", .{name});
-            try stderr.flush();
-            return .{ .exit = exit_internal_error };
-        },
-    }
 }
 
 fn writeReport(

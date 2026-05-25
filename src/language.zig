@@ -89,7 +89,7 @@ pub fn resolve(lang_flag: []const u8, filename: []const u8) Resolution {
 }
 
 fn resolveFromFilename(filename: []const u8) Resolution {
-    const ext = extOf(filename);
+    const ext = std.fs.path.extension(filename);
     if (ext.len == 0) return .{ .unknown_extension = ext };
 
     var buf: [8]u8 = undefined;
@@ -99,14 +99,4 @@ fn resolveFromFilename(filename: []const u8) Resolution {
 
     if (Name.fromExtension(ext_lower)) |n| return .{ .ok = n };
     return .{ .unknown_extension = ext };
-}
-
-fn extOf(path: []const u8) []const u8 {
-    var i: usize = path.len;
-    while (i > 0) : (i -= 1) {
-        const c = path[i - 1];
-        if (c == '/' or c == '\\') return "";
-        if (c == '.') return path[i - 1 ..];
-    }
-    return "";
 }
