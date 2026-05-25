@@ -49,7 +49,6 @@ const Report = struct {
     diagnostics: []const struct {
         rule_id: []const u8,
         language: []const u8,
-        severity: []const u8,
         message: []const u8,
         range: struct {
             start: struct { line: u32, column: u32 },
@@ -95,7 +94,6 @@ test "cli: violation exits 2" {
     try std.testing.expect(!parsed.value.clean);
     try std.testing.expectEqual(@as(usize, 1), parsed.value.diagnostics.len);
     try std.testing.expectEqualStrings("no-as-any", parsed.value.diagnostics[0].rule_id);
-    try std.testing.expectEqualStrings("error", parsed.value.diagnostics[0].severity);
     try std.testing.expectEqualStrings("as any is not allowed", parsed.value.diagnostics[0].message);
 }
 

@@ -147,7 +147,6 @@ fn emitMatchDiagnostics(
         try out.append(allocator, .{
             .rule_id = rule_id,
             .language = lang_str,
-            .severity = diagnostic.severity_error,
             .message = message,
             .range = .{
                 .start = .{ .line = sp.row, .column = sp.column },

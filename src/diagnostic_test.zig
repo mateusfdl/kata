@@ -7,7 +7,6 @@ test "Diagnostic JSON field names compliance" {
     const d: diagnostic.Diagnostic = .{
         .rule_id = "no-as-any",
         .language = "ts",
-        .severity = "error",
         .message = "as any is not allowed",
         .range = .{
             .start = .{ .line = 0, .column = 11 },
@@ -22,7 +21,6 @@ test "Diagnostic JSON field names compliance" {
     const s = out.written();
     try std.testing.expect(std.mem.indexOf(u8, s, "\"rule_id\":\"no-as-any\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, s, "\"language\":\"ts\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, s, "\"severity\":\"error\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, s, "\"message\":\"as any is not allowed\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, s, "\"range\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, s, "\"start\":{\"line\":0,\"column\":11}") != null);

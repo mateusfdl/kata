@@ -53,7 +53,6 @@ test "protocol: response round-trips with a populated report" {
     const diagnostics = [_]diagnostic.Diagnostic{.{
         .rule_id = "no-as-any",
         .language = "ts",
-        .severity = "error",
         .message = "as any is not allowed",
         .range = .{
             .start = .{ .line = 0, .column = 11 },
@@ -90,7 +89,6 @@ test "protocol: response round-trips with a populated report" {
     const d = report.diagnostics[0];
     try std.testing.expectEqualStrings("no-as-any", d.rule_id);
     try std.testing.expectEqualStrings("ts", d.language);
-    try std.testing.expectEqualStrings("error", d.severity);
     try std.testing.expectEqualStrings("as any is not allowed", d.message);
     try std.testing.expectEqual(@as(u32, 0), d.range.start.line);
     try std.testing.expectEqual(@as(u32, 11), d.range.start.column);

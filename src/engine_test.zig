@@ -68,7 +68,6 @@ test "engine: detects `as any`" {
     const d = diags[0];
     try std.testing.expectEqualStrings("no-as-any", d.rule_id);
     try std.testing.expectEqualStrings("ts", d.language);
-    try std.testing.expectEqualStrings("error", d.severity);
     try std.testing.expectEqualStrings("as any is not allowed", d.message);
     try std.testing.expectEqual(@as(u32, 0), d.range.start.line);
     try std.testing.expectEqual(@as(u32, 11), d.range.start.column);
