@@ -15,6 +15,10 @@ pub const no_as_any_rule =
     \\
 ;
 
+pub fn relativeTmpPath(buf: []u8, sub_path: []const u8) ![]u8 {
+    return std.fmt.bufPrint(buf, ".zig-cache/tmp/{s}", .{sub_path});
+}
+
 pub const Fixture = struct {
     allocator: std.mem.Allocator,
     registry: language.Registry,

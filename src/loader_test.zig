@@ -3,6 +3,7 @@ const std = @import("std");
 const language = @import("language.zig");
 const loader = @import("loader.zig");
 const rule = @import("rule.zig");
+const test_fixture = @import("test_fixture.zig");
 
 test "upsert: first insertion appends without warning" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
@@ -62,9 +63,7 @@ test "upsert: different ids in same language coexist" {
     try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
 }
 
-fn relativeTmpPath(buf: []u8, sub_path: []const u8) ![]u8 {
-    return std.fmt.bufPrint(buf, ".zig-cache/tmp/{s}", .{sub_path});
-}
+const relativeTmpPath = test_fixture.relativeTmpPath;
 
 test "load: user_dir reads scm files into the right language slot" {
     var tmp = std.testing.tmpDir(.{});

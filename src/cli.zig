@@ -46,7 +46,12 @@ pub fn dispatch(c: Command) !u8 {
         .daemon => runDaemon(c),
         .check => |target| runCheck(c, target),
         .stop => runStop(c),
-        .one_shot => runOneShot(c),
+        .one_shot => run(c.gpa, c.engine, .{
+            .args = c.args,
+            .stdin = c.stdin,
+            .stdout = c.stdout,
+            .stderr = c.stderr,
+        }),
         .unknown => |cmd| runUnknown(c, cmd),
     };
 }
@@ -56,15 +61,6 @@ fn runUnknown(c: Command, cmd: []const u8) !u8 {
     try c.stderr.writeAll("usage: kata [check <path> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
     try c.stderr.flush();
     return exit_usage;
-}
-
-fn runOneShot(c: Command) !u8 {
-    return run(c.gpa, c.engine, .{
-        .args = c.args,
-        .stdin = c.stdin,
-        .stdout = c.stdout,
-        .stderr = c.stderr,
-    });
 }
 
 fn runDaemon(c: Command) !u8 {

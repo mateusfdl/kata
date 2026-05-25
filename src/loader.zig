@@ -74,19 +74,12 @@ pub fn load(
 }
 
 fn addEmbedded(set: *RuleSet) !void {
-    if (@hasDecl(embedded_rules, "embedded_ts")) {
-        for (embedded_rules.embedded_ts) |entry| {
-            try set.upsert(.ts, .{ .id = entry.id, .language = .ts, .source = entry.source }, .embedded);
-        }
-    }
-    if (@hasDecl(embedded_rules, "embedded_tsx")) {
-        for (embedded_rules.embedded_tsx) |entry| {
-            try set.upsert(.tsx, .{ .id = entry.id, .language = .tsx, .source = entry.source }, .embedded);
-        }
-    }
-    if (@hasDecl(embedded_rules, "embedded_go")) {
-        for (embedded_rules.embedded_go) |entry| {
-            try set.upsert(.go, .{ .id = entry.id, .language = .go, .source = entry.source }, .embedded);
+    inline for (std.enums.values(language.Name)) |lang| {
+        const field_name = "embedded_" ++ @tagName(lang);
+        if (@hasDecl(embedded_rules, field_name)) {
+            for (@field(embedded_rules, field_name)) |entry| {
+                try set.upsert(lang, .{ .id = entry.id, .language = lang, .source = entry.source }, .embedded);
+            }
         }
     }
 }
