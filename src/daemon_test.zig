@@ -1,73 +1,28 @@
 const std = @import("std");
 
 const daemon = @import("daemon.zig");
-const engine_mod = @import("engine.zig");
-const language = @import("language.zig");
-const loader = @import("loader.zig");
 const protocol = @import("protocol.zig");
+const test_fixture = @import("test_fixture.zig");
 const test_frame = @import("test_frame.zig");
-
-const no_as_any_rule =
-    \\((as_expression (predefined_type) @t) @match
-    \\ (#eq? @t "any")
-    \\ (#set! message "as any is not allowed"))
-    \\
-;
 
 const daemon_mtime: i64 = 1726000000000;
 
-const Fixture = struct {
-    allocator: std.mem.Allocator,
-    registry: language.Registry,
-    rule_set: loader.RuleSet,
-    engine: engine_mod.Engine,
+fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
+    return test_fixture.Fixture.init(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule);
+}
 
-    fn init(allocator: std.mem.Allocator) !*Fixture {
-        const self = try allocator.create(Fixture);
-        self.* = .{
-            .allocator = allocator,
-            .registry = .init(),
-            .rule_set = .{ .allocator = allocator },
-            .engine = undefined,
-        };
-        for (&[_]language.Name{ .ts, .tsx }) |l| {
-            try self.rule_set.append(l, .{
-                .id = try allocator.dupe(u8, "no-as-any"),
-                .language = l,
-                .source = try allocator.dupe(u8, no_as_any_rule),
-            });
-        }
-        self.engine = engine_mod.Engine.init(allocator, &self.registry, &self.rule_set);
-        return self;
-    }
-
-    fn deinit(self: *Fixture) void {
-        self.engine.deinit();
-        var it = self.rule_set.by_lang.iterator();
-        while (it.next()) |entry| {
-            for (entry.value.items) |r| {
-                self.allocator.free(r.id);
-                self.allocator.free(r.source);
-            }
-        }
-        self.rule_set.deinit();
-        self.registry.deinit();
-        self.allocator.destroy(self);
-    }
-
-    fn context(self: *Fixture) daemon.Context {
-        return .{ .engine = &self.engine, .binary_mtime = daemon_mtime };
-    }
-};
+fn context(f: *test_fixture.Fixture) daemon.Context {
+    return .{ .engine = &f.engine, .binary_mtime = daemon_mtime };
+}
 
 test "daemon: clean source replies ok with an empty report" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
-    const resp = daemon.handle(f.context(), arena.allocator(), .{
+    const resp = daemon.handle(context(f), arena.allocator(), .{
         .binary_mtime = daemon_mtime,
         .language = "ts",
         .source = "const x: string = \"ok\";",
@@ -86,10 +41,10 @@ test "daemon: violation replies ok with a populated report" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
-    const resp = daemon.handle(f.context(), arena.allocator(), .{
+    const resp = daemon.handle(context(f), arena.allocator(), .{
         .binary_mtime = daemon_mtime,
         .language = "ts",
         .source = "const x = (foo[0] as any).bar;",
@@ -116,10 +71,10 @@ test "daemon: a mismatched binary mtime replies stale without linting" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
-    const resp = daemon.handle(f.context(), arena.allocator(), .{
+    const resp = daemon.handle(context(f), arena.allocator(), .{
         .binary_mtime = daemon_mtime + 1,
         .language = "ts",
         .source = "const x = foo as any;",
@@ -135,10 +90,10 @@ test "daemon: a zero binary mtime skips the stale check" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
-    const resp = daemon.handle(f.context(), arena.allocator(), .{
+    const resp = daemon.handle(context(f), arena.allocator(), .{
         .binary_mtime = 0,
         .language = "ts",
         .source = "const x = foo as any;",
@@ -152,10 +107,10 @@ test "daemon: a missing source replies fail" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
-    const resp = daemon.handle(f.context(), arena.allocator(), .{
+    const resp = daemon.handle(context(f), arena.allocator(), .{
         .binary_mtime = daemon_mtime,
         .language = "ts",
     });
@@ -168,10 +123,10 @@ test "daemon: an unsupported language replies fail" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
-    const resp = daemon.handle(f.context(), arena.allocator(), .{
+    const resp = daemon.handle(context(f), arena.allocator(), .{
         .binary_mtime = daemon_mtime,
         .language = "python",
         .source = "print('hi')",
@@ -183,7 +138,7 @@ test "daemon: an unsupported language replies fail" {
 
 test "daemon: processConnection frames a lint response and keeps serving" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
     const request_bytes = try test_frame.frame(gpa, protocol.Request{
@@ -197,7 +152,7 @@ test "daemon: processConnection frames a lint response and keeps serving" {
     var response_buf: std.Io.Writer.Allocating = .init(gpa);
     defer response_buf.deinit();
 
-    const stop = daemon.processConnection(gpa, f.context(), &reader, &response_buf.writer);
+    const stop = daemon.processConnection(gpa, context(f), &reader, &response_buf.writer);
     try std.testing.expect(!stop);
 
     var response_reader: std.Io.Reader = .fixed(response_buf.written());
@@ -215,7 +170,7 @@ test "daemon: processConnection frames a lint response and keeps serving" {
 
 test "daemon: processConnection stops on a shutdown request" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
     const request_bytes = try test_frame.frame(gpa, protocol.Request{
@@ -228,7 +183,7 @@ test "daemon: processConnection stops on a shutdown request" {
     var response_buf: std.Io.Writer.Allocating = .init(gpa);
     defer response_buf.deinit();
 
-    const stop = daemon.processConnection(gpa, f.context(), &reader, &response_buf.writer);
+    const stop = daemon.processConnection(gpa, context(f), &reader, &response_buf.writer);
     try std.testing.expect(stop);
 
     var response_reader: std.Io.Reader = .fixed(response_buf.written());
@@ -242,14 +197,14 @@ test "daemon: processConnection stops on a shutdown request" {
 
 test "daemon: processConnection replies fail on a malformed frame" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
     var reader: std.Io.Reader = .fixed("Content-Length: 9\r\n\r\n{not json");
     var response_buf: std.Io.Writer.Allocating = .init(gpa);
     defer response_buf.deinit();
 
-    const stop = daemon.processConnection(gpa, f.context(), &reader, &response_buf.writer);
+    const stop = daemon.processConnection(gpa, context(f), &reader, &response_buf.writer);
     try std.testing.expect(!stop);
 
     var response_reader: std.Io.Reader = .fixed(response_buf.written());
@@ -264,10 +219,10 @@ test "daemon: language is inferred from the filename" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
-    const resp = daemon.handle(f.context(), arena.allocator(), .{
+    const resp = daemon.handle(context(f), arena.allocator(), .{
         .binary_mtime = daemon_mtime,
         .filename = "/tmp/component.tsx",
         .source = "const C = () => <div>{(props as any).label}</div>;",

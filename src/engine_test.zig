@@ -1,9 +1,6 @@
 const std = @import("std");
-const diagnostic = @import("diagnostic.zig");
-const engine_mod = @import("engine.zig");
 const language = @import("language.zig");
-const loader = @import("loader.zig");
-const rule = @import("rule.zig");
+const test_fixture = @import("test_fixture.zig");
 
 const no_as_any_rule =
     \\((as_expression (predefined_type) @t) @match
@@ -52,60 +49,15 @@ const no_weak_assertions_rule =
     \\
 ;
 
-const Fixture = struct {
-    allocator: std.mem.Allocator,
-    registry: language.Registry,
-    rule_set: loader.RuleSet,
-    engine: engine_mod.Engine,
+const Fixture = test_fixture.Fixture;
 
-    fn init(allocator: std.mem.Allocator, langs: []const language.Name) !*Fixture {
-        return initRule(allocator, langs, "no-as-any", no_as_any_rule);
-    }
-
-    fn initRule(
-        allocator: std.mem.Allocator,
-        langs: []const language.Name,
-        id: []const u8,
-        source: []const u8,
-    ) !*Fixture {
-        const self = try allocator.create(Fixture);
-        self.* = .{
-            .allocator = allocator,
-            .registry = .init(),
-            .rule_set = .{ .allocator = allocator },
-            .engine = undefined,
-        };
-
-        for (langs) |l| {
-            try self.rule_set.append(l, .{
-                .id = try allocator.dupe(u8, id),
-                .language = l,
-                .source = try allocator.dupe(u8, source),
-            });
-        }
-
-        self.engine = engine_mod.Engine.init(allocator, &self.registry, &self.rule_set);
-        return self;
-    }
-
-    fn deinit(self: *Fixture) void {
-        self.engine.deinit();
-        var it = self.rule_set.by_lang.iterator();
-        while (it.next()) |entry| {
-            for (entry.value.items) |r| {
-                self.allocator.free(r.id);
-                self.allocator.free(r.source);
-            }
-        }
-        self.rule_set.deinit();
-        self.registry.deinit();
-        self.allocator.destroy(self);
-    }
-};
+fn newFixture(allocator: std.mem.Allocator, langs: []const language.Name) !*Fixture {
+    return Fixture.init(allocator, langs, "no-as-any", no_as_any_rule);
+}
 
 test "engine: detects `as any`" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts});
+    var f = try newFixture(gpa, &.{.ts});
     defer f.deinit();
 
     const src = "const x = (foo[0] as any).bar;";
@@ -126,7 +78,7 @@ test "engine: detects `as any`" {
 
 test "engine: detects `as any[]`" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts});
+    var f = try newFixture(gpa, &.{.ts});
     defer f.deinit();
 
     const src = "const x = foo as any[];";
@@ -139,7 +91,7 @@ test "engine: detects `as any[]`" {
 
 test "engine: clean sources produce no diagnostics" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts});
+    var f = try newFixture(gpa, &.{.ts});
     defer f.deinit();
 
     const cases = [_][]const u8{
@@ -162,7 +114,7 @@ test "engine: clean sources produce no diagnostics" {
 
 test "engine: tsx detects `as any`" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.tsx});
+    var f = try newFixture(gpa, &.{.tsx});
     defer f.deinit();
 
     const src = "const Comp = () => <div>{(props as any).label}</div>;";
@@ -175,7 +127,7 @@ test "engine: tsx detects `as any`" {
 
 test "engine: multiple violations across lines" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts});
+    var f = try newFixture(gpa, &.{.ts});
     defer f.deinit();
 
     const src = "const a = x as any;\nconst b = y as any;\n";
@@ -189,8 +141,7 @@ test "engine: multiple violations across lines" {
 
 test "engine: per-language rule filtering" {
     const gpa = std.testing.allocator;
-    // Rules only registered for .ts; .tsx bundle empty.
-    var f = try Fixture.init(gpa, &.{.ts});
+    var f = try newFixture(gpa, &.{.ts});
     defer f.deinit();
 
     const src = "const x = foo as any;";
@@ -206,7 +157,7 @@ test "engine: per-language rule filtering" {
 
 test "engine: weak assertions only match expect chains" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initRule(gpa, &.{ .ts, .tsx }, "no-weak-assertions", no_weak_assertions_rule);
+    var f = try Fixture.init(gpa, &.{ .ts, .tsx }, "no-weak-assertions", no_weak_assertions_rule);
     defer f.deinit();
 
     const src =
@@ -228,30 +179,8 @@ test "engine: weak assertions only match expect chains" {
 
 test "engine: go detects blank identifier short declaration" {
     const gpa = std.testing.allocator;
-
-    var registry = language.Registry.init();
-    defer registry.deinit();
-
-    var rule_set: loader.RuleSet = .{ .allocator = gpa };
-    defer {
-        var it = rule_set.by_lang.iterator();
-        while (it.next()) |entry| {
-            for (entry.value.items) |r| {
-                gpa.free(r.id);
-                gpa.free(r.source);
-            }
-        }
-        rule_set.deinit();
-    }
-
-    try rule_set.append(.go, .{
-        .id = try gpa.dupe(u8, "no-swallowed-errors"),
-        .language = .go,
-        .source = try gpa.dupe(u8, blank_identifier_rule),
-    });
-
-    var engine = engine_mod.Engine.init(gpa, &registry, &rule_set);
-    defer engine.deinit();
+    var f = try Fixture.init(gpa, &.{.go}, "no-swallowed-errors", blank_identifier_rule);
+    defer f.deinit();
 
     const src =
         "package main\n" ++
@@ -259,7 +188,7 @@ test "engine: go detects blank identifier short declaration" {
         "    _, err := foo()\n" ++
         "    _ = err\n" ++
         "}\n";
-    const diags = try engine.lint(gpa, src, .go);
+    const diags = try f.engine.lint(gpa, src, .go);
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
@@ -273,30 +202,8 @@ test "engine: go detects blank identifier short declaration" {
 
 test "engine: go detects console output" {
     const gpa = std.testing.allocator;
-
-    var registry = language.Registry.init();
-    defer registry.deinit();
-
-    var rule_set: loader.RuleSet = .{ .allocator = gpa };
-    defer {
-        var it = rule_set.by_lang.iterator();
-        while (it.next()) |entry| {
-            for (entry.value.items) |r| {
-                gpa.free(r.id);
-                gpa.free(r.source);
-            }
-        }
-        rule_set.deinit();
-    }
-
-    try rule_set.append(.go, .{
-        .id = try gpa.dupe(u8, "no-console"),
-        .language = .go,
-        .source = try gpa.dupe(u8, go_no_console_rule),
-    });
-
-    var engine = engine_mod.Engine.init(gpa, &registry, &rule_set);
-    defer engine.deinit();
+    var f = try Fixture.init(gpa, &.{.go}, "no-console", go_no_console_rule);
+    defer f.deinit();
 
     const src =
         "package main\n" ++
@@ -309,7 +216,7 @@ test "engine: go detects console output" {
         "    fmt.Println(2)\n" ++
         "    log.Printf(\"x\")\n" ++
         "}\n";
-    const diags = try engine.lint(gpa, src, .go);
+    const diags = try f.engine.lint(gpa, src, .go);
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 3), diags.len);

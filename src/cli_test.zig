@@ -1,55 +1,11 @@
 const std = @import("std");
 const cli = @import("cli.zig");
 const engine_mod = @import("engine.zig");
-const language = @import("language.zig");
-const loader = @import("loader.zig");
+const test_fixture = @import("test_fixture.zig");
 
-const no_as_any_rule =
-    \\((as_expression (predefined_type) @t) @match
-    \\ (#eq? @t "any")
-    \\ (#set! message "as any is not allowed"))
-    \\
-;
-
-const Fixture = struct {
-    allocator: std.mem.Allocator,
-    registry: language.Registry,
-    rule_set: loader.RuleSet,
-    engine: engine_mod.Engine,
-
-    fn init(allocator: std.mem.Allocator) !*Fixture {
-        const self = try allocator.create(Fixture);
-        self.* = .{
-            .allocator = allocator,
-            .registry = .init(),
-            .rule_set = .{ .allocator = allocator },
-            .engine = undefined,
-        };
-        for (&[_]language.Name{ .ts, .tsx }) |l| {
-            try self.rule_set.append(l, .{
-                .id = try allocator.dupe(u8, "no-as-any"),
-                .language = l,
-                .source = try allocator.dupe(u8, no_as_any_rule),
-            });
-        }
-        self.engine = engine_mod.Engine.init(allocator, &self.registry, &self.rule_set);
-        return self;
-    }
-
-    fn deinit(self: *Fixture) void {
-        self.engine.deinit();
-        var it = self.rule_set.by_lang.iterator();
-        while (it.next()) |entry| {
-            for (entry.value.items) |r| {
-                self.allocator.free(r.id);
-                self.allocator.free(r.source);
-            }
-        }
-        self.rule_set.deinit();
-        self.registry.deinit();
-        self.allocator.destroy(self);
-    }
-};
+fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
+    return test_fixture.Fixture.init(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule);
+}
 
 const RunResult = struct {
     code: u8,
@@ -105,7 +61,7 @@ const Report = struct {
 
 test "cli: clean source exits 0" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
     const args: []const [:0]const u8 = &.{"--lang=ts"};
@@ -124,7 +80,7 @@ test "cli: clean source exits 0" {
 
 test "cli: violation exits 2" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
     const args: []const [:0]const u8 = &.{"--lang=ts"};
@@ -145,7 +101,7 @@ test "cli: violation exits 2" {
 
 test "cli: --filename infers language" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
     const args: []const [:0]const u8 = &.{"--filename=/tmp/foo.tsx"};
@@ -161,7 +117,7 @@ test "cli: --filename infers language" {
 
 test "cli: missing --lang exits usage (64)" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
     const args: []const [:0]const u8 = &.{};
@@ -174,7 +130,7 @@ test "cli: missing --lang exits usage (64)" {
 
 test "cli: unsupported --lang exits internal (70)" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
     const args: []const [:0]const u8 = &.{"--lang=python"};
@@ -187,7 +143,7 @@ test "cli: unsupported --lang exits internal (70)" {
 
 test "cli: unknown extension exits usage (64)" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa);
+    var f = try newFixture(gpa);
     defer f.deinit();
 
     const args: []const [:0]const u8 = &.{"--filename=foo.rs"};
