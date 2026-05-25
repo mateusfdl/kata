@@ -84,13 +84,8 @@ fn die(stderr: *std.Io.Writer, context: []const u8, err: anyerror) noreturn {
 }
 
 fn resolveUserRulesDir(arena: std.mem.Allocator, environ: *const std.process.Environ.Map) !?[]const u8 {
-    if (environ.get("XDG_CONFIG_HOME")) |xdg| {
-        return try std.fmt.allocPrint(arena, "{s}/kata/rules", .{xdg});
-    }
-    if (environ.get("HOME")) |home| {
-        return try std.fmt.allocPrint(arena, "{s}/.config/kata/rules", .{home});
-    }
-    return null;
+    const base = (try config.resolveConfigBase(arena, environ)) orelse return null;
+    return try std.fmt.allocPrint(arena, "{s}/rules", .{base});
 }
 
 fn drainWarnings(stderr: *std.Io.Writer, rule_set: *const loader_mod.RuleSet) void {

@@ -155,29 +155,32 @@ fn leadingSpaces(s: []const u8) usize {
     return n;
 }
 
+pub fn resolveConfigBase(
+    arena: std.mem.Allocator,
+    environ: *const std.process.Environ.Map,
+) !?[]const u8 {
+    if (environ.get("XDG_CONFIG_HOME")) |xdg|
+        return try std.fmt.allocPrint(arena, "{s}/kata", .{xdg});
+    if (environ.get("HOME")) |home|
+        return try std.fmt.allocPrint(arena, "{s}/.config/kata", .{home});
+    return null;
+}
+
 pub fn loadFromDisk(
     gpa: std.mem.Allocator,
     io: std.Io,
     environ: *const std.process.Environ.Map,
     diag: *Diagnostic,
 ) !?Config {
-    if (environ.get("XDG_CONFIG_HOME")) |xdg| {
-        const path = try std.fmt.allocPrint(gpa, "{s}/kata/rules.yaml", .{xdg});
-        defer gpa.free(path);
-        if (try tryReadFile(gpa, io, path)) |source| {
-            defer gpa.free(source);
-            return try parse(gpa, source, diag);
-        }
-    }
-    if (environ.get("HOME")) |home| {
-        const path = try std.fmt.allocPrint(gpa, "{s}/.config/kata/rules.yaml", .{home});
-        defer gpa.free(path);
-        if (try tryReadFile(gpa, io, path)) |source| {
-            defer gpa.free(source);
-            return try parse(gpa, source, diag);
-        }
-    }
-    return null;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const base = (try resolveConfigBase(arena_state.allocator(), environ)) orelse return null;
+
+    const path = try std.fmt.allocPrint(gpa, "{s}/rules.yaml", .{base});
+    defer gpa.free(path);
+    const source = (try tryReadFile(gpa, io, path)) orelse return null;
+    defer gpa.free(source);
+    return try parse(gpa, source, diag);
 }
 
 fn tryReadFile(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !?[]u8 {
