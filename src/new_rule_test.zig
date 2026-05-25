@@ -27,7 +27,7 @@ fn runOnce(
     var stderr_buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
     errdefer stderr_buf.deinit();
 
-    const code = try new_rule.run(std.testing.allocator, arena, std.testing.io, .{
+    const code = try new_rule.run(arena, std.testing.io, .{
         .args = args,
         .user_rules_dir = user_rules_dir,
         .stdout = &stdout_buf.writer,

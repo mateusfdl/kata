@@ -1,10 +1,11 @@
 const std = @import("std");
 
+const cli = @import("cli.zig");
 const language = @import("language.zig");
 
-pub const exit_clean: u8 = 0;
-pub const exit_usage: u8 = 64;
-pub const exit_internal_error: u8 = 70;
+pub const exit_clean = cli.exit_clean;
+pub const exit_usage = cli.exit_usage;
+pub const exit_internal_error = cli.exit_internal_error;
 
 pub const Error = std.mem.Allocator.Error || std.Io.Writer.Error;
 
@@ -16,13 +17,10 @@ pub const Options = struct {
 };
 
 pub fn run(
-    gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     io: std.Io,
     opts: Options,
 ) Error!u8 {
-    _ = gpa;
-
     if (opts.args.len != 3) {
         try opts.stderr.writeAll("usage: kata new-rule <ts|tsx|go> <rule-id>\n");
         try opts.stderr.flush();

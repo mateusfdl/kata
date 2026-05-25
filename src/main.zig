@@ -31,7 +31,7 @@ pub fn main(init: std.process.Init) !void {
     const user_dir = resolveUserRulesDir(arena, init.environ_map) catch |err| die(stderr, "resolve user rules dir", err);
 
     if (user_args.len > 0 and std.mem.eql(u8, user_args[0], "new-rule")) {
-        const code = new_rule.run(gpa, arena, io, .{
+        const code = new_rule.run(arena, io, .{
             .args = user_args,
             .user_rules_dir = user_dir,
             .stdout = &stdout_writer.interface,
