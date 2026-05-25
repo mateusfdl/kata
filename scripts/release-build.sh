@@ -10,7 +10,6 @@ TARGETS=(
   aarch64-linux-musl
   x86_64-macos
   aarch64-macos
-  x86_64-windows
 )
 
 sed -i.bak -E "s/(\.version = \")[^\"]+(\")/\1${VERSION}\2/" build.zig.zon
@@ -28,14 +27,7 @@ for target in "${TARGETS[@]}"; do
   mkdir -p "dist/$stage"
   cp "$out/bin/"kata* "dist/$stage/"
 
-  case "$target" in
-    *windows*)
-      (cd dist && zip -qr "${stage}.zip" "$stage")
-      ;;
-    *)
-      tar -C dist -czf "dist/${stage}.tar.gz" "$stage"
-      ;;
-  esac
+  tar -C dist -czf "dist/${stage}.tar.gz" "$stage"
 
   rm -rf "dist/$stage" "$out"
 done

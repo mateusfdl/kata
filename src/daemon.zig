@@ -11,7 +11,9 @@ pub const Context = struct {
 };
 
 pub fn binaryMtime(io: std.Io) !i64 {
-    const stat = try std.Io.Dir.cwd().statFile(io, "/proc/self/exe", .{});
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try std.process.executablePath(io, &buf);
+    const stat = try std.Io.Dir.cwd().statFile(io, buf[0..n], .{});
     return stat.mtime.toMilliseconds();
 }
 
