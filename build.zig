@@ -11,75 +11,26 @@ pub fn build(b: *std.Build) void {
     const ts_typescript_dep = b.dependency("tree_sitter_typescript", .{});
     const ts_go_dep = b.dependency("tree_sitter_go", .{});
 
-    const ts_typescript_module = b.createModule(.{
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    ts_typescript_module.addCSourceFiles(.{
-        .root = ts_typescript_dep.path("typescript/src"),
-        .files = &.{ "parser.c", "scanner.c" },
-        .flags = &.{
-            "-std=c11",
-            "-Wno-unused-but-set-variable",
-            "-Wno-unused-parameter",
-            "-Wno-unused-variable",
-            "-Wno-unused-function",
-        },
-    });
-    ts_typescript_module.addIncludePath(ts_typescript_dep.path("typescript/src"));
-    const typescript_lib = b.addLibrary(.{
+    const typescript_lib = addTreeSitterLib(b, .{
         .name = "ts_typescript",
-        .linkage = .static,
-        .root_module = ts_typescript_module,
-    });
-
-    const ts_tsx_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
-    });
-    ts_tsx_module.addCSourceFiles(.{
-        .root = ts_typescript_dep.path("tsx/src"),
+        .src_root = ts_typescript_dep.path("typescript/src"),
         .files = &.{ "parser.c", "scanner.c" },
-        .flags = &.{
-            "-std=c11",
-            "-Wno-unused-but-set-variable",
-            "-Wno-unused-parameter",
-            "-Wno-unused-variable",
-            "-Wno-unused-function",
-        },
     });
-    ts_tsx_module.addIncludePath(ts_typescript_dep.path("tsx/src"));
-    const tsx_lib = b.addLibrary(.{
+    const tsx_lib = addTreeSitterLib(b, .{
         .name = "ts_tsx",
-        .linkage = .static,
-        .root_module = ts_tsx_module,
-    });
-
-    const ts_go_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
+        .src_root = ts_typescript_dep.path("tsx/src"),
+        .files = &.{ "parser.c", "scanner.c" },
     });
-    ts_go_module.addCSourceFiles(.{
-        .root = ts_go_dep.path("src"),
-        .files = &.{
-            "parser.c",
-        },
-        .flags = &.{
-            "-std=c11",
-            "-Wno-unused-but-set-variable",
-            "-Wno-unused-parameter",
-            "-Wno-unused-variable",
-            "-Wno-unused-function",
-        },
-    });
-    ts_go_module.addIncludePath(ts_go_dep.path("src"));
-    const go_lib = b.addLibrary(.{
+    const go_lib = addTreeSitterLib(b, .{
         .name = "ts_go",
-        .linkage = .static,
-        .root_module = ts_go_module,
+        .target = target,
+        .optimize = optimize,
+        .src_root = ts_go_dep.path("src"),
+        .files = &.{"parser.c"},
     });
 
     const gen_exe = b.addExecutable(.{
@@ -145,4 +96,37 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_exe.addArgs(args);
     const run_step = b.step("run", "Run kata (pass args after --)");
     run_step.dependOn(&run_exe.step);
+}
+
+const TsLibOptions = struct {
+    name: []const u8,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    src_root: std.Build.LazyPath,
+    files: []const []const u8,
+};
+
+fn addTreeSitterLib(b: *std.Build, opts: TsLibOptions) *std.Build.Step.Compile {
+    const module = b.createModule(.{
+        .target = opts.target,
+        .optimize = opts.optimize,
+        .link_libc = true,
+    });
+    module.addCSourceFiles(.{
+        .root = opts.src_root,
+        .files = opts.files,
+        .flags = &.{
+            "-std=c11",
+            "-Wno-unused-but-set-variable",
+            "-Wno-unused-parameter",
+            "-Wno-unused-variable",
+            "-Wno-unused-function",
+        },
+    });
+    module.addIncludePath(opts.src_root);
+    return b.addLibrary(.{
+        .name = opts.name,
+        .linkage = .static,
+        .root_module = module,
+    });
 }
