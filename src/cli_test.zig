@@ -197,3 +197,33 @@ test "cli: unknown extension exits usage (64)" {
     try std.testing.expectEqual(@as(u8, cli.exit_usage), r.code);
     try std.testing.expect(std.mem.indexOf(u8, r.stderr, "cannot infer language") != null);
 }
+
+test "parseSubcommand: bare command runs the daemon" {
+    const sub = cli.parseSubcommand(&.{});
+    try std.testing.expectEqual(cli.Subcommand.daemon, sub);
+}
+
+test "parseSubcommand: 'check' with no target defaults to '.'" {
+    const sub = cli.parseSubcommand(&.{"check"});
+    try std.testing.expectEqualStrings(".", sub.check);
+}
+
+test "parseSubcommand: 'check' with an explicit target" {
+    const sub = cli.parseSubcommand(&.{ "check", "src/" });
+    try std.testing.expectEqualStrings("src/", sub.check);
+}
+
+test "parseSubcommand: 'stop' is recognised" {
+    const sub = cli.parseSubcommand(&.{"stop"});
+    try std.testing.expectEqual(cli.Subcommand.stop, sub);
+}
+
+test "parseSubcommand: a flag dispatches to one-shot" {
+    const sub = cli.parseSubcommand(&.{"--lang=ts"});
+    try std.testing.expectEqual(cli.Subcommand.one_shot, sub);
+}
+
+test "parseSubcommand: an unknown subcommand is captured, not run as daemon" {
+    const sub = cli.parseSubcommand(&.{"typo-here"});
+    try std.testing.expectEqualStrings("typo-here", sub.unknown);
+}

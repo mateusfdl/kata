@@ -24,20 +24,21 @@ pub const Command = struct {
     stderr: *std.Io.Writer,
 };
 
-const Subcommand = union(enum) {
+pub const Subcommand = union(enum) {
     daemon,
     check: []const u8,
     stop,
     one_shot,
+    unknown: []const u8,
 };
 
-fn parseSubcommand(args: []const [:0]const u8) Subcommand {
+pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
     if (args.len == 0) return .daemon;
     const cmd = args[0];
     if (std.mem.eql(u8, cmd, "check")) return .{ .check = firstPositional(args[1..]) orelse "." };
     if (std.mem.eql(u8, cmd, "stop")) return .stop;
-    if (std.mem.startsWith(u8, cmd, "--lang") or std.mem.startsWith(u8, cmd, "--filename")) return .one_shot;
-    return .daemon;
+    if (std.mem.startsWith(u8, cmd, "--")) return .one_shot;
+    return .{ .unknown = cmd };
 }
 
 pub fn dispatch(c: Command) !u8 {
@@ -46,7 +47,15 @@ pub fn dispatch(c: Command) !u8 {
         .check => |target| runCheck(c, target),
         .stop => runStop(c),
         .one_shot => runOneShot(c),
+        .unknown => |cmd| runUnknown(c, cmd),
     };
+}
+
+fn runUnknown(c: Command, cmd: []const u8) !u8 {
+    try c.stderr.print("unknown subcommand: \"{s}\"\n", .{cmd});
+    try c.stderr.writeAll("usage: kata [check <path> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
+    try c.stderr.flush();
+    return exit_usage;
 }
 
 fn runOneShot(c: Command) !u8 {
