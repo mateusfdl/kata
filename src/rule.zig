@@ -73,7 +73,9 @@ pub fn compile(
     const arena = arena_ptr.allocator();
 
     var source: std.ArrayList(u8) = .empty;
-    for (raws) |raw| {
+    const rule_starts = try arena.alloc(u32, raws.len);
+    for (raws, 0..) |raw, i| {
+        rule_starts[i] = @intCast(source.items.len);
         try source.appendSlice(arena, raw.source);
         try source.append(arena, '\n');
     }
@@ -83,26 +85,9 @@ pub fn compile(
         return error.RuleCompileFailed;
     errdefer query.destroy();
 
-    const total = query.patternCount();
-    const owners = try arena.alloc([]const u8, total);
-    var gp: u32 = 0;
-    for (raws) |raw| {
-        var raw_offset: u32 = 0;
-        const probe = ts.Query.create(ts_lang, raw.source, &raw_offset) catch
-            return error.RuleCompileFailed;
-        const count = probe.patternCount();
-        probe.destroy();
-        var k: u32 = 0;
-        while (k < count) : (k += 1) {
-            if (gp >= total) return error.RuleCompileFailed;
-            owners[gp] = raw.id;
-            gp += 1;
-        }
-    }
-    if (gp != total) return error.RuleCompileFailed;
-
     const patterns = try buildPatternMeta(arena, query);
-    for (patterns, owners) |*pattern, owner| pattern.rule_id = owner;
+    for (patterns, 0..) |*pattern, idx|
+        pattern.rule_id = raws[ownerIndexForPattern(rule_starts, query.startByteForPattern(@intCast(idx)))].id;
 
     var out = try allocator.alloc(CompiledRule, 1);
     out[0] = .{
@@ -114,6 +99,15 @@ pub fn compile(
         .allocator = allocator,
     };
     return out;
+}
+
+fn ownerIndexForPattern(rule_starts: []const u32, pattern_start: u32) usize {
+    var i: usize = rule_starts.len;
+    while (i > 0) {
+        i -= 1;
+        if (rule_starts[i] <= pattern_start) return i;
+    }
+    return 0;
 }
 
 fn captureIdForName(query: *ts.Query, name: []const u8) u32 {
