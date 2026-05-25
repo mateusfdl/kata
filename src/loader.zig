@@ -147,7 +147,8 @@ fn loadLanguageDir(
     lang_subdir: []const u8,
     source: Source,
 ) !void {
-    const lang_name = language.Name.fromString(lang_subdir) orelse return error.InvalidRule;
+    var langs_buf: [language.max_langs_per_dir]language.Name = undefined;
+    const langs = try language.parseDirName(lang_subdir, &langs_buf);
 
     var lang_dir = try root.openDir(io, lang_subdir, .{ .iterate = true });
     defer lang_dir.close(io);
@@ -156,7 +157,7 @@ fn loadLanguageDir(
     while (try file_iter.next(io)) |fentry| {
         if (fentry.kind != .file) continue;
         if (!std.mem.endsWith(u8, fentry.name, scm_suffix)) continue;
-        try loadRuleFile(allocator, io, set, lang_name, &lang_dir, fentry.name, source);
+        try loadRuleFile(allocator, io, set, langs, &lang_dir, fentry.name, source);
     }
 }
 
@@ -164,7 +165,7 @@ fn loadRuleFile(
     allocator: std.mem.Allocator,
     io: std.Io,
     set: *RuleSet,
-    lang_name: language.Name,
+    langs: []const language.Name,
     lang_dir: *std.Io.Dir,
     file_name: []const u8,
     source: Source,
@@ -173,13 +174,17 @@ fn loadRuleFile(
     if (id_raw.len == 0) return error.InvalidRule;
 
     const data = try lang_dir.readFileAlloc(io, file_name, allocator, .limited(std.math.maxInt(usize)));
-    const id = try allocator.dupe(u8, id_raw);
 
-    try set.upsert(lang_name, .{
-        .id = id,
-        .language = lang_name,
-        .source = data,
-    }, source);
+    for (langs) |lang_name| {
+        const id = try allocator.dupe(u8, id_raw);
+        const body = try allocator.dupe(u8, data);
+        try set.upsert(lang_name, .{
+            .id = id,
+            .language = lang_name,
+            .source = body,
+        }, source);
+    }
+    allocator.free(data);
 }
 
 fn stripScmSuffix(name: []const u8) []const u8 {

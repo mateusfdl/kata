@@ -61,8 +61,8 @@ fn collectEntries(
     var root_iter = root_dir.iterate();
     while (try root_iter.next(io)) |dir_entry| {
         if (dir_entry.kind != .directory) continue;
-        const lang_name = try arena.dupe(u8, dir_entry.name);
-        try collectLangEntries(arena, io, &root_dir, lang_name, entries);
+        const dir_name = try arena.dupe(u8, dir_entry.name);
+        try collectLangEntries(arena, io, &root_dir, dir_name, entries);
     }
 }
 
@@ -70,10 +70,10 @@ fn collectLangEntries(
     arena: std.mem.Allocator,
     io: std.Io,
     root_dir: *std.Io.Dir,
-    lang_name: []const u8,
+    dir_name: []const u8,
     entries: *std.ArrayList(Entry),
 ) !void {
-    var lang_dir = try root_dir.openDir(io, lang_name, .{ .iterate = true });
+    var lang_dir = try root_dir.openDir(io, dir_name, .{ .iterate = true });
     defer lang_dir.close(io);
 
     var rule_iter = lang_dir.iterate();
@@ -83,7 +83,11 @@ fn collectLangEntries(
 
         const id = try arena.dupe(u8, stripScmSuffix(rule_entry.name));
         const body = try lang_dir.readFileAlloc(io, rule_entry.name, arena, .limited(max_rule_bytes));
-        try entries.append(arena, .{ .lang = lang_name, .id = id, .body = body });
+
+        var it = std.mem.splitScalar(u8, dir_name, '+');
+        while (it.next()) |lang| {
+            try entries.append(arena, .{ .lang = try arena.dupe(u8, lang), .id = id, .body = body });
+        }
     }
 }
 

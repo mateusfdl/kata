@@ -29,6 +29,19 @@ pub const Name = enum {
     }
 };
 
+pub const max_langs_per_dir: usize = std.enums.values(Name).len;
+
+pub fn parseDirName(name: []const u8, out: []Name) ![]Name {
+    var n: usize = 0;
+    var it = std.mem.splitScalar(u8, name, '+');
+    while (it.next()) |token| {
+        if (n >= out.len) return error.InvalidRule;
+        out[n] = Name.fromString(token) orelse return error.InvalidRule;
+        n += 1;
+    }
+    return out[0..n];
+}
+
 const Info = struct {
     canonical: []const u8,
     extension: []const u8,
