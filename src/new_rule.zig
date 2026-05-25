@@ -2,6 +2,7 @@ const std = @import("std");
 
 const cli = @import("cli.zig");
 const language = @import("language.zig");
+const rule = @import("rule.zig");
 
 pub const exit_clean = cli.exit_clean;
 pub const exit_usage = cli.exit_usage;
@@ -36,7 +37,7 @@ pub fn run(
         return exit_usage;
     };
 
-    if (!isValidId(id)) {
+    if (!rule.isValidId(id)) {
         try opts.stderr.print("invalid rule id: \"{s}\" (must match [A-Za-z0-9_-]+)\n", .{id});
         try opts.stderr.flush();
         return exit_usage;
@@ -81,14 +82,6 @@ pub fn run(
     try opts.stdout.print("{s}\n", .{file_path});
     try opts.stdout.flush();
     return exit_clean;
-}
-
-fn isValidId(s: []const u8) bool {
-    if (s.len == 0) return false;
-    for (s) |c| {
-        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
-    }
-    return true;
 }
 
 fn renderTemplate(arena: std.mem.Allocator, lang: language.Name, id: []const u8) ![]u8 {

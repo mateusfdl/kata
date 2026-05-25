@@ -2,6 +2,7 @@ const std = @import("std");
 
 const language = @import("language.zig");
 const loader = @import("loader.zig");
+const rule = @import("rule.zig");
 
 pub const max_config_bytes: usize = 64 * 1024;
 
@@ -127,7 +128,7 @@ fn appendListItem(
     if (std.mem.indexOfScalar(u8, item, '/')) |slash| {
         const lang_str = item[0..slash];
         const id = item[slash + 1 ..];
-        if (!isValidId(lang_str) or !isValidId(id)) return error.InvalidRuleId;
+        if (!rule.isValidId(lang_str) or !rule.isValidId(id)) return error.InvalidRuleId;
         const lang = language.Name.fromString(lang_str) orelse return error.UnknownLanguage;
         try scoped.append(arena, .{
             .lang = lang,
@@ -136,7 +137,7 @@ fn appendListItem(
         return;
     }
 
-    if (!isValidId(item)) return error.InvalidRuleId;
+    if (!rule.isValidId(item)) return error.InvalidRuleId;
     try bare.append(arena, try arena.dupe(u8, item));
 }
 
@@ -152,14 +153,6 @@ fn leadingSpaces(s: []const u8) usize {
     var n: usize = 0;
     while (n < s.len and s[n] == ' ') n += 1;
     return n;
-}
-
-fn isValidId(s: []const u8) bool {
-    if (s.len == 0) return false;
-    for (s) |c| {
-        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
-    }
-    return true;
 }
 
 pub fn loadFromDisk(

@@ -14,6 +14,14 @@ pub const RawRule = struct {
     source: []const u8,
 };
 
+pub fn isValidId(s: []const u8) bool {
+    if (s.len == 0) return false;
+    for (s) |c| {
+        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
+    }
+    return true;
+}
+
 pub const PredicateOp = enum {
     eq,
     not_eq,
