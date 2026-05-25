@@ -60,10 +60,6 @@ pub const Registry = struct {
         return .{};
     }
 
-    pub fn deinit(self: *Registry) void {
-        self.cache = .initFill(null);
-    }
-
     pub fn get(self: *Registry, name: Name) *const ts.Language {
         if (self.cache.get(name)) |cached| return cached;
         const lang: *const ts.Language = switch (name) {

@@ -38,7 +38,6 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var registry = language.Registry.init();
-    defer registry.deinit();
 
     var rule_set = loader_mod.load(arena, io, .{
         .external_dir = init.environ_map.get("KATA_RULES_DIR"),

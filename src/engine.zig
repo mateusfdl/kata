@@ -15,7 +15,7 @@ pub const Engine = struct {
     rules: *loader.RuleSet,
     compiled: std.EnumArray(language.Name, ?[]rule.CompiledRule) = .initFill(null),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
-    cursor: ?*ts.QueryCursor = null,
+    cursor: *ts.QueryCursor,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -26,28 +26,20 @@ pub const Engine = struct {
             .allocator = allocator,
             .registry = registry,
             .rules = rules,
+            .cursor = ts.QueryCursor.create(),
         };
     }
 
     pub fn deinit(self: *Engine) void {
         var it = self.compiled.iterator();
         while (it.next()) |entry| {
-            if (entry.value.*) |compiled| {
-                rule.destroyCompiled(self.allocator, compiled);
-                entry.value.* = null;
-            }
+            if (entry.value.*) |compiled| rule.destroyCompiled(self.allocator, compiled);
         }
         var pit = self.parsers.iterator();
         while (pit.next()) |entry| {
-            if (entry.value.*) |parser| {
-                parser.destroy();
-                entry.value.* = null;
-            }
+            if (entry.value.*) |parser| parser.destroy();
         }
-        if (self.cursor) |c| {
-            c.destroy();
-            self.cursor = null;
-        }
+        self.cursor.destroy();
     }
 
     pub fn prewarm(self: *Engine) !void {
@@ -55,14 +47,6 @@ pub const Engine = struct {
             _ = try self.ensureCompiled(lang);
             _ = try self.ensureParser(lang);
         }
-        _ = self.ensureCursor();
-    }
-
-    fn ensureCursor(self: *Engine) *ts.QueryCursor {
-        if (self.cursor) |cached| return cached;
-        const cursor = ts.QueryCursor.create();
-        self.cursor = cursor;
-        return cursor;
     }
 
     fn ensureParser(self: *Engine, lang: language.Name) !*ts.Parser {
@@ -89,8 +73,6 @@ pub const Engine = struct {
         lang: language.Name,
     ) ![]diagnostic.Diagnostic {
         const rules = try self.ensureCompiled(lang);
-        if (rules.len == 0) return allocator.alloc(diagnostic.Diagnostic, 0);
-
         const parser = try self.ensureParser(lang);
         const tree = parser.parseString(source, null) orelse return error.ParseFailed;
         defer tree.destroy();
@@ -98,10 +80,8 @@ pub const Engine = struct {
         var out: std.ArrayList(diagnostic.Diagnostic) = try .initCapacity(allocator, initial_diagnostic_capacity);
         errdefer out.deinit(allocator);
 
-        const cursor = self.ensureCursor();
-
         for (rules) |*r| {
-            try runRule(allocator, r, cursor, tree.rootNode(), source, lang, &out);
+            try runRule(allocator, r, self.cursor, tree.rootNode(), source, lang, &out);
         }
 
         return out.toOwnedSlice(allocator);

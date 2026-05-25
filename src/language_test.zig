@@ -14,7 +14,6 @@ test "Name.fromString / toString round-trip" {
 
 test "Registry lazily caches" {
     var r = language.Registry.init();
-    defer r.deinit();
 
     const a = r.get(.ts);
     const b = r.get(.ts);

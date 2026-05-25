@@ -61,7 +61,6 @@ pub const Fixture = struct {
             }
         }
         self.rule_set.deinit();
-        self.registry.deinit();
         self.allocator.destroy(self);
     }
 };
