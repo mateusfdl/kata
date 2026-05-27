@@ -2,7 +2,7 @@
     .name = .kata,
     .version = "0.1.0",
     .fingerprint = 0xf590e335ce173336,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.16.0-dev.0",
     .dependencies = .{
         .tree_sitter = .{
             .url = "git+https://github.com/tree-sitter/zig-tree-sitter#b55d4977d61330390fc733944da06106ff972660",
