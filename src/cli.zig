@@ -66,7 +66,7 @@ fn runUnknown(c: Command, cmd: []const u8) !u8 {
 fn runDaemon(c: Command) !u8 {
     c.engine.prewarm() catch |err| return internalError(c.stderr, "prewarm", err);
 
-    const socket_path = resolveSocketPath(c.arena, c.environ, c.args) catch |err|
+    const socket_path = resolveSocketPath(c.arena, c.environ) catch |err|
         return internalError(c.stderr, "resolve socket path", err);
 
     const binary_mtime = daemon.binaryMtime(c.io) catch |err|
@@ -95,7 +95,7 @@ fn runCheck(c: Command, target: []const u8) !u8 {
 }
 
 fn runStop(c: Command) !u8 {
-    const socket_path = resolveSocketPath(c.arena, c.environ, c.args) catch |err|
+    const socket_path = resolveSocketPath(c.arena, c.environ) catch |err|
         return internalError(c.stderr, "resolve socket path", err);
 
     const address = std.Io.net.UnixAddress.init(socket_path) catch |err|
@@ -123,21 +123,11 @@ fn firstPositional(args: []const [:0]const u8) ?[]const u8 {
 fn resolveSocketPath(
     arena: std.mem.Allocator,
     environ: *std.process.Environ.Map,
-    args: []const [:0]const u8,
 ) ![]const u8 {
-    if (flagValue(args, "--socket")) |path| return path;
     if (environ.get("KATA_SOCKET")) |path| return path;
     if (environ.get("XDG_RUNTIME_DIR")) |dir|
         return std.fmt.allocPrint(arena, "{s}/kata.sock", .{dir});
     return "/tmp/kata.sock";
-}
-
-fn flagValue(args: []const [:0]const u8, name: []const u8) ?[]const u8 {
-    for (args) |a| {
-        if (std.mem.startsWith(u8, a, name) and a.len > name.len and a[name.len] == '=')
-            return a[name.len + 1 ..];
-    }
-    return null;
 }
 
 pub const Options = struct {
