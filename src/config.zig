@@ -7,13 +7,12 @@ const rule = @import("rule.zig");
 pub const max_config_bytes: usize = 64 * 1024;
 
 pub const ScopedId = struct {
-    lang: language.Name,
+    lang: ?language.Name,
     id: []const u8,
 };
 
 pub const Config = struct {
-    disabled_scoped: []const ScopedId,
-    disabled_bare: []const []const u8,
+    disabled: []const ScopedId,
     arena: *std.heap.ArenaAllocator,
 
     pub fn deinit(self: *Config) void {
@@ -61,8 +60,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     errdefer arena_ptr.deinit();
     const arena = arena_ptr.allocator();
 
-    var scoped: std.ArrayList(ScopedId) = .empty;
-    var bare: std.ArrayList([]const u8) = .empty;
+    var disabled: std.ArrayList(ScopedId) = .empty;
 
     var line_no: u32 = 0;
     var iter = std.mem.splitScalar(u8, source, '\n');
@@ -90,7 +88,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
 
         if (indent == 2) {
             if (state != .in_disabled) return error.UnexpectedListItem;
-            try appendListItem(arena, &scoped, &bare, content);
+            try appendListItem(arena, &disabled, content);
             continue;
         }
 
@@ -99,8 +97,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
 
     diag.line = 0;
     return .{
-        .disabled_scoped = try scoped.toOwnedSlice(arena),
-        .disabled_bare = try bare.toOwnedSlice(arena),
+        .disabled = try disabled.toOwnedSlice(arena),
         .arena = arena_ptr,
     };
 }
@@ -117,8 +114,7 @@ fn parseTopLevelKey(content: []const u8) ParseError!State {
 
 fn appendListItem(
     arena: std.mem.Allocator,
-    scoped: *std.ArrayList(ScopedId),
-    bare: *std.ArrayList([]const u8),
+    disabled: *std.ArrayList(ScopedId),
     content: []const u8,
 ) ParseError!void {
     if (!std.mem.startsWith(u8, content, "- ")) return error.MalformedListItem;
@@ -130,15 +126,12 @@ fn appendListItem(
         const id = item[slash + 1 ..];
         if (!rule.isValidId(lang_str) or !rule.isValidId(id)) return error.InvalidRuleId;
         const lang = language.Name.fromString(lang_str) orelse return error.UnknownLanguage;
-        try scoped.append(arena, .{
-            .lang = lang,
-            .id = try arena.dupe(u8, id),
-        });
+        try disabled.append(arena, .{ .lang = lang, .id = try arena.dupe(u8, id) });
         return;
     }
 
     if (!rule.isValidId(item)) return error.InvalidRuleId;
-    try bare.append(arena, try arena.dupe(u8, item));
+    try disabled.append(arena, .{ .lang = null, .id = try arena.dupe(u8, item) });
 }
 
 fn stripComment(line: []const u8) []const u8 {
@@ -204,11 +197,9 @@ pub fn filterDisabled(set: *loader.RuleSet, cfg: Config) void {
 }
 
 fn isDisabled(lang: language.Name, id: []const u8, cfg: Config) bool {
-    for (cfg.disabled_bare) |bare| {
-        if (std.mem.eql(u8, bare, id)) return true;
-    }
-    for (cfg.disabled_scoped) |s| {
-        if (s.lang == lang and std.mem.eql(u8, s.id, id)) return true;
+    for (cfg.disabled) |d| {
+        const lang_matches = d.lang == null or d.lang.? == lang;
+        if (lang_matches and std.mem.eql(u8, d.id, id)) return true;
     }
     return false;
 }

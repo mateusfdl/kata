@@ -19,39 +19,35 @@ fn expectParseErr(source: []const u8, expected_err: anyerror, expected_line: u32
 test "config: empty source yields empty disables" {
     var cfg = try expectParseOk("");
     defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 0), cfg.disabled_scoped.len);
-    try std.testing.expectEqual(@as(usize, 0), cfg.disabled_bare.len);
+    try std.testing.expectEqual(@as(usize, 0), cfg.disabled.len);
 }
 
 test "config: only comments yields empty disables" {
     var cfg = try expectParseOk("# this is a comment\n# another\n");
     defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 0), cfg.disabled_scoped.len);
-    try std.testing.expectEqual(@as(usize, 0), cfg.disabled_bare.len);
+    try std.testing.expectEqual(@as(usize, 0), cfg.disabled.len);
 }
 
 test "config: disabled key with no items yields empty disables" {
     var cfg = try expectParseOk("disabled:\n");
     defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 0), cfg.disabled_scoped.len);
-    try std.testing.expectEqual(@as(usize, 0), cfg.disabled_bare.len);
+    try std.testing.expectEqual(@as(usize, 0), cfg.disabled.len);
 }
 
 test "config: parses a single scoped entry" {
     var cfg = try expectParseOk("disabled:\n  - ts/no-console\n");
     defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 1), cfg.disabled_scoped.len);
-    try std.testing.expectEqual(language.Name.ts, cfg.disabled_scoped[0].lang);
-    try std.testing.expectEqualStrings("no-console", cfg.disabled_scoped[0].id);
-    try std.testing.expectEqual(@as(usize, 0), cfg.disabled_bare.len);
+    try std.testing.expectEqual(@as(usize, 1), cfg.disabled.len);
+    try std.testing.expectEqual(@as(?language.Name, .ts), cfg.disabled[0].lang);
+    try std.testing.expectEqualStrings("no-console", cfg.disabled[0].id);
 }
 
 test "config: parses a single bare entry" {
     var cfg = try expectParseOk("disabled:\n  - no-console\n");
     defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 0), cfg.disabled_scoped.len);
-    try std.testing.expectEqual(@as(usize, 1), cfg.disabled_bare.len);
-    try std.testing.expectEqualStrings("no-console", cfg.disabled_bare[0]);
+    try std.testing.expectEqual(@as(usize, 1), cfg.disabled.len);
+    try std.testing.expectEqual(@as(?language.Name, null), cfg.disabled[0].lang);
+    try std.testing.expectEqualStrings("no-console", cfg.disabled[0].id);
 }
 
 test "config: parses mixed scoped and bare entries" {
@@ -65,28 +61,28 @@ test "config: parses mixed scoped and bare entries" {
     ;
     var cfg = try expectParseOk(src);
     defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 3), cfg.disabled_scoped.len);
-    try std.testing.expectEqual(@as(usize, 1), cfg.disabled_bare.len);
-    try std.testing.expectEqualStrings("no-any", cfg.disabled_bare[0]);
-    try std.testing.expectEqual(language.Name.ts, cfg.disabled_scoped[0].lang);
-    try std.testing.expectEqualStrings("no-console", cfg.disabled_scoped[0].id);
-    try std.testing.expectEqual(language.Name.tsx, cfg.disabled_scoped[1].lang);
-    try std.testing.expectEqualStrings("no-comments", cfg.disabled_scoped[1].id);
-    try std.testing.expectEqual(language.Name.go, cfg.disabled_scoped[2].lang);
-    try std.testing.expectEqualStrings("no-swallowed-errors", cfg.disabled_scoped[2].id);
+    try std.testing.expectEqual(@as(usize, 4), cfg.disabled.len);
+    try std.testing.expectEqual(@as(?language.Name, .ts), cfg.disabled[0].lang);
+    try std.testing.expectEqualStrings("no-console", cfg.disabled[0].id);
+    try std.testing.expectEqual(@as(?language.Name, null), cfg.disabled[1].lang);
+    try std.testing.expectEqualStrings("no-any", cfg.disabled[1].id);
+    try std.testing.expectEqual(@as(?language.Name, .tsx), cfg.disabled[2].lang);
+    try std.testing.expectEqualStrings("no-comments", cfg.disabled[2].id);
+    try std.testing.expectEqual(@as(?language.Name, .go), cfg.disabled[3].lang);
+    try std.testing.expectEqualStrings("no-swallowed-errors", cfg.disabled[3].id);
 }
 
 test "config: trailing comment is stripped" {
     var cfg = try expectParseOk("disabled:  # top-level\n  - ts/no-console  # the rule\n");
     defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 1), cfg.disabled_scoped.len);
-    try std.testing.expectEqualStrings("no-console", cfg.disabled_scoped[0].id);
+    try std.testing.expectEqual(@as(usize, 1), cfg.disabled.len);
+    try std.testing.expectEqualStrings("no-console", cfg.disabled[0].id);
 }
 
 test "config: CRLF line endings are tolerated" {
     var cfg = try expectParseOk("disabled:\r\n  - ts/no-console\r\n");
     defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 1), cfg.disabled_scoped.len);
+    try std.testing.expectEqual(@as(usize, 1), cfg.disabled.len);
 }
 
 test "config: tab in indent is rejected with line number" {
