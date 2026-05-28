@@ -111,6 +111,26 @@ test "engine: clean sources produce no diagnostics" {
     }
 }
 
+test "engine: language with zero rules lints clean and stays cached" {
+    const gpa = std.testing.allocator;
+    var f = try newFixture(gpa, &.{.ts});
+    defer f.deinit();
+
+    const src =
+        "package main\n" ++
+        "func f() {\n" ++
+        "    _, err := foo()\n" ++
+        "}\n";
+
+    const first = try f.engine.lint(gpa, src, .go);
+    defer gpa.free(first);
+    try std.testing.expectEqual(@as(usize, 0), first.len);
+
+    const second = try f.engine.lint(gpa, src, .go);
+    defer gpa.free(second);
+    try std.testing.expectEqual(@as(usize, 0), second.len);
+}
+
 test "engine: tsx detects `as any`" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa, &.{.tsx});

@@ -68,11 +68,10 @@ pub const CompileError = error{
 pub fn compile(
     allocator: std.mem.Allocator,
     registry: *language.Registry,
+    lang: language.Name,
     raws: []const RawRule,
-) CompileError![]CompiledRule {
-    if (raws.len == 0) return allocator.alloc(CompiledRule, 0);
-
-    const ts_lang = registry.get(raws[0].language);
+) CompileError!CompiledRule {
+    const ts_lang = registry.get(lang);
 
     const arena_ptr = try allocator.create(std.heap.ArenaAllocator);
     errdefer allocator.destroy(arena_ptr);
@@ -97,16 +96,14 @@ pub fn compile(
     for (patterns, 0..) |*pattern, idx|
         pattern.rule_id = raws[ownerIndexForPattern(rule_starts, query.startByteForPattern(@intCast(idx)))].id;
 
-    var out = try allocator.alloc(CompiledRule, 1);
-    out[0] = .{
-        .language = raws[0].language,
+    return .{
+        .language = lang,
         .query = query,
         .patterns = patterns,
         .match_capture_id = captureIdForName(query, match_capture),
         .arena = arena_ptr,
         .allocator = allocator,
     };
-    return out;
 }
 
 fn ownerIndexForPattern(rule_starts: []const u32, pattern_start: u32) usize {
@@ -237,9 +234,4 @@ fn resolveStepText(query: *ts.Query, step: ts.Query.PredicateStep) ?[]const u8 {
         .capture => query.captureNameForId(step.value_id),
         .done => null,
     };
-}
-
-pub fn destroyCompiled(allocator: std.mem.Allocator, rules: []CompiledRule) void {
-    for (rules) |*r| r.deinit();
-    allocator.free(rules);
 }

@@ -13,7 +13,7 @@ pub const Engine = struct {
     allocator: std.mem.Allocator,
     registry: *language.Registry,
     rules: *loader.RuleSet,
-    compiled: std.EnumArray(language.Name, ?[]rule.CompiledRule) = .initFill(null),
+    compiled: std.EnumArray(language.Name, ?rule.CompiledRule) = .initFill(null),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
     cursor: *ts.QueryCursor,
 
@@ -33,7 +33,7 @@ pub const Engine = struct {
     pub fn deinit(self: *Engine) void {
         var it = self.compiled.iterator();
         while (it.next()) |entry| {
-            if (entry.value.*) |compiled| rule.destroyCompiled(self.allocator, compiled);
+            if (entry.value.*) |*compiled| compiled.deinit();
         }
         var pit = self.parsers.iterator();
         while (pit.next()) |entry| {
@@ -58,12 +58,11 @@ pub const Engine = struct {
         return parser;
     }
 
-    fn ensureCompiled(self: *Engine, lang: language.Name) ![]rule.CompiledRule {
-        if (self.compiled.get(lang)) |cached| return cached;
-        const raws = self.rules.get(lang);
-        const compiled = try rule.compile(self.allocator, self.registry, raws);
-        self.compiled.set(lang, compiled);
-        return compiled;
+    fn ensureCompiled(self: *Engine, lang: language.Name) !*rule.CompiledRule {
+        const slot = self.compiled.getPtr(lang);
+        if (slot.*) |*cached| return cached;
+        slot.* = try rule.compile(self.allocator, self.registry, lang, self.rules.get(lang));
+        return &slot.*.?;
     }
 
     pub fn lint(
@@ -72,7 +71,7 @@ pub const Engine = struct {
         source: []const u8,
         lang: language.Name,
     ) ![]diagnostic.Diagnostic {
-        const rules = try self.ensureCompiled(lang);
+        const compiled = try self.ensureCompiled(lang);
         const parser = try self.ensureParser(lang);
         const tree = parser.parseString(source, null) orelse return error.ParseFailed;
         defer tree.destroy();
@@ -80,9 +79,7 @@ pub const Engine = struct {
         var out: std.ArrayList(diagnostic.Diagnostic) = try .initCapacity(allocator, initial_diagnostic_capacity);
         errdefer out.deinit(allocator);
 
-        for (rules) |*r| {
-            try runRule(allocator, r, self.cursor, tree.rootNode(), source, lang, &out);
-        }
+        try runRule(allocator, compiled, self.cursor, tree.rootNode(), source, lang, &out);
 
         return out.toOwnedSlice(allocator);
     }
