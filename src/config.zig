@@ -174,12 +174,11 @@ pub fn loadFromDisk(
 ) !?Config {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
-    const base = (try resolveConfigBase(arena_state.allocator(), environ)) orelse return null;
+    const scratch = arena_state.allocator();
 
-    const path = try std.fmt.allocPrint(gpa, "{s}/rules.yaml", .{base});
-    defer gpa.free(path);
-    const source = (try tryReadFile(gpa, io, path)) orelse return null;
-    defer gpa.free(source);
+    const base = (try resolveConfigBase(scratch, environ)) orelse return null;
+    const path = try std.fmt.allocPrint(scratch, "{s}/rules.yaml", .{base});
+    const source = (try tryReadFile(scratch, io, path)) orelse return null;
     return try parse(gpa, source, diag);
 }
 
