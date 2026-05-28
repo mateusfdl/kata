@@ -56,14 +56,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .strip = strip,
     });
-    exe_module.addImport("tree_sitter", tree_sitter_module);
-    exe_module.addAnonymousImport("embedded_rules", .{
-        .root_source_file = embedded_rules_zig,
-    });
-
-    exe_module.linkLibrary(typescript_lib);
-    exe_module.linkLibrary(tsx_lib);
-    exe_module.linkLibrary(go_lib);
+    wireKataModule(exe_module, tree_sitter_module, embedded_rules_zig, &.{ typescript_lib, tsx_lib, go_lib });
     const exe = b.addExecutable(.{
         .name = "kata",
         .root_module = exe_module,
@@ -76,14 +69,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    test_module.addImport("tree_sitter", tree_sitter_module);
-    test_module.addAnonymousImport("embedded_rules", .{
-        .root_source_file = embedded_rules_zig,
-    });
-
-    test_module.linkLibrary(typescript_lib);
-    test_module.linkLibrary(tsx_lib);
-    test_module.linkLibrary(go_lib);
+    wireKataModule(test_module, tree_sitter_module, embedded_rules_zig, &.{ typescript_lib, tsx_lib, go_lib });
     const unit_tests = b.addTest(.{
         .root_module = test_module,
     });
@@ -96,6 +82,17 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_exe.addArgs(args);
     const run_step = b.step("run", "Run kata (pass args after --)");
     run_step.dependOn(&run_exe.step);
+}
+
+fn wireKataModule(
+    module: *std.Build.Module,
+    tree_sitter_module: *std.Build.Module,
+    embedded_rules_zig: std.Build.LazyPath,
+    libs: []const *std.Build.Step.Compile,
+) void {
+    module.addImport("tree_sitter", tree_sitter_module);
+    module.addAnonymousImport("embedded_rules", .{ .root_source_file = embedded_rules_zig });
+    for (libs) |lib| module.linkLibrary(lib);
 }
 
 const TsLibOptions = struct {
