@@ -54,21 +54,17 @@ const infos: std.EnumArray(Name, Info) = .init(.{
 });
 
 pub const Registry = struct {
-    cache: std.EnumArray(Name, ?*const ts.Language) = .initFill(null),
-
     pub fn init() Registry {
         return .{};
     }
 
     pub fn get(self: *Registry, name: Name) *const ts.Language {
-        if (self.cache.get(name)) |cached| return cached;
-        const lang: *const ts.Language = switch (name) {
+        _ = self;
+        return switch (name) {
             .ts => tree_sitter_typescript(),
             .tsx => tree_sitter_tsx(),
             .go => tree_sitter_go(),
         };
-        self.cache.set(name, lang);
-        return lang;
     }
 };
 

@@ -12,7 +12,7 @@ test "Name.fromString / toString round-trip" {
     try std.testing.expectEqualStrings("go", language.Name.toString(.go));
 }
 
-test "Registry lazily caches" {
+test "Registry resolves distinct grammar pointers per language" {
     var r = language.Registry.init();
 
     const a = r.get(.ts);
