@@ -8,6 +8,7 @@ comptime {
     _ = @import("diagnostic_test.zig");
     _ = @import("language_test.zig");
     _ = @import("engine_test.zig");
+    _ = @import("check_test.zig");
     _ = @import("cli_test.zig");
     _ = @import("protocol_test.zig");
     _ = @import("daemon_test.zig");
