@@ -55,6 +55,7 @@ fn checkDir(
     var walker = try dir.walk(gpa);
     defer walker.deinit();
 
+    const base = std.mem.trimEnd(u8, target, "/");
     var counts: Counts = .{ .files = 0, .violations = 0 };
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
@@ -63,7 +64,7 @@ fn checkDir(
         const source = entry.dir.readFileAlloc(io, entry.basename, gpa, .limited(max_file_bytes)) catch continue;
         defer gpa.free(source);
 
-        const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ std.mem.trimEnd(u8, target, "/"), entry.path });
+        const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base, entry.path });
         defer gpa.free(path);
 
         counts.files += 1;
