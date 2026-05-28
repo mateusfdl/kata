@@ -76,11 +76,7 @@ fn runDaemon(c: Command) !u8 {
         .engine = c.engine,
         .binary_mtime = binary_mtime,
     }, socket_path) catch |err| switch (err) {
-        error.AlreadyRunning => {
-            try c.stderr.writeAll("kata daemon already running\n");
-            try c.stderr.flush();
-            return exit_clean;
-        },
+        error.AlreadyRunning => return printAndExit(c.stderr, "kata daemon already running\n", exit_clean),
         else => return internalError(c.stderr, "serve", err),
     };
 
@@ -89,11 +85,7 @@ fn runDaemon(c: Command) !u8 {
 
 fn runCheck(c: Command, target: []const u8) !u8 {
     const outcome = check.run(c.io, c.gpa, c.engine, target, c.stdout) catch |err| switch (err) {
-        error.UnsupportedTarget => {
-            try c.stderr.print("cannot infer language from \"{s}\"\n", .{target});
-            try c.stderr.flush();
-            return exit_usage;
-        },
+        error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{target}, exit_usage),
         else => return internalError(c.stderr, "check", err),
     };
     return switch (outcome) {
@@ -109,11 +101,7 @@ fn runStop(c: Command) !u8 {
     const address = std.Io.net.UnixAddress.init(socket_path) catch |err|
         return internalError(c.stderr, "socket path", err);
 
-    const stream = address.connect(c.io) catch {
-        try c.stderr.writeAll("no kata daemon running\n");
-        try c.stderr.flush();
-        return exit_clean;
-    };
+    const stream = address.connect(c.io) catch return printAndExit(c.stderr, "no kata daemon running\n", exit_clean);
     defer stream.close(c.io);
 
     var write_buf: [512]u8 = undefined;
