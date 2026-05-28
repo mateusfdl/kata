@@ -166,18 +166,16 @@ fn loadRuleFile(
     const id_raw = stripScmSuffix(file_name);
     if (id_raw.len == 0) return error.InvalidRule;
 
-    const data = try lang_dir.readFileAlloc(io, file_name, allocator, .limited(std.math.maxInt(usize)));
+    const id = try allocator.dupe(u8, id_raw);
+    const body = try lang_dir.readFileAlloc(io, file_name, allocator, .limited(std.math.maxInt(usize)));
 
     for (langs) |lang_name| {
-        const id = try allocator.dupe(u8, id_raw);
-        const body = try allocator.dupe(u8, data);
         try set.upsert(lang_name, .{
             .id = id,
             .language = lang_name,
             .source = body,
         }, source);
     }
-    allocator.free(data);
 }
 
 fn stripScmSuffix(name: []const u8) []const u8 {
