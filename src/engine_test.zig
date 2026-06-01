@@ -268,6 +268,20 @@ test "engine: match? flags only matching comments" {
     try std.testing.expectEqual(@as(u32, 1), diags[0].range.start.line);
 }
 
+test "engine: exclude-paths set directive is accepted" {
+    const gpa = std.testing.allocator;
+    const rule =
+        "((comment) @match (#set! exclude-paths \"*_test.go vendor/\") (#set! message \"no comments\"))\n";
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(gpa, "// plain\n", .go);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("no comments", diags[0].message);
+}
+
 test "engine: unknown predicate is a hard error" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#nope? @match \"x\") (#set! message \"m\"))\n");

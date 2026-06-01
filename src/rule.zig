@@ -6,6 +6,7 @@ const language = @import("language.zig");
 
 pub const match_capture = "match";
 pub const message_property = "message";
+pub const exclude_paths_property = "exclude-paths";
 
 pub const invalid_capture_id: u32 = std.math.maxInt(u32);
 
@@ -47,6 +48,7 @@ pub const PatternMeta = struct {
     predicates: []Predicate,
     message: ?[]const u8,
     rule_id: []const u8,
+    exclude_paths: []const []const u8 = &.{},
 };
 
 pub const CompiledRule = struct {
@@ -167,11 +169,12 @@ fn parsePattern(
 
     var predicates: std.ArrayList(Predicate) = .empty;
     var message: ?[]const u8 = null;
+    var exclude_paths: []const []const u8 = &.{};
 
     var start: usize = 0;
     for (steps, 0..) |step, idx| {
         if (step.type != .done) continue;
-        try parsePredicateGroup(arena, query, steps[start..idx], &predicates, &message);
+        try parsePredicateGroup(arena, query, steps[start..idx], &predicates, &message, &exclude_paths);
         start = idx + 1;
     }
 
@@ -179,6 +182,7 @@ fn parsePattern(
         .predicates = try predicates.toOwnedSlice(arena),
         .message = message,
         .rule_id = "",
+        .exclude_paths = exclude_paths,
     };
 }
 
@@ -188,11 +192,12 @@ fn parsePredicateGroup(
     group: []const ts.Query.PredicateStep,
     predicates: *std.ArrayList(Predicate),
     message: *?[]const u8,
+    exclude_paths: *[]const []const u8,
 ) !void {
     const op_name = opNameFromGroup(query, group) orelse return;
 
     if (std.mem.eql(u8, op_name, "set!")) {
-        try absorbSetDirective(query, group, message);
+        try absorbSetDirective(arena, query, group, message, exclude_paths);
         return;
     }
 
@@ -206,15 +211,32 @@ fn opNameFromGroup(query: *ts.Query, group: []const ts.Query.PredicateStep) ?[]c
 }
 
 fn absorbSetDirective(
+    arena: std.mem.Allocator,
     query: *ts.Query,
     group: []const ts.Query.PredicateStep,
     message: *?[]const u8,
+    exclude_paths: *[]const []const u8,
 ) !void {
     if (group.len < 3) return error.RuleCompileFailed;
     const key = resolveStepText(query, group[1]) orelse return error.RuleCompileFailed;
-    if (!std.mem.eql(u8, key, message_property)) return error.RuleCompileFailed;
-    if (message.* != null) return;
-    message.* = resolveStepText(query, group[2]);
+    const value = resolveStepText(query, group[2]) orelse return error.RuleCompileFailed;
+
+    if (std.mem.eql(u8, key, message_property)) {
+        if (message.* == null) message.* = value;
+        return;
+    }
+    if (std.mem.eql(u8, key, exclude_paths_property)) {
+        if (exclude_paths.*.len == 0) exclude_paths.* = try splitFields(arena, value);
+        return;
+    }
+    return error.RuleCompileFailed;
+}
+
+fn splitFields(arena: std.mem.Allocator, value: []const u8) ![]const []const u8 {
+    var list: std.ArrayList([]const u8) = .empty;
+    var it = std.mem.tokenizeScalar(u8, value, ' ');
+    while (it.next()) |field| try list.append(arena, field);
+    return list.toOwnedSlice(arena);
 }
 
 fn buildPredicate(
