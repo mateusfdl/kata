@@ -9,6 +9,20 @@ const new_rule = @import("new_rule.zig");
 
 const io_buffer_size: usize = 8192;
 
+pub const std_options: std.Options = .{
+    .logFn = logFn,
+};
+
+fn logFn(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.enum_literal),
+    comptime fmt: []const u8,
+    args: anytype,
+) void {
+    if (scope == .mvzr) return;
+    std.log.defaultLog(level, scope, fmt, args);
+}
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();

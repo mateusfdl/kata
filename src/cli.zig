@@ -63,8 +63,22 @@ fn runUnknown(c: Command, cmd: []const u8) !u8 {
     return exit_usage;
 }
 
+fn validateRules(engine: *engine_mod.Engine, stderr: *std.Io.Writer) !?u8 {
+    engine.prewarm() catch {
+        const d = engine.compile_diag;
+        if (d.lang) |lang| {
+            try stderr.print("kata: rule {s}/{s}: {s}\n", .{ lang.toString(), d.rule_id, d.detail });
+        } else {
+            try stderr.writeAll("kata: rule compilation failed\n");
+        }
+        try stderr.flush();
+        return exit_internal_error;
+    };
+    return null;
+}
+
 fn runDaemon(c: Command) !u8 {
-    c.engine.prewarm() catch |err| return internalError(c.stderr, "prewarm", err);
+    if (try validateRules(c.engine, c.stderr)) |code| return code;
 
     const socket_path = resolveSocketPath(c.arena, c.environ) catch |err|
         return internalError(c.stderr, "resolve socket path", err);
@@ -84,6 +98,8 @@ fn runDaemon(c: Command) !u8 {
 }
 
 fn runCheck(c: Command, target: []const u8) !u8 {
+    if (try validateRules(c.engine, c.stderr)) |code| return code;
+
     const outcome = check.run(c.io, c.gpa, c.engine, target, c.stdout) catch |err| switch (err) {
         error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{target}, exit_usage),
         else => return internalError(c.stderr, "check", err),
@@ -145,6 +161,8 @@ pub fn run(
     opts: Options,
 ) !u8 {
     const parsed = parseFlags(opts.args) catch return try usageError(opts.stderr);
+
+    if (try validateRules(engine, opts.stderr)) |code| return code;
 
     const lang = switch (language.resolve(parsed.lang_flag, parsed.filename)) {
         .ok => |n| n,

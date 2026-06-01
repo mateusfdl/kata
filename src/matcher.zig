@@ -16,7 +16,6 @@ pub fn evaluate(
             .not_any_of => if (!evalAnyOf(pred, match, source, true)) return false,
             .match => if (!evalMatch(pred, match, source, false)) return false,
             .not_match => if (!evalMatch(pred, match, source, true)) return false,
-            .unknown => {},
         }
     }
     return true;

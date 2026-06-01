@@ -16,6 +16,7 @@ pub const Engine = struct {
     compiled: std.EnumArray(language.Name, ?rule.CompiledRule) = .initFill(null),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
     cursor: *ts.QueryCursor,
+    compile_diag: rule.Diagnostic = .{},
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -61,7 +62,7 @@ pub const Engine = struct {
     fn ensureCompiled(self: *Engine, lang: language.Name) !*rule.CompiledRule {
         const slot = self.compiled.getPtr(lang);
         if (slot.*) |*cached| return cached;
-        slot.* = try rule.compile(self.allocator, self.registry, lang, self.rules.get(lang));
+        slot.* = try rule.compile(self.allocator, self.registry, lang, self.rules.get(lang), &self.compile_diag);
         return &slot.*.?;
     }
 

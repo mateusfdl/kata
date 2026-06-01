@@ -30,7 +30,6 @@ pub const PredicateOp = enum {
     not_any_of,
     match,
     not_match,
-    unknown,
 };
 
 pub const PredicateOperand = union(enum) {
@@ -69,11 +68,18 @@ pub const CompileError = error{
     RuleCompileFailed,
 } || std.mem.Allocator.Error;
 
+pub const Diagnostic = struct {
+    lang: ?language.Name = null,
+    rule_id: []const u8 = "",
+    detail: []const u8 = "",
+};
+
 pub fn compile(
     allocator: std.mem.Allocator,
     registry: *language.Registry,
     lang: language.Name,
     raws: []const RawRule,
+    diag: *Diagnostic,
 ) CompileError!CompiledRule {
     const ts_lang = registry.get(lang);
 
@@ -92,13 +98,21 @@ pub fn compile(
     }
 
     var error_offset: u32 = 0;
-    const query = ts.Query.create(ts_lang, source.items, &error_offset) catch
+    const query = ts.Query.create(ts_lang, source.items, &error_offset) catch {
+        diag.* = .{ .lang = lang, .rule_id = ownerId(rule_starts, raws, error_offset), .detail = "query syntax error" };
         return error.RuleCompileFailed;
+    };
     errdefer query.destroy();
 
-    const patterns = try buildPatternMeta(arena, query);
-    for (patterns, 0..) |*pattern, idx|
-        pattern.rule_id = raws[ownerIndexForPattern(rule_starts, query.startByteForPattern(@intCast(idx)))].id;
+    const patterns = try arena.alloc(PatternMeta, query.patternCount());
+    for (patterns, 0..) |*pattern, idx| {
+        const owner_id = ownerId(rule_starts, raws, query.startByteForPattern(@intCast(idx)));
+        pattern.* = parsePattern(arena, query, @intCast(idx)) catch |err| {
+            diag.* = .{ .lang = lang, .rule_id = owner_id, .detail = "unsupported predicate, #set! key, or regex" };
+            return err;
+        };
+        pattern.rule_id = owner_id;
+    }
 
     return .{
         .language = lang,
@@ -108,6 +122,11 @@ pub fn compile(
         .arena = arena_ptr,
         .allocator = allocator,
     };
+}
+
+fn ownerId(rule_starts: []const u32, raws: []const RawRule, offset: u32) []const u8 {
+    if (raws.len == 0) return "";
+    return raws[ownerIndexForPattern(rule_starts, offset)].id;
 }
 
 fn ownerIndexForPattern(rule_starts: []const u32, pattern_start: u32) usize {
@@ -129,25 +148,14 @@ fn captureIdForName(query: *ts.Query, name: []const u8) u32 {
     return invalid_capture_id;
 }
 
-fn predicateOpFromName(name: []const u8) PredicateOp {
+fn predicateOpFromName(name: []const u8) ?PredicateOp {
     if (std.mem.eql(u8, name, "eq?")) return .eq;
     if (std.mem.eql(u8, name, "not-eq?")) return .not_eq;
     if (std.mem.eql(u8, name, "any-of?")) return .any_of;
     if (std.mem.eql(u8, name, "not-any-of?")) return .not_any_of;
     if (std.mem.eql(u8, name, "match?")) return .match;
     if (std.mem.eql(u8, name, "not-match?")) return .not_match;
-    return .unknown;
-}
-
-fn buildPatternMeta(arena: std.mem.Allocator, query: *ts.Query) ![]PatternMeta {
-    const pattern_count = query.patternCount();
-    var patterns = try arena.alloc(PatternMeta, pattern_count);
-
-    var p: u32 = 0;
-    while (p < pattern_count) : (p += 1) {
-        patterns[p] = try parsePattern(arena, query, p);
-    }
-    return patterns;
+    return null;
 }
 
 fn parsePattern(
@@ -184,7 +192,7 @@ fn parsePredicateGroup(
     const op_name = opNameFromGroup(query, group) orelse return;
 
     if (std.mem.eql(u8, op_name, "set!")) {
-        absorbSetDirective(query, group, message);
+        try absorbSetDirective(query, group, message);
         return;
     }
 
@@ -201,12 +209,11 @@ fn absorbSetDirective(
     query: *ts.Query,
     group: []const ts.Query.PredicateStep,
     message: *?[]const u8,
-) void {
+) !void {
+    if (group.len < 3) return error.RuleCompileFailed;
+    const key = resolveStepText(query, group[1]) orelse return error.RuleCompileFailed;
+    if (!std.mem.eql(u8, key, message_property)) return error.RuleCompileFailed;
     if (message.* != null) return;
-    if (group.len < 2) return;
-    const key = resolveStepText(query, group[1]) orelse return;
-    if (!std.mem.eql(u8, key, message_property)) return;
-    if (group.len < 3) return;
     message.* = resolveStepText(query, group[2]);
 }
 
@@ -220,7 +227,7 @@ fn buildPredicate(
     for (group[1..], 0..) |arg_step, j| {
         args[j] = operandFromStep(query, arg_step);
     }
-    const op = predicateOpFromName(op_name);
+    const op = predicateOpFromName(op_name) orelse return error.RuleCompileFailed;
     return .{
         .op = op,
         .args = args,

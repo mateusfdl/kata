@@ -268,6 +268,22 @@ test "engine: match? flags only matching comments" {
     try std.testing.expectEqual(@as(u32, 1), diags[0].range.start.line);
 }
 
+test "engine: unknown predicate is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#nope? @match \"x\") (#set! message \"m\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "// hi\n", .go));
+}
+
+test "engine: unknown set directive key is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! mesage \"typo\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "// hi\n", .go));
+}
+
 test "engine: go detects console output" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.go}, "no-console", go_no_console_rule);
