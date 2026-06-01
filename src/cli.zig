@@ -175,7 +175,7 @@ pub fn run(
         return try internalError(opts.stderr, "read stdin", err);
     defer allocator.free(source);
 
-    const diagnostics = engine.lint(allocator, source, lang) catch |err|
+    const diagnostics = engine.lint(allocator, source, lang, parsed.filename) catch |err|
         return try internalError(opts.stderr, "lint", err);
     defer allocator.free(diagnostics);
 

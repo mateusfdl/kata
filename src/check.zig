@@ -135,7 +135,7 @@ fn reportFile(
     path: []const u8,
     stdout: *std.Io.Writer,
 ) !usize {
-    const diagnostics = try engine.lint(gpa, source, lang);
+    const diagnostics = try engine.lint(gpa, source, lang, path);
     defer gpa.free(diagnostics);
 
     for (diagnostics) |d| {

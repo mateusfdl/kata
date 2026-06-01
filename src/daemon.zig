@@ -107,7 +107,7 @@ pub fn handle(
     const source = req.source orelse
         return reply(ctx, .fail, null, "missing source");
 
-    const diagnostics = ctx.engine.lint(arena, source, lang) catch
+    const diagnostics = ctx.engine.lint(arena, source, lang, req.filename) catch
         return reply(ctx, .fail, null, "lint failed");
 
     return reply(ctx, .ok, .{

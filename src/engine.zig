@@ -2,6 +2,7 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 
 const diagnostic = @import("diagnostic.zig");
+const glob = @import("glob.zig");
 const language = @import("language.zig");
 const loader = @import("loader.zig");
 const matcher = @import("matcher.zig");
@@ -71,6 +72,7 @@ pub const Engine = struct {
         allocator: std.mem.Allocator,
         source: []const u8,
         lang: language.Name,
+        path: ?[]const u8,
     ) ![]diagnostic.Diagnostic {
         const compiled = try self.ensureCompiled(lang);
         const parser = try self.ensureParser(lang);
@@ -80,7 +82,7 @@ pub const Engine = struct {
         var out: std.ArrayList(diagnostic.Diagnostic) = try .initCapacity(allocator, initial_diagnostic_capacity);
         errdefer out.deinit(allocator);
 
-        try runRule(allocator, compiled, self.cursor, tree.rootNode(), source, lang, &out);
+        try runRule(allocator, compiled, self.cursor, tree.rootNode(), source, lang, path, &out);
 
         return out.toOwnedSlice(allocator);
     }
@@ -93,6 +95,7 @@ fn runRule(
     root: ts.Node,
     source: []const u8,
     lang: language.Name,
+    path: ?[]const u8,
     out: *std.ArrayList(diagnostic.Diagnostic),
 ) !void {
     if (r.match_capture_id == rule.invalid_capture_id) return;
@@ -102,11 +105,21 @@ fn runRule(
 
     while (cursor.nextMatch()) |match| {
         const meta = r.patterns[match.pattern_index];
+        if (pathExcluded(meta.exclude_paths, path)) continue;
         if (!matcher.evaluate(meta.predicates, match, source)) continue;
 
         const message = meta.message orelse meta.rule_id;
         try emitMatchDiagnostics(allocator, r, meta.rule_id, match, lang_str, message, out);
     }
+}
+
+fn pathExcluded(globs: []const []const u8, path: ?[]const u8) bool {
+    const p = path orelse return false;
+    if (p.len == 0) return false;
+    for (globs) |g| {
+        if (glob.match(g, p)) return true;
+    }
+    return false;
 }
 
 fn emitMatchDiagnostics(

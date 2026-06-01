@@ -75,7 +75,7 @@ test "engine: detects `as any`" {
     defer f.deinit();
 
     const src = "const x = (foo[0] as any).bar;";
-    const diags = try f.engine.lint(gpa, src, .ts);
+    const diags = try f.engine.lint(gpa, src, .ts, null);
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
@@ -95,7 +95,7 @@ test "engine: detects `as any[]`" {
     defer f.deinit();
 
     const src = "const x = foo as any[];";
-    const diags = try f.engine.lint(gpa, src, .ts);
+    const diags = try f.engine.lint(gpa, src, .ts, null);
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
@@ -115,7 +115,7 @@ test "engine: clean sources produce no diagnostics" {
     };
 
     for (cases) |src| {
-        const diags = try f.engine.lint(gpa, src, .ts);
+        const diags = try f.engine.lint(gpa, src, .ts, null);
         defer gpa.free(diags);
         if (diags.len != 0) {
             std.debug.print("unexpected diagnostics for {s}:\n", .{src});
@@ -136,11 +136,11 @@ test "engine: language with zero rules lints clean and stays cached" {
         "    _, err := foo()\n" ++
         "}\n";
 
-    const first = try f.engine.lint(gpa, src, .go);
+    const first = try f.engine.lint(gpa, src, .go, null);
     defer gpa.free(first);
     try std.testing.expectEqual(@as(usize, 0), first.len);
 
-    const second = try f.engine.lint(gpa, src, .go);
+    const second = try f.engine.lint(gpa, src, .go, null);
     defer gpa.free(second);
     try std.testing.expectEqual(@as(usize, 0), second.len);
 }
@@ -151,7 +151,7 @@ test "engine: tsx detects `as any`" {
     defer f.deinit();
 
     const src = "const Comp = () => <div>{(props as any).label}</div>;";
-    const diags = try f.engine.lint(gpa, src, .tsx);
+    const diags = try f.engine.lint(gpa, src, .tsx, null);
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
@@ -164,7 +164,7 @@ test "engine: multiple violations across lines" {
     defer f.deinit();
 
     const src = "const a = x as any;\nconst b = y as any;\n";
-    const diags = try f.engine.lint(gpa, src, .ts);
+    const diags = try f.engine.lint(gpa, src, .ts, null);
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 2), diags.len);
@@ -178,12 +178,12 @@ test "engine: per-language rule filtering" {
     defer f.deinit();
 
     const src = "const x = foo as any;";
-    const diags = try f.engine.lint(gpa, src, .ts);
+    const diags = try f.engine.lint(gpa, src, .ts, null);
     defer gpa.free(diags);
     try std.testing.expectEqual(@as(usize, 1), diags.len);
     try std.testing.expectEqualStrings("ts", diags[0].language);
 
-    const tsx_diags = try f.engine.lint(gpa, src, .tsx);
+    const tsx_diags = try f.engine.lint(gpa, src, .tsx, null);
     defer gpa.free(tsx_diags);
     try std.testing.expectEqual(@as(usize, 0), tsx_diags.len);
 }
@@ -198,13 +198,13 @@ test "engine: weak assertions only match expect chains" {
         "console.log(\"foo\");\n" ++
         "value.toBeDefined();\n";
 
-    const ts_diags = try f.engine.lint(gpa, src, .ts);
+    const ts_diags = try f.engine.lint(gpa, src, .ts, null);
     defer gpa.free(ts_diags);
     try std.testing.expectEqual(@as(usize, 1), ts_diags.len);
     try std.testing.expectEqualStrings("no-weak-assertions", ts_diags[0].rule_id);
     try std.testing.expectEqualStrings("weak assertion - use .toEqual() with explicit values", ts_diags[0].message);
 
-    const tsx_diags = try f.engine.lint(gpa, src, .tsx);
+    const tsx_diags = try f.engine.lint(gpa, src, .tsx, null);
     defer gpa.free(tsx_diags);
     try std.testing.expectEqual(@as(usize, 1), tsx_diags.len);
     try std.testing.expectEqualStrings("tsx", tsx_diags[0].language);
@@ -221,7 +221,7 @@ test "engine: go detects blank identifier short declaration" {
         "    _, err := foo()\n" ++
         "    _ = err\n" ++
         "}\n";
-    const diags = try f.engine.lint(gpa, src, .go);
+    const diags = try f.engine.lint(gpa, src, .go, null);
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
@@ -243,7 +243,7 @@ test "engine: not-match? exempts matching comments" {
         "package main\n" ++
         "// a regular comment\n" ++
         "func f() {}\n";
-    const diags = try f.engine.lint(gpa, src, .go);
+    const diags = try f.engine.lint(gpa, src, .go, null);
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
@@ -261,11 +261,33 @@ test "engine: match? flags only matching comments" {
         "// TODO refactor this\n" ++
         "// a regular comment\n" ++
         "func f() {}\n";
-    const diags = try f.engine.lint(gpa, src, .go);
+    const diags = try f.engine.lint(gpa, src, .go, null);
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
     try std.testing.expectEqual(@as(u32, 1), diags[0].range.start.line);
+}
+
+test "engine: exclude-paths suppresses diagnostics for matching paths" {
+    const gpa = std.testing.allocator;
+    const rule =
+        "((comment) @match (#set! exclude-paths \"**/*_test.go vendor/\") (#set! message \"no comments\"))\n";
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
+    defer f.deinit();
+    const src = "// plain\n";
+
+    const cases = [_]struct { path: ?[]const u8, expected: usize }{
+        .{ .path = "pkg/foo_test.go", .expected = 0 },
+        .{ .path = "vendor/lib.go", .expected = 0 },
+        .{ .path = "pkg/foo.go", .expected = 1 },
+        .{ .path = null, .expected = 1 },
+    };
+
+    for (cases) |c| {
+        const diags = try f.engine.lint(gpa, src, .go, c.path);
+        defer gpa.free(diags);
+        try std.testing.expectEqual(c.expected, diags.len);
+    }
 }
 
 test "engine: exclude-paths set directive is accepted" {
@@ -275,7 +297,7 @@ test "engine: exclude-paths set directive is accepted" {
     var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
     defer f.deinit();
 
-    const diags = try f.engine.lint(gpa, "// plain\n", .go);
+    const diags = try f.engine.lint(gpa, "// plain\n", .go, null);
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
@@ -287,7 +309,7 @@ test "engine: unknown predicate is a hard error" {
     var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#nope? @match \"x\") (#set! message \"m\"))\n");
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "// hi\n", .go));
+    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "// hi\n", .go, null));
 }
 
 test "engine: unknown set directive key is a hard error" {
@@ -295,7 +317,7 @@ test "engine: unknown set directive key is a hard error" {
     var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! mesage \"typo\"))\n");
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "// hi\n", .go));
+    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "// hi\n", .go, null));
 }
 
 test "engine: go detects console output" {
@@ -314,7 +336,7 @@ test "engine: go detects console output" {
         "    fmt.Println(2)\n" ++
         "    log.Printf(\"x\")\n" ++
         "}\n";
-    const diags = try f.engine.lint(gpa, src, .go);
+    const diags = try f.engine.lint(gpa, src, .go, null);
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 3), diags.len);
