@@ -10,6 +10,11 @@ pub fn build(b: *std.Build) void {
     const tree_sitter_module = tree_sitter_dep.module("tree_sitter");
     const ts_typescript_dep = b.dependency("tree_sitter_typescript", .{});
     const ts_go_dep = b.dependency("tree_sitter_go", .{});
+    const mvzr_dep = b.dependency("mvzr", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const mvzr_module = mvzr_dep.module("mvzr");
 
     const typescript_lib = addTreeSitterLib(b, .{
         .name = "ts_typescript",
@@ -56,7 +61,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .strip = strip,
     });
-    wireKataModule(exe_module, tree_sitter_module, embedded_rules_zig, &.{ typescript_lib, tsx_lib, go_lib });
+    wireKataModule(exe_module, tree_sitter_module, mvzr_module, embedded_rules_zig, &.{ typescript_lib, tsx_lib, go_lib });
     const exe = b.addExecutable(.{
         .name = "kata",
         .root_module = exe_module,
@@ -69,7 +74,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    wireKataModule(test_module, tree_sitter_module, embedded_rules_zig, &.{ typescript_lib, tsx_lib, go_lib });
+    wireKataModule(test_module, tree_sitter_module, mvzr_module, embedded_rules_zig, &.{ typescript_lib, tsx_lib, go_lib });
     const unit_tests = b.addTest(.{
         .root_module = test_module,
     });
@@ -87,10 +92,12 @@ pub fn build(b: *std.Build) void {
 fn wireKataModule(
     module: *std.Build.Module,
     tree_sitter_module: *std.Build.Module,
+    mvzr_module: *std.Build.Module,
     embedded_rules_zig: std.Build.LazyPath,
     libs: []const *std.Build.Step.Compile,
 ) void {
     module.addImport("tree_sitter", tree_sitter_module);
+    module.addImport("mvzr", mvzr_module);
     module.addAnonymousImport("embedded_rules", .{ .root_source_file = embedded_rules_zig });
     for (libs) |lib| module.linkLibrary(lib);
 }
