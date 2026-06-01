@@ -14,6 +14,8 @@ pub fn evaluate(
             .not_eq => if (!evalEq(pred, match, source, true)) return false,
             .any_of => if (!evalAnyOf(pred, match, source, false)) return false,
             .not_any_of => if (!evalAnyOf(pred, match, source, true)) return false,
+            .match => if (!evalMatch(pred, match, source, false)) return false,
+            .not_match => if (!evalMatch(pred, match, source, true)) return false,
             .unknown => {},
         }
     }
@@ -45,6 +47,17 @@ fn evalAnyOf(
         if (std.mem.eql(u8, left_text, candidate)) return !negate;
     }
     return negate;
+}
+
+fn evalMatch(
+    pred: rule.Predicate,
+    match: ts.Query.Match,
+    source: []const u8,
+    negate: bool,
+) bool {
+    const re = pred.regex orelse return false;
+    const text = resolveText(pred.args[0], match, source) orelse return false;
+    return re.isMatch(text) != negate;
 }
 
 fn resolveText(

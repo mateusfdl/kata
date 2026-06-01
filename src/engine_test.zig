@@ -49,6 +49,20 @@ const no_weak_assertions_rule =
     \\
 ;
 
+const no_comments_except_directives_rule =
+    \\((comment) @match
+    \\ (#not-match? @match "^//go:")
+    \\ (#set! message "comments are not allowed - code should be self-documenting"))
+    \\
+;
+
+const todo_comments_rule =
+    \\((comment) @match
+    \\ (#match? @match "TODO")
+    \\ (#set! message "TODO comments are not allowed"))
+    \\
+;
+
 const Fixture = test_fixture.Fixture;
 
 fn newFixture(allocator: std.mem.Allocator, langs: []const language.Name) !*Fixture {
@@ -217,6 +231,41 @@ test "engine: go detects blank identifier short declaration" {
         "blank identifier discarding function return - errors must be handled explicitly",
         diags[0].message,
     );
+}
+
+test "engine: not-match? exempts matching comments" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", no_comments_except_directives_rule);
+    defer f.deinit();
+
+    const src =
+        "//go:build linux\n" ++
+        "package main\n" ++
+        "// a regular comment\n" ++
+        "func f() {}\n";
+    const diags = try f.engine.lint(gpa, src, .go);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("no-comments", diags[0].rule_id);
+    try std.testing.expectEqual(@as(u32, 2), diags[0].range.start.line);
+}
+
+test "engine: match? flags only matching comments" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "todo-comments", todo_comments_rule);
+    defer f.deinit();
+
+    const src =
+        "package main\n" ++
+        "// TODO refactor this\n" ++
+        "// a regular comment\n" ++
+        "func f() {}\n";
+    const diags = try f.engine.lint(gpa, src, .go);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(@as(u32, 1), diags[0].range.start.line);
 }
 
 test "engine: go detects console output" {

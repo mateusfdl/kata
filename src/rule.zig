@@ -1,5 +1,6 @@
 const std = @import("std");
 const ts = @import("tree_sitter");
+const mvzr = @import("mvzr");
 
 const language = @import("language.zig");
 
@@ -27,6 +28,8 @@ pub const PredicateOp = enum {
     not_eq,
     any_of,
     not_any_of,
+    match,
+    not_match,
     unknown,
 };
 
@@ -38,6 +41,7 @@ pub const PredicateOperand = union(enum) {
 pub const Predicate = struct {
     op: PredicateOp,
     args: []PredicateOperand,
+    regex: ?mvzr.Regex = null,
 };
 
 pub const PatternMeta = struct {
@@ -130,6 +134,8 @@ fn predicateOpFromName(name: []const u8) PredicateOp {
     if (std.mem.eql(u8, name, "not-eq?")) return .not_eq;
     if (std.mem.eql(u8, name, "any-of?")) return .any_of;
     if (std.mem.eql(u8, name, "not-any-of?")) return .not_any_of;
+    if (std.mem.eql(u8, name, "match?")) return .match;
+    if (std.mem.eql(u8, name, "not-match?")) return .not_match;
     return .unknown;
 }
 
@@ -214,10 +220,22 @@ fn buildPredicate(
     for (group[1..], 0..) |arg_step, j| {
         args[j] = operandFromStep(query, arg_step);
     }
+    const op = predicateOpFromName(op_name);
     return .{
-        .op = predicateOpFromName(op_name),
+        .op = op,
         .args = args,
+        .regex = try compileRegexArg(op, args),
     };
+}
+
+fn compileRegexArg(op: PredicateOp, args: []const PredicateOperand) !?mvzr.Regex {
+    if (op != .match and op != .not_match) return null;
+    if (args.len != 2) return error.RuleCompileFailed;
+    const pattern = switch (args[1]) {
+        .string => |s| s,
+        .capture => return error.RuleCompileFailed,
+    };
+    return mvzr.compile(pattern) orelse error.RuleCompileFailed;
 }
 
 fn operandFromStep(query: *ts.Query, step: ts.Query.PredicateStep) PredicateOperand {
