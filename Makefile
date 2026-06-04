@@ -1,4 +1,4 @@
-.PHONY: build release release-native test run daemon stop bench bench-dev clean fmt
+.PHONY: build release release-native test run daemon stop clean fmt
 
 BINARY := kata
 
@@ -25,12 +25,6 @@ daemon: build
 
 stop:
 	@./bin/$(BINARY) stop
-
-bench: release-native
-	./bench.sh
-
-bench-dev: build
-	./bench.sh
 
 fmt:
 	zig fmt src pkg build.zig
