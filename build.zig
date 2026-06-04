@@ -3,49 +3,34 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
     const tree_sitter_dep = b.dependency("tree_sitter", .{
         .target = target,
         .optimize = optimize,
     });
     const tree_sitter_module = tree_sitter_dep.module("tree_sitter");
-    const ts_typescript_dep = b.dependency("tree_sitter_typescript", .{});
-    const ts_go_dep = b.dependency("tree_sitter_go", .{});
+
     const mvzr_dep = b.dependency("mvzr", .{
         .target = target,
         .optimize = optimize,
     });
     const mvzr_module = mvzr_dep.module("mvzr");
 
-    const typescript_lib = addTreeSitterLib(b, .{
-        .name = "ts_typescript",
+    const ts_typescript_dep = b.dependency("tree_sitter_typescript", .{
         .target = target,
         .optimize = optimize,
-        .src_root = ts_typescript_dep.path("typescript/src"),
-        .files = &.{ "parser.c", "scanner.c" },
     });
-    const tsx_lib = addTreeSitterLib(b, .{
-        .name = "ts_tsx",
-        .target = target,
-        .optimize = optimize,
-        .src_root = ts_typescript_dep.path("tsx/src"),
-        .files = &.{ "parser.c", "scanner.c" },
-    });
-    const go_lib = addTreeSitterLib(b, .{
-        .name = "ts_go",
-        .target = target,
-        .optimize = optimize,
-        .src_root = ts_go_dep.path("src"),
-        .files = &.{"parser.c"},
-    });
+    const typescript_lib = ts_typescript_dep.artifact("ts_typescript");
+    const tsx_lib = ts_typescript_dep.artifact("ts_tsx");
 
-    const gen_exe = b.addExecutable(.{
-        .name = "gen_embedded_rules",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/gen_embedded_rules.zig"),
-            .target = b.graph.host,
-            .optimize = .Debug,
-        }),
+    const ts_go_dep = b.dependency("tree_sitter_go", .{
+        .target = target,
+        .optimize = optimize,
     });
+    const go_lib = ts_go_dep.artifact("ts_go");
+
+    const gen_dep = b.dependency("gen_embedded_rules", .{});
+    const gen_exe = gen_dep.artifact("gen_embedded_rules");
 
     const run_gen = b.addRunArtifact(gen_exe);
     run_gen.addDirectoryArg(b.path("rules"));
@@ -100,37 +85,4 @@ fn wireKataModule(
     module.addImport("mvzr", mvzr_module);
     module.addAnonymousImport("embedded_rules", .{ .root_source_file = embedded_rules_zig });
     for (libs) |lib| module.linkLibrary(lib);
-}
-
-const TsLibOptions = struct {
-    name: []const u8,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    src_root: std.Build.LazyPath,
-    files: []const []const u8,
-};
-
-fn addTreeSitterLib(b: *std.Build, opts: TsLibOptions) *std.Build.Step.Compile {
-    const module = b.createModule(.{
-        .target = opts.target,
-        .optimize = opts.optimize,
-        .link_libc = true,
-    });
-    module.addCSourceFiles(.{
-        .root = opts.src_root,
-        .files = opts.files,
-        .flags = &.{
-            "-std=c11",
-            "-Wno-unused-but-set-variable",
-            "-Wno-unused-parameter",
-            "-Wno-unused-variable",
-            "-Wno-unused-function",
-        },
-    });
-    module.addIncludePath(opts.src_root);
-    return b.addLibrary(.{
-        .name = opts.name,
-        .linkage = .static,
-        .root_module = module,
-    });
 }

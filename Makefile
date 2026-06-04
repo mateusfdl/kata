@@ -33,7 +33,7 @@ bench-dev: build
 	./bench.sh
 
 fmt:
-	zig fmt src tools build.zig
+	zig fmt src pkg build.zig
 
 clean:
 	rm -rf bin zig-out zig-pkg .zig-cache

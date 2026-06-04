@@ -1,0 +1,16 @@
+.{
+    .name = .tree_sitter_typescript,
+    .version = "0.23.2",
+    .fingerprint = 0x75d5355a3451c29,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .tree_sitter_typescript_src = .{
+            .url = "https://github.com/tree-sitter/tree-sitter-typescript/archive/refs/tags/v0.23.2.tar.gz",
+            .hash = "N-V-__8AALhpIQFpocCrfuYTb_Vzvxj3QG0T-yqi9x1QNRNM",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+    },
+}

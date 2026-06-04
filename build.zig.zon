@@ -8,24 +8,19 @@
             .url = "git+https://github.com/tree-sitter/zig-tree-sitter#b55d4977d61330390fc733944da06106ff972660",
             .hash = "tree_sitter-0.26.0-8heIf3CaAQB4SSumoGzq3gLSz2rkvXxcKFyskRWqDGBz",
         },
-        .tree_sitter_typescript = .{
-            .url = "https://github.com/tree-sitter/tree-sitter-typescript/archive/refs/tags/v0.23.2.tar.gz",
-            .hash = "N-V-__8AALhpIQFpocCrfuYTb_Vzvxj3QG0T-yqi9x1QNRNM",
-        },
-        .tree_sitter_go = .{
-            .url = "https://github.com/tree-sitter/tree-sitter-go/archive/refs/tags/v0.23.4.tar.gz",
-            .hash = "N-V-__8AAByNIQDR0efQX7qy2pZDQwNjFUwLmncLFdNdjQzm",
-        },
         .mvzr = .{
             .url = "https://github.com/mnemnion/mvzr/archive/refs/tags/v0.3.10.tar.gz",
             .hash = "mvzr-0.3.9-ZSOky8FzAQBQ9-GkQnaLjOZZHxrioD8NwY-QyZT6oAyR",
         },
+        .tree_sitter_typescript = .{ .path = "pkg/tree-sitter-typescript" },
+        .tree_sitter_go = .{ .path = "pkg/tree-sitter-go" },
+        .gen_embedded_rules = .{ .path = "pkg/gen-embedded-rules" },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
-        "tools",
+        "pkg",
         "rules",
     },
 }
