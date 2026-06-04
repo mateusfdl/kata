@@ -1,8 +1,10 @@
 const std = @import("std");
 
-const engine_mod = @import("engine.zig");
-const language = @import("language.zig");
-const loader = @import("loader.zig");
+const lint = @import("lint.zig");
+const loader = @import("sources.zig").loader;
+
+const Engine = lint.Engine;
+const language = lint.language;
 
 pub const no_as_any_rule =
     \\((as_expression (predefined_type) @t) @match
@@ -23,7 +25,7 @@ pub const Fixture = struct {
     allocator: std.mem.Allocator,
     registry: language.Registry,
     rule_set: loader.RuleSet,
-    engine: engine_mod.Engine,
+    engine: Engine,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -47,7 +49,7 @@ pub const Fixture = struct {
             });
         }
 
-        self.engine = engine_mod.Engine.init(allocator, &self.registry, &self.rule_set);
+        self.engine = Engine.init(allocator, &self.registry, &self.rule_set);
         return self;
     }
 

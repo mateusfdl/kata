@@ -1,6 +1,6 @@
 const std = @import("std");
 const language = @import("language.zig");
-const test_fixture = @import("test_fixture.zig");
+const test_fixture = @import("../test_fixture.zig");
 
 const no_as_any_rule =
     \\((as_expression (predefined_type) @t) @match

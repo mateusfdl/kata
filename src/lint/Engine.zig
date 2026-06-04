@@ -4,16 +4,17 @@ const ts = @import("tree_sitter");
 const diagnostic = @import("diagnostic.zig");
 const glob = @import("glob.zig");
 const language = @import("language.zig");
-const loader = @import("loader.zig");
 const matcher = @import("matcher.zig");
 const rule = @import("rule.zig");
+
+const RuleSet = @import("RuleSet.zig").RuleSet;
 
 const initial_diagnostic_capacity: usize = 16;
 
 pub const Engine = struct {
     allocator: std.mem.Allocator,
     registry: *language.Registry,
-    rules: *loader.RuleSet,
+    rules: *RuleSet,
     compiled: std.EnumArray(language.Name, ?rule.CompiledRule) = .initFill(null),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
     cursor: *ts.QueryCursor,
@@ -22,7 +23,7 @@ pub const Engine = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         registry: *language.Registry,
-        rules: *loader.RuleSet,
+        rules: *RuleSet,
     ) Engine {
         return .{
             .allocator = allocator,

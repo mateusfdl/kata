@@ -1,11 +1,14 @@
 const std = @import("std");
 
-const check = @import("check.zig");
-const daemon = @import("daemon.zig");
-const diagnostic = @import("diagnostic.zig");
-const engine_mod = @import("engine.zig");
-const language = @import("language.zig");
-const protocol = @import("protocol.zig");
+const lint = @import("lint.zig");
+const server = @import("server.zig");
+const check = @import("cli/check.zig");
+
+const Engine = lint.Engine;
+const diagnostic = lint.diagnostic;
+const language = lint.language;
+const daemon = server.daemon;
+const protocol = server.protocol;
 
 pub const exit_clean: u8 = 0;
 pub const exit_violations: u8 = 2;
@@ -16,7 +19,7 @@ pub const Command = struct {
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     io: std.Io,
-    engine: *engine_mod.Engine,
+    engine: *Engine,
     environ: *std.process.Environ.Map,
     args: []const [:0]const u8,
     stdin: *std.Io.Reader,
@@ -63,7 +66,7 @@ fn runUnknown(c: Command, cmd: []const u8) !u8 {
     return exit_usage;
 }
 
-fn validateRules(engine: *engine_mod.Engine, stderr: *std.Io.Writer) !?u8 {
+fn validateRules(engine: *Engine, stderr: *std.Io.Writer) !?u8 {
     engine.prewarm() catch {
         const d = engine.compile_diag;
         if (d.lang) |lang| {
@@ -157,7 +160,7 @@ const usage_line = "usage: kata --lang=<ts|tsx|go> [--filename=<path>] < source\
 
 pub fn run(
     allocator: std.mem.Allocator,
-    engine: *engine_mod.Engine,
+    engine: *Engine,
     opts: Options,
 ) !u8 {
     const parsed = parseFlags(opts.args) catch return try usageError(opts.stderr);

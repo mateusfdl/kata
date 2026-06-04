@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const check = @import("check.zig");
-const test_fixture = @import("test_fixture.zig");
+const test_fixture = @import("../test_fixture.zig");
 
 test "check: appendIgnoredDirs keeps folder entries and skips globs, negation, comments, nested paths" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);

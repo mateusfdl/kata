@@ -1,9 +1,11 @@
 const std = @import("std");
 
-const language = @import("language.zig");
+const lint = @import("../lint.zig");
 const loader = @import("loader.zig");
-const rule = @import("rule.zig");
-const test_fixture = @import("test_fixture.zig");
+const test_fixture = @import("../test_fixture.zig");
+
+const language = lint.language;
+const rule = lint.rule;
 
 test "upsert: first insertion appends without warning" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);

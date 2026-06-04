@@ -1,7 +1,9 @@
 const std = @import("std");
 
-const engine_mod = @import("engine.zig");
-const language = @import("language.zig");
+const lint = @import("../lint.zig");
+
+const Engine = lint.Engine;
+const language = lint.language;
 
 const max_file_bytes: usize = 4 * 1024 * 1024;
 const max_gitignore_bytes: usize = 1024 * 1024;
@@ -15,7 +17,7 @@ const Counts = struct { files: usize, violations: usize };
 pub fn run(
     io: std.Io,
     gpa: std.mem.Allocator,
-    engine: *engine_mod.Engine,
+    engine: *Engine,
     target: []const u8,
     stdout: *std.Io.Writer,
 ) !Outcome {
@@ -34,7 +36,7 @@ pub fn run(
 fn checkFile(
     io: std.Io,
     gpa: std.mem.Allocator,
-    engine: *engine_mod.Engine,
+    engine: *Engine,
     target: []const u8,
     stdout: *std.Io.Writer,
 ) !Counts {
@@ -49,7 +51,7 @@ fn checkFile(
 fn checkDir(
     io: std.Io,
     gpa: std.mem.Allocator,
-    engine: *engine_mod.Engine,
+    engine: *Engine,
     target: []const u8,
     stdout: *std.Io.Writer,
 ) !Counts {
@@ -129,7 +131,7 @@ fn languageOf(name: []const u8) ?language.Name {
 
 fn reportFile(
     gpa: std.mem.Allocator,
-    engine: *engine_mod.Engine,
+    engine: *Engine,
     lang: language.Name,
     source: []const u8,
     path: []const u8,

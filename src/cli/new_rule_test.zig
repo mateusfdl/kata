@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const new_rule = @import("new_rule.zig");
-const test_fixture = @import("test_fixture.zig");
+const test_fixture = @import("../test_fixture.zig");
 
 const relativeTmpPath = test_fixture.relativeTmpPath;
 

@@ -1,8 +1,10 @@
 const std = @import("std");
 
-const cli = @import("cli.zig");
-const language = @import("language.zig");
-const rule = @import("rule.zig");
+const cli = @import("../cli.zig");
+const lint = @import("../lint.zig");
+
+const language = lint.language;
+const rule = lint.rule;
 
 pub const exit_clean = cli.exit_clean;
 pub const exit_usage = cli.exit_usage;

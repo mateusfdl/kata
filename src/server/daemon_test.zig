@@ -2,8 +2,8 @@ const std = @import("std");
 
 const daemon = @import("daemon.zig");
 const protocol = @import("protocol.zig");
-const test_fixture = @import("test_fixture.zig");
-const test_frame = @import("test_frame.zig");
+const test_fixture = @import("../test_fixture.zig");
+const test_frame = @import("../test_frame.zig");
 
 const daemon_mtime: i64 = 1726000000000;
 

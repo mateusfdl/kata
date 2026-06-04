@@ -1,0 +1,6 @@
+pub const daemon = @import("server/daemon.zig");
+pub const protocol = @import("server/protocol.zig");
+
+pub const serve = daemon.serve;
+pub const Context = daemon.Context;
+pub const binaryMtime = daemon.binaryMtime;

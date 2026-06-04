@@ -1,7 +1,8 @@
 const std = @import("std");
 const cli = @import("cli.zig");
-const engine_mod = @import("engine.zig");
 const test_fixture = @import("test_fixture.zig");
+
+const Engine = @import("lint.zig").Engine;
 
 fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
     return test_fixture.Fixture.init(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule);
@@ -20,7 +21,7 @@ const RunResult = struct {
 
 fn runCli(
     allocator: std.mem.Allocator,
-    engine: *engine_mod.Engine,
+    engine: *Engine,
     args: []const [:0]const u8,
     stdin_bytes: []const u8,
 ) !RunResult {

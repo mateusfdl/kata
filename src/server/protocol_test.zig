@@ -1,8 +1,8 @@
 const std = @import("std");
 
-const diagnostic = @import("diagnostic.zig");
+const diagnostic = @import("../lint.zig").diagnostic;
 const protocol = @import("protocol.zig");
-const test_frame = @import("test_frame.zig");
+const test_frame = @import("../test_frame.zig");
 
 test "protocol: request round-trips with all fields" {
     const gpa = std.testing.allocator;

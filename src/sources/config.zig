@@ -1,8 +1,10 @@
 const std = @import("std");
 
-const language = @import("language.zig");
+const lint = @import("../lint.zig");
 const loader = @import("loader.zig");
-const rule = @import("rule.zig");
+
+const language = lint.language;
+const rule = lint.rule;
 
 pub const max_config_bytes: usize = 64 * 1024;
 

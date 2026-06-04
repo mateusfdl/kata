@@ -1,12 +1,14 @@
 const std = @import("std");
 
-const diagnostic = @import("diagnostic.zig");
-const engine_mod = @import("engine.zig");
-const language = @import("language.zig");
+const lint = @import("../lint.zig");
 const protocol = @import("protocol.zig");
 
+const diagnostic = lint.diagnostic;
+const language = lint.language;
+const Engine = lint.Engine;
+
 pub const Context = struct {
-    engine: *engine_mod.Engine,
+    engine: *Engine,
     binary_mtime: i64,
 };
 
@@ -15,6 +17,29 @@ pub fn binaryMtime(io: std.Io) !i64 {
     const n = try std.process.executablePath(io, &buf);
     const stat = try std.Io.Dir.cwd().statFile(io, buf[0..n], .{});
     return stat.mtime.toMilliseconds();
+}
+
+var teardown_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+var teardown_path_len: usize = 0;
+
+fn handleTeardownSignal(_: std.posix.SIG) callconv(.c) void {
+    _ = std.os.linux.unlink(teardown_path_buf[0..teardown_path_len :0]);
+    std.os.linux.exit_group(0);
+}
+
+fn installTeardown(socket_path: []const u8) void {
+    if (socket_path.len >= teardown_path_buf.len) return;
+    @memcpy(teardown_path_buf[0..socket_path.len], socket_path);
+    teardown_path_buf[socket_path.len] = 0;
+    teardown_path_len = socket_path.len;
+
+    const act: std.posix.Sigaction = .{
+        .handler = .{ .handler = handleTeardownSignal },
+        .mask = std.posix.sigemptyset(),
+        .flags = 0,
+    };
+    std.posix.sigaction(.INT, &act, null);
+    std.posix.sigaction(.TERM, &act, null);
 }
 
 pub fn serve(
@@ -27,6 +52,7 @@ pub fn serve(
     var server = try bind(io, address, socket_path);
     defer server.deinit(io);
     defer std.Io.Dir.deleteFileAbsolute(io, socket_path) catch {};
+    installTeardown(socket_path);
 
     while (true) {
         const stream = server.accept(io) catch |err| switch (err) {

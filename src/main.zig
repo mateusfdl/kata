@@ -1,11 +1,14 @@
 const std = @import("std");
 
 const cli = @import("cli.zig");
-const config = @import("config.zig");
-const engine_mod = @import("engine.zig");
-const language = @import("language.zig");
-const loader_mod = @import("loader.zig");
-const new_rule = @import("new_rule.zig");
+const lint = @import("lint.zig");
+const sources = @import("sources.zig");
+const new_rule = @import("cli/new_rule.zig");
+
+const Engine = lint.Engine;
+const language = lint.language;
+const config = sources.config;
+const loader_mod = sources.loader;
 
 const io_buffer_size: usize = 8192;
 
@@ -68,7 +71,7 @@ pub fn main(init: std.process.Init) !void {
         config.filterDisabled(&rule_set, cfg.*);
     }
 
-    var engine = engine_mod.Engine.init(gpa, &registry, &rule_set);
+    var engine = Engine.init(gpa, &registry, &rule_set);
     defer engine.deinit();
 
     const code = cli.dispatch(.{

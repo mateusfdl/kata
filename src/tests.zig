@@ -5,15 +5,15 @@ test {
 }
 
 comptime {
-    _ = @import("diagnostic_test.zig");
-    _ = @import("language_test.zig");
-    _ = @import("engine_test.zig");
-    _ = @import("check_test.zig");
+    _ = @import("lint/diagnostic_test.zig");
+    _ = @import("lint/language_test.zig");
+    _ = @import("lint/engine_test.zig");
+    _ = @import("lint/glob_test.zig");
+    _ = @import("cli/check_test.zig");
     _ = @import("cli_test.zig");
-    _ = @import("protocol_test.zig");
-    _ = @import("daemon_test.zig");
-    _ = @import("config_test.zig");
-    _ = @import("loader_test.zig");
-    _ = @import("new_rule_test.zig");
-    _ = @import("glob_test.zig");
+    _ = @import("server/protocol_test.zig");
+    _ = @import("server/daemon_test.zig");
+    _ = @import("sources/config_test.zig");
+    _ = @import("sources/loader_test.zig");
+    _ = @import("cli/new_rule_test.zig");
 }

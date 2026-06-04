@@ -1,61 +1,21 @@
 const std = @import("std");
 
 const embedded_rules = @import("embedded_rules");
-const language = @import("language.zig");
-const rule = @import("rule.zig");
+const lint = @import("../lint.zig");
+
+const language = lint.language;
+const rule = lint.rule;
+
+pub const RuleSet = lint.RuleSet;
+pub const Source = lint.Source;
+pub const Warning = lint.Warning;
 
 const scm_suffix = ".scm";
-
-pub const Source = enum { embedded, external, user };
-
-pub const Warning = struct {
-    source: Source,
-    lang: language.Name,
-    id: []const u8,
-};
 
 pub const Sources = struct {
     external_dir: ?[]const u8 = null,
     user_dir: ?[]const u8 = null,
     skip_embedded: bool = false,
-};
-
-pub const RuleSet = struct {
-    allocator: std.mem.Allocator,
-    by_lang: std.EnumArray(language.Name, std.ArrayList(rule.RawRule)) = .initFill(.empty),
-    warnings: std.ArrayList(Warning) = .empty,
-
-    pub fn deinit(self: *RuleSet) void {
-        var it = self.by_lang.iterator();
-        while (it.next()) |entry| {
-            entry.value.deinit(self.allocator);
-        }
-        self.warnings.deinit(self.allocator);
-    }
-
-    pub fn get(self: *const RuleSet, name: language.Name) []const rule.RawRule {
-        return self.by_lang.getPtrConst(name).items;
-    }
-
-    pub fn append(self: *RuleSet, name: language.Name, r: rule.RawRule) !void {
-        try self.by_lang.getPtr(name).append(self.allocator, r);
-    }
-
-    pub fn upsert(self: *RuleSet, name: language.Name, r: rule.RawRule, source: Source) !void {
-        const list = self.by_lang.getPtr(name);
-        for (list.items, 0..) |existing, idx| {
-            if (std.mem.eql(u8, existing.id, r.id)) {
-                list.items[idx] = r;
-                try self.warnings.append(self.allocator, .{
-                    .source = source,
-                    .lang = name,
-                    .id = r.id,
-                });
-                return;
-            }
-        }
-        try list.append(self.allocator, r);
-    }
 };
 
 pub fn load(

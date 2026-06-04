@@ -1,8 +1,10 @@
 const std = @import("std");
 
+const lint = @import("../lint.zig");
 const config = @import("config.zig");
-const language = @import("language.zig");
 const loader = @import("loader.zig");
+
+const language = lint.language;
 
 fn expectParseOk(source: []const u8) !config.Config {
     var diag: config.Diagnostic = .{};
@@ -159,7 +161,7 @@ const RuleFixture = struct {
     }
 };
 
-fn hasId(rules: []const @import("rule.zig").RawRule, id: []const u8) bool {
+fn hasId(rules: []const lint.rule.RawRule, id: []const u8) bool {
     for (rules) |r| {
         if (std.mem.eql(u8, r.id, id)) return true;
     }
