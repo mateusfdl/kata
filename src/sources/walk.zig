@@ -27,7 +27,6 @@ pub fn walkSourceFiles(
     var walker = try dir.walkSelectively(gpa);
     defer walker.deinit();
 
-    const base = std.mem.trimEnd(u8, target, "/");
     var files: usize = 0;
     while (try walker.next(io)) |entry| {
         if (entry.kind == .directory) {
@@ -40,13 +39,20 @@ pub fn walkSourceFiles(
         const source = entry.dir.readFileAlloc(io, entry.basename, gpa, .limited(max_file_bytes)) catch continue;
         defer gpa.free(source);
 
-        const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base, entry.path });
+        const path = try indexPath(gpa, target, entry.path);
         defer gpa.free(path);
 
         files += 1;
         try visit(context, lang, source, path);
     }
     return files;
+}
+
+pub fn indexPath(gpa: std.mem.Allocator, target: []const u8, sub_path: []const u8) ![]u8 {
+    const trimmed = std.mem.trimEnd(u8, target, "/");
+    if (trimmed.len == 0 or std.mem.eql(u8, trimmed, ".")) return gpa.dupe(u8, sub_path);
+    const base = if (std.mem.startsWith(u8, trimmed, "./")) trimmed[2..] else trimmed;
+    return std.fmt.allocPrint(gpa, "{s}/{s}", .{ base, sub_path });
 }
 
 pub fn languageOf(name: []const u8) ?language.Name {

@@ -27,6 +27,27 @@ test "walk: appendIgnoredDirs keeps folder entries and skips globs, negation, co
     }
 }
 
+test "walk: indexPath drops dot target so paths are root relative" {
+    const gpa = std.testing.allocator;
+    const path = try walk.indexPath(gpa, ".", "src/domain/user.ts");
+    defer gpa.free(path);
+    try std.testing.expectEqualStrings("src/domain/user.ts", path);
+}
+
+test "walk: indexPath strips leading dot-slash from target" {
+    const gpa = std.testing.allocator;
+    const path = try walk.indexPath(gpa, "./src", "domain/user.ts");
+    defer gpa.free(path);
+    try std.testing.expectEqualStrings("src/domain/user.ts", path);
+}
+
+test "walk: indexPath joins targets with trailing slash trimmed" {
+    const gpa = std.testing.allocator;
+    const path = try walk.indexPath(gpa, "src/", "domain/user.ts");
+    defer gpa.free(path);
+    try std.testing.expectEqualStrings("src/domain/user.ts", path);
+}
+
 test "walk: appendIgnoredDirs on empty input adds nothing" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
