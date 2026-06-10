@@ -219,3 +219,102 @@ test "project rule: violations are sorted by path and position" {
     try std.testing.expectEqualStrings("src/aa-caller.ts", violations[0].path);
     try std.testing.expectEqualStrings("src/zz-caller.ts", violations[1].path);
 }
+
+const domain_no_infra: project_rule.ProjectRule = .{
+    .id = "domain-no-infra",
+    .kind = .import_boundary,
+    .from = "src/domain/**",
+    .deny = "src/infra/**",
+};
+
+test "project rule: import-boundary resolves ts relative specifiers" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    const domain_user =
+        "import { Db } from \"../infra/db\";\n" ++
+        "import { Money } from \"./money\";\n" ++
+        "export class User {}\n";
+    const app_main =
+        "import { Db } from \"../infra/db\";\n" ++
+        "export const main = 1;\n";
+    try index.put(try f.engine.extractFacts(gpa, domain_user, .ts, "src/domain/user.ts"));
+    try index.put(try f.engine.extractFacts(gpa, app_main, .ts, "src/app/main.ts"));
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &index);
+
+    try std.testing.expectEqual(@as(usize, 1), violations.len);
+    const v = violations[0];
+    try std.testing.expectEqualStrings("src/domain/user.ts", v.path);
+    try std.testing.expectEqualStrings("domain-no-infra", v.diagnostic.rule_id);
+    try std.testing.expectEqualStrings("ts", v.diagnostic.language);
+    try std.testing.expectEqualStrings(
+        "import \"../infra/db\" is denied from src/domain/**",
+        v.diagnostic.message,
+    );
+    try std.testing.expectEqual(@as(u32, 0), v.diagnostic.range.start.line);
+}
+
+test "project rule: import-boundary matches go import strings" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    const domain_order =
+        "package domain\n" ++
+        "import \"example.com/shop/infra/db\"\n" ++
+        "var _ = db.Conn\n";
+    const infra_db =
+        "package db\n" ++
+        "import \"example.com/shop/domain\"\n" ++
+        "var Conn = 1\n";
+    try index.put(try f.engine.extractFacts(gpa, domain_order, .go, "internal/domain/order.go"));
+    try index.put(try f.engine.extractFacts(gpa, infra_db, .go, "internal/infra/db/db.go"));
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const rule: project_rule.ProjectRule = .{
+        .id = "domain-no-infra",
+        .kind = .import_boundary,
+        .from = "**/domain/**",
+        .deny = "**/infra/**",
+    };
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{rule}, &index);
+
+    try std.testing.expectEqual(@as(usize, 1), violations.len);
+    try std.testing.expectEqualStrings("internal/domain/order.go", violations[0].path);
+    try std.testing.expectEqual(@as(u32, 1), violations[0].diagnostic.range.start.line);
+}
+
+test "project rule: import-boundary ignores imports outside the deny glob" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    const domain_user =
+        "import { Money } from \"./money\";\n" ++
+        "import { uuid } from \"uuid\";\n" ++
+        "export class User {}\n";
+    try index.put(try f.engine.extractFacts(gpa, domain_user, .ts, "src/domain/user.ts"));
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &index);
+
+    try std.testing.expectEqual(@as(usize, 0), violations.len);
+}

@@ -283,6 +283,47 @@ test "filter: combines scoped and bare across multiple langs" {
     try std.testing.expect(hasId(fx.set.get(.tsx), "no-console"));
 }
 
+test "config: parses an import-boundary project rule" {
+    const src =
+        \\project-rules:
+        \\  domain-no-infra:
+        \\    kind: import-boundary
+        \\    from: src/domain/**
+        \\    deny: src/infra/**
+        \\
+    ;
+    var cfg = try expectParseOk(src);
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 1), cfg.project_rules.len);
+    const r = cfg.project_rules[0];
+    try std.testing.expectEqualStrings("domain-no-infra", r.id);
+    try std.testing.expectEqual(lint.project_rule.ProjectRule.Kind.import_boundary, r.kind);
+    try std.testing.expectEqualStrings("src/domain/**", r.from);
+    try std.testing.expectEqualStrings("src/infra/**", r.deny);
+}
+
+test "config: import-boundary without from is rejected" {
+    const src =
+        \\project-rules:
+        \\  domain-no-infra:
+        \\    kind: import-boundary
+        \\    deny: src/infra/**
+        \\
+    ;
+    try expectParseErr(src, error.IncompleteImportBoundary, 2);
+}
+
+test "config: import-boundary without deny is rejected" {
+    const src =
+        \\project-rules:
+        \\  domain-no-infra:
+        \\    kind: import-boundary
+        \\    from: src/domain/**
+        \\
+    ;
+    try expectParseErr(src, error.IncompleteImportBoundary, 2);
+}
+
 test "errorMessage: returns descriptive text for known errors" {
     try std.testing.expectEqualStrings(
         "tabs are not allowed in indentation",

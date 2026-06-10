@@ -38,6 +38,7 @@ pub const Import = struct {
     name: []const u8,
     source: []const u8,
     start: u32,
+    range: diagnostic.Range,
 };
 
 pub const FileFacts = struct {
@@ -273,6 +274,7 @@ fn assemble(
             .name = if (nodes.get(.import_name)) |name| try nodeText(arena, source, name) else "",
             .source = std.mem.trim(u8, raw, "\""),
             .start = source_node.startByte(),
+            .range = rangeOf(source_node),
         });
         return;
     }

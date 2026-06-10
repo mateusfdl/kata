@@ -44,6 +44,7 @@ pub const ParseError = error{
     IncompleteProjectRule,
     MalformedProjectRuleEntry,
     UnknownProjectRuleKey,
+    IncompleteImportBoundary,
     InvalidRatchetValue,
 } || std.mem.Allocator.Error;
 
@@ -64,11 +65,12 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.UnknownMetric => "unknown metric (expected 'complexity', 'nesting-depth', or 'function-length')",
         error.InvalidThreshold => "metric threshold must be a positive integer",
         error.MalformedMetricEntry => "metric entry must be '  <metric>: <threshold>'",
-        error.UnknownProjectRuleKind => "unknown project rule kind (expected 'restricted-callers')",
+        error.UnknownProjectRuleKind => "unknown project rule kind (expected 'restricted-callers' or 'import-boundary')",
         error.MissingProjectRuleKind => "project rule is missing 'kind'",
         error.IncompleteProjectRule => "restricted-callers requires 'callee-suffix' and 'caller-suffix'",
         error.MalformedProjectRuleEntry => "project rule must be '  <id>:' followed by indented '<key>: <value>' properties",
-        error.UnknownProjectRuleKey => "unknown project rule key (expected 'kind', 'callee-suffix', or 'caller-suffix')",
+        error.UnknownProjectRuleKey => "unknown project rule key (expected 'kind', 'callee-suffix', 'caller-suffix', 'from', or 'deny')",
+        error.IncompleteImportBoundary => "import-boundary requires 'from' and 'deny'",
         error.InvalidRatchetValue => "ratchet must be 'true' or 'false'",
         else => @errorName(err),
     };
@@ -82,6 +84,8 @@ const PendingProjectRule = struct {
     kind: ?project_rule.ProjectRule.Kind = null,
     callee_suffix: ?[]const u8 = null,
     caller_suffix: ?[]const u8 = null,
+    from: ?[]const u8 = null,
+    deny: ?[]const u8 = null,
 };
 
 pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) ParseError!Config {
@@ -187,20 +191,40 @@ fn finalizePending(
         diag.line = p.line;
         return error.MissingProjectRuleKind;
     };
-    const callee_suffix = p.callee_suffix orelse {
-        diag.line = p.line;
-        return error.IncompleteProjectRule;
-    };
-    const caller_suffix = p.caller_suffix orelse {
-        diag.line = p.line;
-        return error.IncompleteProjectRule;
-    };
-    try project_rules.append(arena, .{
-        .id = p.id,
-        .kind = kind,
-        .callee_suffix = callee_suffix,
-        .caller_suffix = caller_suffix,
-    });
+    switch (kind) {
+        .restricted_callers => {
+            const callee_suffix = p.callee_suffix orelse {
+                diag.line = p.line;
+                return error.IncompleteProjectRule;
+            };
+            const caller_suffix = p.caller_suffix orelse {
+                diag.line = p.line;
+                return error.IncompleteProjectRule;
+            };
+            try project_rules.append(arena, .{
+                .id = p.id,
+                .kind = kind,
+                .callee_suffix = callee_suffix,
+                .caller_suffix = caller_suffix,
+            });
+        },
+        .import_boundary => {
+            const from = p.from orelse {
+                diag.line = p.line;
+                return error.IncompleteImportBoundary;
+            };
+            const deny = p.deny orelse {
+                diag.line = p.line;
+                return error.IncompleteImportBoundary;
+            };
+            try project_rules.append(arena, .{
+                .id = p.id,
+                .kind = kind,
+                .from = from,
+                .deny = deny,
+            });
+        },
+    }
 }
 
 fn startProjectRule(
@@ -234,6 +258,14 @@ fn setProjectRuleProperty(
     }
     if (std.mem.eql(u8, key, "caller-suffix")) {
         pending.caller_suffix = try arena.dupe(u8, value);
+        return;
+    }
+    if (std.mem.eql(u8, key, "from")) {
+        pending.from = try arena.dupe(u8, value);
+        return;
+    }
+    if (std.mem.eql(u8, key, "deny")) {
+        pending.deny = try arena.dupe(u8, value);
         return;
     }
     return error.UnknownProjectRuleKey;

@@ -85,6 +85,8 @@ test "facts: ts extraction covers classes, methods, decls, calls, and imports" {
     try std.testing.expectEqual(@as(usize, 1), ff.imports.len);
     try std.testing.expectEqualStrings("UserRepository", ff.imports[0].name);
     try std.testing.expectEqualStrings("./user-repository", ff.imports[0].source);
+    try std.testing.expectEqual(@as(u32, 0), ff.imports[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 32), ff.imports[0].range.start.column);
 }
 
 test "facts: go extraction covers types, methods, decls, calls, and imports" {
