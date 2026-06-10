@@ -57,8 +57,7 @@ pub fn run(
     var it = root.iterate();
     while (try it.next(io)) |entry| {
         if (entry.kind != .directory) continue;
-        const lang_subdir = try arena.dupe(u8, entry.name);
-        try runLangFixtures(io, arena, &engine, &root, rules_dir, lang_subdir, stdout, &totals);
+        try runLangFixtures(io, arena, &engine, &root, rules_dir, entry.name, stdout, &totals);
     }
 
     try stdout.print("tested {d} fixtures, {d} failures\n", .{ totals.fixtures, totals.failures });
@@ -106,11 +105,10 @@ fn checkFixture(
 ) !usize {
     var expectations: std.ArrayList(Expectation) = .empty;
     var annotation_lines: std.ArrayList(u32) = .empty;
-    try parseAnnotations(arena, source, &expectations, &annotation_lines);
+    var failures = try parseAnnotations(arena, source, path, stdout, &expectations, &annotation_lines);
 
     const diagnostics = try engine.lint(arena, source, lang, path);
 
-    var failures: usize = 0;
     for (diagnostics) |d| {
         const line = d.range.start.line;
         if (containsLine(annotation_lines.items, line)) continue;
@@ -126,23 +124,54 @@ fn checkFixture(
     return failures;
 }
 
+const Annotation = struct {
+    line: u32,
+    ids: []const []const u8,
+};
+
 fn parseAnnotations(
     arena: std.mem.Allocator,
     source: []const u8,
+    path: []const u8,
+    stdout: *std.Io.Writer,
     expectations: *std.ArrayList(Expectation),
     annotation_lines: *std.ArrayList(u32),
-) !void {
+) !usize {
+    var annotations: std.ArrayList(Annotation) = .empty;
     var line_no: u32 = 0;
     var lines = std.mem.splitScalar(u8, source, '\n');
     while (lines.next()) |raw_line| : (line_no += 1) {
         const line = std.mem.trim(u8, raw_line, " \t\r");
         if (!std.mem.startsWith(u8, line, expect_marker)) continue;
         try annotation_lines.append(arena, line_no);
-        var ids = std.mem.tokenizeAny(u8, line[expect_marker.len..], ", ");
-        while (ids.next()) |id| {
-            try expectations.append(arena, .{ .line = line_no + 1, .rule_id = id });
+        var collected: std.ArrayList([]const u8) = .empty;
+        var ids = std.mem.tokenizeAny(u8, line[expect_marker.len..], ", \t");
+        while (ids.next()) |id| try collected.append(arena, id);
+        try annotations.append(arena, .{ .line = line_no, .ids = try collected.toOwnedSlice(arena) });
+    }
+
+    var total = line_no;
+    if (source.len > 0 and source[source.len - 1] == '\n') total -= 1;
+
+    var failures: usize = 0;
+    for (annotations.items) |annotation| {
+        if (annotation.ids.len == 0) {
+            try stdout.print("{s}:{d} empty kata-expect annotation\n", .{ path, annotation.line + 1 });
+            failures += 1;
+            continue;
+        }
+        var target = annotation.line + 1;
+        while (containsLine(annotation_lines.items, target)) target += 1;
+        if (target >= total) {
+            try stdout.print("{s}:{d} dangling kata-expect annotation\n", .{ path, annotation.line + 1 });
+            failures += 1;
+            continue;
+        }
+        for (annotation.ids) |id| {
+            try expectations.append(arena, .{ .line = target, .rule_id = id });
         }
     }
+    return failures;
 }
 
 fn containsLine(lines: []const u32, line: u32) bool {

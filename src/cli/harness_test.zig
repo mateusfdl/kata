@@ -127,6 +127,62 @@ test "harness: duplicate expectations cover duplicate diagnostics on one line" {
     try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
 }
 
+test "harness: stacked annotations bind to the next code line" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "flag-any.scm", flag_any_rule,
+        "sample.ts",
+        "// kata-expect: flag-any\n" ++
+            "// kata-expect: flag-any\n" ++
+            "const pair = [foo as any, bar as any];\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.pass, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+}
+
+test "harness: annotation on the last line reports dangling" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "flag-any.scm", flag_any_rule,
+        "sample.ts",
+        "const ok: string = \"1\";\n" ++
+            "// kata-expect: flag-any\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.failures, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:2 dangling kata-expect annotation") != null);
+}
+
+test "harness: annotation without rule ids reports a failure" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "flag-any.scm", flag_any_rule,
+        "sample.ts",
+        "// kata-expect:\n" ++
+            "const ok: string = \"1\";\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.failures, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:1 empty kata-expect annotation") != null);
+}
+
+test "harness: tab-separated annotation ids are recognized" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "flag-any.scm", flag_any_rule,
+        "sample.ts",
+        "// kata-expect:\tflag-any\n" ++
+            "const x = foo as any;\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.pass, outcome);
+}
+
 test "harness: a single expectation does not cover two diagnostics" {
     const io = std.testing.io;
     var s = try Setup.init(io, "flag-any.scm", flag_any_rule,
