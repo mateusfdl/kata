@@ -25,3 +25,7 @@ test "Registry resolves distinct grammar pointers per language" {
     const d = r.get(.go);
     try std.testing.expect(c != d);
 }
+
+test "supported_list names every language" {
+    try std.testing.expectEqualStrings("ts, tsx, or go", language.supported_list);
+}

@@ -31,6 +31,16 @@ pub const Name = enum {
 
 pub const max_langs_per_dir: usize = std.enums.values(Name).len;
 
+pub const supported_list = blk: {
+    var text: []const u8 = "";
+    const names = std.enums.values(Name);
+    for (names, 0..) |n, i| {
+        if (i > 0) text = text ++ (if (i == names.len - 1) ", or " else ", ");
+        text = text ++ infos.get(n).canonical;
+    }
+    break :blk text;
+};
+
 pub fn parseDirName(name: []const u8, out: []Name) ![]Name {
     var n: usize = 0;
     var it = std.mem.splitScalar(u8, name, '+');

@@ -60,7 +60,7 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.BadIndent => "indent must be 0 or 2 spaces",
         error.MalformedListItem => "list item must be '  - <rule-id>'",
         error.ContentAfterKey => "no inline content allowed after key",
-        error.UnknownLanguage => "unknown language (expected ts, tsx, or go)",
+        error.UnknownLanguage => "unknown language (expected " ++ language.supported_list ++ ")",
         error.InvalidRuleId => "rule id must match [A-Za-z0-9_-]+",
         error.UnexpectedListItem => "list item without a preceding key",
         error.UnknownMetric => "unknown metric (expected 'complexity', 'nesting-depth', or 'function-length')",

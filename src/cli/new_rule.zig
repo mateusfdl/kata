@@ -34,7 +34,7 @@ pub fn run(
     const id = opts.args[2];
 
     const lang = language.Name.fromString(lang_str) orelse {
-        try opts.stderr.print("unknown language: \"{s}\" (expected ts, tsx, or go)\n", .{lang_str});
+        try opts.stderr.print("unknown language: \"{s}\" (expected " ++ language.supported_list ++ ")\n", .{lang_str});
         try opts.stderr.flush();
         return exit_usage;
     };
