@@ -54,7 +54,7 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.UnknownLanguage => "unknown language (expected ts, tsx, or go)",
         error.InvalidRuleId => "rule id must match [A-Za-z0-9_-]+",
         error.UnexpectedListItem => "list item without a preceding key",
-        error.UnknownMetric => "unknown metric (expected 'function-length')",
+        error.UnknownMetric => "unknown metric (expected 'complexity', 'nesting-depth', or 'function-length')",
         error.InvalidThreshold => "metric threshold must be a positive integer",
         error.MalformedMetricEntry => "metric entry must be '  <metric>: <threshold>'",
         else => @errorName(err),

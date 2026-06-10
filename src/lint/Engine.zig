@@ -19,7 +19,7 @@ pub const Engine = struct {
     compiled: std.EnumArray(language.Name, ?rule.CompiledRule) = .initFill(null),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
     metrics: metric.Set = metric.empty,
-    metric_queries: std.EnumArray(language.Name, ?*ts.Query) = .initFill(null),
+    metric_queries: std.EnumArray(language.Name, ?metric.Compiled) = .initFill(null),
     cursor: *ts.QueryCursor,
     compile_diag: rule.Diagnostic = .{},
 
@@ -47,7 +47,7 @@ pub const Engine = struct {
         }
         var mit = self.metric_queries.iterator();
         while (mit.next()) |entry| {
-            if (entry.value.*) |query| query.destroy();
+            if (entry.value.*) |*compiled| compiled.deinit(self.allocator);
         }
         self.cursor.destroy();
     }
@@ -76,13 +76,11 @@ pub const Engine = struct {
         return &slot.*.?;
     }
 
-    fn ensureMetricQuery(self: *Engine, lang: language.Name) !*ts.Query {
-        if (self.metric_queries.get(lang)) |cached| return cached;
-        var error_offset: u32 = 0;
-        const query = ts.Query.create(self.registry.get(lang), metric.querySource(lang), &error_offset) catch
-            return error.MetricQueryCompileFailed;
-        self.metric_queries.set(lang, query);
-        return query;
+    fn ensureMetricQuery(self: *Engine, lang: language.Name) !*metric.Compiled {
+        const slot = self.metric_queries.getPtr(lang);
+        if (slot.*) |*cached| return cached;
+        slot.* = try metric.compile(self.allocator, self.registry.get(lang), lang);
+        return &slot.*.?;
     }
 
     pub fn lint(

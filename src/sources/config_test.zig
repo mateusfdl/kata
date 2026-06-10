@@ -259,6 +259,21 @@ test "config: parses metrics block" {
     try std.testing.expectEqual(@as(usize, 0), cfg.disabled.len);
 }
 
+test "config: parses all metric names" {
+    const src =
+        \\metrics:
+        \\  complexity: 15
+        \\  nesting-depth: 4
+        \\  function-length: 80
+        \\
+    ;
+    var cfg = try expectParseOk(src);
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(?u32, 15), cfg.metrics.get(.complexity));
+    try std.testing.expectEqual(@as(?u32, 4), cfg.metrics.get(.nesting_depth));
+    try std.testing.expectEqual(@as(?u32, 80), cfg.metrics.get(.function_length));
+}
+
 test "config: metrics and disabled coexist" {
     const src =
         \\disabled:
