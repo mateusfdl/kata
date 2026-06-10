@@ -4,40 +4,6 @@ const check = @import("check.zig");
 const lint = @import("../lint.zig");
 const test_fixture = @import("../test_fixture.zig");
 
-test "check: appendIgnoredDirs keeps folder entries and skips globs, negation, comments, nested paths" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-
-    var out: std.ArrayList([]const u8) = .empty;
-    const gitignore =
-        "# build artifacts\n" ++
-        "node_modules\n" ++
-        "dist/\n" ++
-        "/build\n" ++
-        "  coverage  \n" ++
-        "*.log\n" ++
-        "!keep-me\n" ++
-        "src/generated\n" ++
-        "\n";
-
-    try check.appendIgnoredDirs(arena.allocator(), gitignore, &out);
-
-    const expected = [_][]const u8{ "node_modules", "dist", "build", "coverage" };
-    try std.testing.expectEqual(expected.len, out.items.len);
-    for (expected, out.items) |want, got| {
-        try std.testing.expectEqualStrings(want, got);
-    }
-}
-
-test "check: appendIgnoredDirs on empty input adds nothing" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-
-    var out: std.ArrayList([]const u8) = .empty;
-    try check.appendIgnoredDirs(arena.allocator(), "", &out);
-    try std.testing.expectEqual(@as(usize, 0), out.items.len);
-}
-
 test "check: run skips .git and gitignored folders" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;

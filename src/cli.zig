@@ -29,7 +29,7 @@ pub const Command = struct {
 };
 
 pub const Subcommand = union(enum) {
-    daemon,
+    daemon: ?[]const u8,
     check: []const u8,
     facts: []const u8,
     stop,
@@ -38,8 +38,9 @@ pub const Subcommand = union(enum) {
 };
 
 pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
-    if (args.len == 0) return .daemon;
+    if (args.len == 0) return .{ .daemon = null };
     const cmd = args[0];
+    if (std.mem.eql(u8, cmd, "daemon")) return .{ .daemon = rootFlag(args[1..]) };
     if (std.mem.eql(u8, cmd, "check")) return .{ .check = firstPositional(args[1..]) orelse "." };
     if (std.mem.eql(u8, cmd, "facts")) return .{ .facts = firstPositional(args[1..]) orelse "" };
     if (std.mem.eql(u8, cmd, "stop")) return .stop;
@@ -47,9 +48,22 @@ pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
     return .{ .unknown = cmd };
 }
 
+fn rootFlag(args: []const [:0]const u8) ?[]const u8 {
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        if (std.mem.startsWith(u8, a, "--root=")) return a["--root=".len..];
+        if (std.mem.eql(u8, a, "--root")) {
+            if (i + 1 < args.len) return args[i + 1];
+            return null;
+        }
+    }
+    return null;
+}
+
 pub fn dispatch(c: Command) !u8 {
     return switch (parseSubcommand(c.args)) {
-        .daemon => runDaemon(c),
+        .daemon => |root| runDaemon(c, root),
         .check => |target| runCheck(c, target),
         .facts => |target| runFacts(c, target),
         .stop => runStop(c),
@@ -65,7 +79,7 @@ pub fn dispatch(c: Command) !u8 {
 
 fn runUnknown(c: Command, cmd: []const u8) !u8 {
     try c.stderr.print("unknown subcommand: \"{s}\"\n", .{cmd});
-    try c.stderr.writeAll("usage: kata [check <path> | facts <file> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
+    try c.stderr.writeAll("usage: kata [daemon [--root <dir>] | check <path> | facts <file> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
     try c.stderr.flush();
     return exit_usage;
 }
@@ -84,7 +98,7 @@ fn validateRules(engine: *Engine, stderr: *std.Io.Writer) !?u8 {
     return null;
 }
 
-fn runDaemon(c: Command) !u8 {
+fn runDaemon(c: Command, root: ?[]const u8) !u8 {
     if (try validateRules(c.engine, c.stderr)) |code| return code;
 
     const socket_path = resolveSocketPath(c.arena, c.environ) catch |err|
@@ -93,9 +107,20 @@ fn runDaemon(c: Command) !u8 {
     const binary_mtime = daemon.binaryMtime(c.io) catch |err|
         return internalError(c.stderr, "stat executable", err);
 
+    var project_state: ?daemon.ProjectState = null;
+    defer if (project_state) |*p| p.deinit();
+    if (root) |r| {
+        if (c.project_rules.len == 0)
+            return printAndExit(c.stderr, "kata daemon --root requires project-rules in rules.yaml\n", exit_usage);
+        project_state = daemon.ProjectState.init(c.gpa, c.project_rules);
+        _ = daemon.buildIndex(c.io, c.gpa, c.engine, r, &project_state.?) catch |err|
+            return internalError(c.stderr, "index project", err);
+    }
+
     daemon.serve(c.io, c.gpa, .{
         .engine = c.engine,
         .binary_mtime = binary_mtime,
+        .project = if (project_state) |*p| p else null,
     }, socket_path) catch |err| switch (err) {
         error.AlreadyRunning => return printAndExit(c.stderr, "kata daemon already running\n", exit_clean),
         else => return internalError(c.stderr, "serve", err),

@@ -2,15 +2,51 @@ const std = @import("std");
 
 const lint = @import("../lint.zig");
 const protocol = @import("protocol.zig");
+const walk = @import("../sources.zig").walk;
 
 const diagnostic = lint.diagnostic;
 const language = lint.language;
+const project_rule = lint.project_rule;
 const Engine = lint.Engine;
 
 pub const Context = struct {
     engine: *Engine,
     binary_mtime: i64,
+    project: ?*ProjectState = null,
 };
+
+pub const ProjectState = struct {
+    rules: []const project_rule.ProjectRule,
+    index: lint.ProjectIndex,
+
+    pub fn init(gpa: std.mem.Allocator, rules: []const project_rule.ProjectRule) ProjectState {
+        return .{ .rules = rules, .index = lint.ProjectIndex.init(gpa) };
+    }
+
+    pub fn deinit(self: *ProjectState) void {
+        self.index.deinit();
+    }
+};
+
+const IndexVisit = struct {
+    engine: *Engine,
+    index: *lint.ProjectIndex,
+};
+
+pub fn buildIndex(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    engine: *Engine,
+    root: []const u8,
+    state: *ProjectState,
+) !usize {
+    const visit: IndexVisit = .{ .engine = engine, .index = &state.index };
+    return walk.walkSourceFiles(io, gpa, root, visit, visitForIndex);
+}
+
+fn visitForIndex(visit: IndexVisit, lang: language.Name, source: []const u8, path: []const u8) anyerror!void {
+    try visit.index.put(try visit.engine.extractFacts(visit.index.allocator, source, lang, path));
+}
 
 pub fn binaryMtime(io: std.Io) !i64 {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -136,11 +172,36 @@ pub fn handle(
     const diagnostics = ctx.engine.lint(arena, source, lang, req.filename) catch
         return reply(ctx, .fail, null, "lint failed");
 
+    const all = appendProjectDiagnostics(ctx, arena, source, lang, req.filename, diagnostics) catch
+        return reply(ctx, .fail, null, "project analysis failed");
+
     return reply(ctx, .ok, .{
         .language = lang.toString(),
-        .diagnostics = diagnostics,
-        .clean = diagnostics.len == 0,
+        .diagnostics = all,
+        .clean = all.len == 0,
     }, null);
+}
+
+fn appendProjectDiagnostics(
+    ctx: Context,
+    arena: std.mem.Allocator,
+    source: []const u8,
+    lang: language.Name,
+    filename: ?[]const u8,
+    diagnostics: []const diagnostic.Diagnostic,
+) ![]const diagnostic.Diagnostic {
+    const project = ctx.project orelse return diagnostics;
+    const path = filename orelse return diagnostics;
+
+    try project.index.put(try ctx.engine.extractFacts(project.index.allocator, source, lang, path));
+
+    const violations = try project_rule.evaluate(arena, project.rules, &project.index);
+    var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
+    try out.appendSlice(arena, diagnostics);
+    for (violations) |v| {
+        if (std.mem.eql(u8, v.path, path)) try out.append(arena, v.diagnostic);
+    }
+    return out.toOwnedSlice(arena);
 }
 
 fn reply(

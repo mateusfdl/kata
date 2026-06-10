@@ -153,9 +153,24 @@ test "cli: unknown extension exits usage (64)" {
     try std.testing.expect(std.mem.indexOf(u8, r.stderr, "cannot infer language") != null);
 }
 
-test "parseSubcommand: bare command runs the daemon" {
+test "parseSubcommand: bare command runs the daemon without a root" {
     const sub = cli.parseSubcommand(&.{});
-    try std.testing.expectEqual(cli.Subcommand.daemon, sub);
+    try std.testing.expectEqual(@as(?[]const u8, null), sub.daemon);
+}
+
+test "parseSubcommand: 'daemon' without flags has no root" {
+    const sub = cli.parseSubcommand(&.{"daemon"});
+    try std.testing.expectEqual(@as(?[]const u8, null), sub.daemon);
+}
+
+test "parseSubcommand: 'daemon --root <dir>' captures the root" {
+    const sub = cli.parseSubcommand(&.{ "daemon", "--root", "/proj" });
+    try std.testing.expectEqualStrings("/proj", sub.daemon.?);
+}
+
+test "parseSubcommand: 'daemon --root=<dir>' captures the root" {
+    const sub = cli.parseSubcommand(&.{ "daemon", "--root=/proj" });
+    try std.testing.expectEqualStrings("/proj", sub.daemon.?);
 }
 
 test "parseSubcommand: 'check' with no target defaults to '.'" {
