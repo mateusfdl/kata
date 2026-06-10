@@ -10,13 +10,11 @@ const rule = lint.rule;
 
 pub const max_config_bytes: usize = 64 * 1024;
 
-pub const ScopedId = struct {
-    lang: ?language.Name,
-    id: []const u8,
-};
+pub const ScopedId = rule.ScopedId;
 
 pub const Config = struct {
     disabled: []const ScopedId,
+    warnings: []const ScopedId,
     metrics: metric.Set,
     project_rules: []const project_rule.ProjectRule,
     arena: *std.heap.ArenaAllocator,
@@ -53,7 +51,7 @@ pub const Diagnostic = struct {
 
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
-        error.UnknownTopLevelKey => "unknown top-level key (expected 'disabled', 'metrics', or 'project-rules')",
+        error.UnknownTopLevelKey => "unknown top-level key (expected 'disabled', 'warnings', 'metrics', or 'project-rules')",
         error.TabInIndent => "tabs are not allowed in indentation",
         error.BadIndent => "indent must be 0 or 2 spaces",
         error.MalformedListItem => "list item must be '  - <rule-id>'",
@@ -73,7 +71,7 @@ pub fn errorMessage(err: anyerror) []const u8 {
     };
 }
 
-const State = enum { top, in_disabled, in_metrics, in_project_rules };
+const State = enum { top, in_disabled, in_warnings, in_metrics, in_project_rules };
 
 const PendingProjectRule = struct {
     id: []const u8,
@@ -91,6 +89,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     const arena = arena_ptr.allocator();
 
     var disabled: std.ArrayList(ScopedId) = .empty;
+    var warnings: std.ArrayList(ScopedId) = .empty;
     var metrics: metric.Set = metric.empty;
     var project_rules: std.ArrayList(project_rule.ProjectRule) = .empty;
     var pending: ?PendingProjectRule = null;
@@ -124,6 +123,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
             switch (state) {
                 .top => return error.UnexpectedListItem,
                 .in_disabled => try appendListItem(arena, &disabled, content),
+                .in_warnings => try appendListItem(arena, &warnings, content),
                 .in_metrics => try setMetricEntry(&metrics, content),
                 .in_project_rules => {
                     try finalizePending(arena, &pending, &project_rules, diag);
@@ -151,6 +151,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     diag.line = 0;
     return .{
         .disabled = try disabled.toOwnedSlice(arena),
+        .warnings = try warnings.toOwnedSlice(arena),
         .metrics = metrics,
         .project_rules = try project_rules.toOwnedSlice(arena),
         .arena = arena_ptr,
@@ -225,6 +226,7 @@ fn parseTopLevelKey(content: []const u8) ParseError!State {
     if (std.mem.endsWith(u8, content, ":")) {
         const key = content[0 .. content.len - 1];
         if (std.mem.eql(u8, key, "disabled")) return .in_disabled;
+        if (std.mem.eql(u8, key, "warnings")) return .in_warnings;
         if (std.mem.eql(u8, key, "metrics")) return .in_metrics;
         if (std.mem.eql(u8, key, "project-rules")) return .in_project_rules;
         return error.UnknownTopLevelKey;

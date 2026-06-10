@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const lint = @import("../lint.zig");
 const daemon = @import("daemon.zig");
 const protocol = @import("protocol.zig");
 const test_fixture = @import("../test_fixture.zig");
@@ -345,4 +346,32 @@ test "daemon: language is inferred from the filename" {
     try std.testing.expectEqual(protocol.Status.ok, resp.status);
     try std.testing.expectEqualStrings("tsx", resp.report.?.language);
     try std.testing.expectEqual(@as(usize, 1), resp.report.?.diagnostics.len);
+}
+
+test "daemon: warn-only diagnostics keep the report clean" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const warn_rule =
+        \\((as_expression (predefined_type) @t) @match
+        \\ (#eq? @t "any")
+        \\ (#set! severity "warn")
+        \\ (#set! message "as any is not allowed"))
+        \\
+    ;
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", warn_rule);
+    defer f.deinit();
+
+    const resp = daemon.handle(context(f), arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .language = "ts",
+        .source = "const x = (foo[0] as any).bar;",
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expect(report.clean);
+    try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+    try std.testing.expectEqual(lint.diagnostic.Severity.warn, report.diagnostics[0].severity);
 }

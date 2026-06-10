@@ -2,12 +2,14 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 const mvzr = @import("mvzr");
 
+const diagnostic = @import("diagnostic.zig");
 const expr = @import("expr.zig");
 const language = @import("language.zig");
 
 pub const match_capture = "match";
 pub const message_property = "message";
 pub const exclude_paths_property = "exclude-paths";
+pub const severity_property = "severity";
 
 pub const invalid_capture_id: u32 = std.math.maxInt(u32);
 
@@ -15,6 +17,11 @@ pub const RawRule = struct {
     id: []const u8,
     language: language.Name,
     source: []const u8,
+};
+
+pub const ScopedId = struct {
+    lang: ?language.Name,
+    id: []const u8,
 };
 
 pub fn isValidId(s: []const u8) bool {
@@ -52,6 +59,7 @@ pub const PatternMeta = struct {
     message: ?[]const u8,
     rule_id: []const u8,
     exclude_paths: []const []const u8 = &.{},
+    severity: diagnostic.Severity = .@"error",
 };
 
 pub const CompiledRule = struct {
@@ -185,11 +193,12 @@ fn parsePattern(
     var predicates: std.ArrayList(Predicate) = .empty;
     var message: ?[]const u8 = null;
     var exclude_paths: []const []const u8 = &.{};
+    var severity: diagnostic.Severity = .@"error";
 
     var start: usize = 0;
     for (steps, 0..) |step, idx| {
         if (step.type != .done) continue;
-        try parsePredicateGroup(arena, query, steps[start..idx], &predicates, &message, &exclude_paths);
+        try parsePredicateGroup(arena, query, steps[start..idx], &predicates, &message, &exclude_paths, &severity);
         start = idx + 1;
     }
 
@@ -198,6 +207,7 @@ fn parsePattern(
         .message = message,
         .rule_id = "",
         .exclude_paths = exclude_paths,
+        .severity = severity,
     };
 }
 
@@ -208,11 +218,12 @@ fn parsePredicateGroup(
     predicates: *std.ArrayList(Predicate),
     message: *?[]const u8,
     exclude_paths: *[]const []const u8,
+    severity: *diagnostic.Severity,
 ) !void {
     const op_name = opNameFromGroup(query, group) orelse return;
 
     if (std.mem.eql(u8, op_name, "set!")) {
-        try absorbSetDirective(arena, query, group, message, exclude_paths);
+        try absorbSetDirective(arena, query, group, message, exclude_paths, severity);
         return;
     }
 
@@ -231,6 +242,7 @@ fn absorbSetDirective(
     group: []const ts.Query.PredicateStep,
     message: *?[]const u8,
     exclude_paths: *[]const []const u8,
+    severity: *diagnostic.Severity,
 ) !void {
     if (group.len < 3) return error.RuleCompileFailed;
     const key = resolveStepText(query, group[1]) orelse return error.RuleCompileFailed;
@@ -242,6 +254,10 @@ fn absorbSetDirective(
     }
     if (std.mem.eql(u8, key, exclude_paths_property)) {
         if (exclude_paths.*.len == 0) exclude_paths.* = try splitFields(arena, value);
+        return;
+    }
+    if (std.mem.eql(u8, key, severity_property)) {
+        severity.* = std.meta.stringToEnum(diagnostic.Severity, value) orelse return error.RuleCompileFailed;
         return;
     }
     return error.RuleCompileFailed;

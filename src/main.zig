@@ -71,7 +71,10 @@ pub fn main(init: std.process.Init) !void {
 
     var engine = Engine.init(gpa, &registry, &rule_set);
     defer engine.deinit();
-    if (cfg_opt) |cfg| engine.metrics = cfg.metrics;
+    if (cfg_opt) |cfg| {
+        engine.metrics = cfg.metrics;
+        engine.warnings = cfg.warnings;
+    }
 
     const code = cli.dispatch(.{
         .gpa = gpa,

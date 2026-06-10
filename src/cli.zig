@@ -258,7 +258,7 @@ pub fn run(
     writeReport(opts.stdout, lang, diagnostics) catch |err|
         return try internalError(opts.stderr, "encode report", err);
 
-    return if (diagnostics.len > 0) exit_violations else exit_clean;
+    return if (diagnostic.hasErrors(diagnostics)) exit_violations else exit_clean;
 }
 
 fn printAndExit(stderr: *std.Io.Writer, message: []const u8, code: u8) !u8 {
@@ -293,7 +293,7 @@ fn writeReport(
     const report: diagnostic.Report = .{
         .language = lang.toString(),
         .diagnostics = diagnostics,
-        .clean = diagnostics.len == 0,
+        .clean = !diagnostic.hasErrors(diagnostics),
     };
     try std.json.Stringify.value(report, .{ .whitespace = .indent_2 }, stdout);
     try stdout.writeAll("\n");

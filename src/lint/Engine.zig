@@ -24,6 +24,7 @@ pub const Engine = struct {
     facts_queries: std.EnumArray(language.Name, ?facts.Compiled) = .initFill(null),
     cursor: *ts.QueryCursor,
     metric_cursor: *ts.QueryCursor,
+    warnings: []const rule.ScopedId = &.{},
     compile_diag: rule.Diagnostic = .{},
 
     pub fn init(
@@ -141,9 +142,29 @@ pub const Engine = struct {
             try metric.run(allocator, self.metrics, metric_query, self.cursor, tree.rootNode(), lang, &out);
         }
 
+        demoteWarnings(self.warnings, lang, out.items);
+
         return out.toOwnedSlice(allocator);
     }
 };
+
+fn demoteWarnings(
+    warnings: []const rule.ScopedId,
+    lang: language.Name,
+    diagnostics: []diagnostic.Diagnostic,
+) void {
+    for (diagnostics) |*d| {
+        if (matchesWarning(warnings, lang, d.rule_id)) d.severity = .warn;
+    }
+}
+
+fn matchesWarning(warnings: []const rule.ScopedId, lang: language.Name, rule_id: []const u8) bool {
+    for (warnings) |w| {
+        const lang_matches = w.lang == null or w.lang.? == lang;
+        if (lang_matches and std.mem.eql(u8, w.id, rule_id)) return true;
+    }
+    return false;
+}
 
 fn runRule(
     allocator: std.mem.Allocator,
@@ -167,7 +188,7 @@ fn runRule(
         if (!try matcher.evaluate(meta.predicates, match, source, metric_ctx)) continue;
 
         const message = meta.message orelse meta.rule_id;
-        try emitMatchDiagnostics(allocator, r, meta.rule_id, match, lang_str, message, out);
+        try emitMatchDiagnostics(allocator, r, meta, match, lang_str, message, out);
     }
 }
 
@@ -183,7 +204,7 @@ fn pathExcluded(globs: []const []const u8, path: ?[]const u8) bool {
 fn emitMatchDiagnostics(
     allocator: std.mem.Allocator,
     r: *const rule.CompiledRule,
-    rule_id: []const u8,
+    meta: rule.PatternMeta,
     match: ts.Query.Match,
     lang_str: []const u8,
     message: []const u8,
@@ -194,13 +215,14 @@ fn emitMatchDiagnostics(
         const sp = cap.node.startPoint();
         const ep = cap.node.endPoint();
         try out.append(allocator, .{
-            .rule_id = rule_id,
+            .rule_id = meta.rule_id,
             .language = lang_str,
             .message = message,
             .range = .{
                 .start = .{ .line = sp.row, .column = sp.column },
                 .end = .{ .line = ep.row, .column = ep.column },
             },
+            .severity = meta.severity,
         });
     }
 }

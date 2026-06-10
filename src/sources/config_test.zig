@@ -81,6 +81,32 @@ test "config: trailing comment is stripped" {
     try std.testing.expectEqualStrings("no-console", cfg.disabled[0].id);
 }
 
+test "config: warnings default to empty" {
+    var cfg = try expectParseOk("disabled:\n  - ts/no-console\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 0), cfg.warnings.len);
+}
+
+test "config: parses warnings list with scoped and bare entries" {
+    const src =
+        \\warnings:
+        \\  - ts/max-complexity
+        \\  - max-nesting
+        \\
+    ;
+    var cfg = try expectParseOk(src);
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 2), cfg.warnings.len);
+    try std.testing.expectEqual(@as(?language.Name, .ts), cfg.warnings[0].lang);
+    try std.testing.expectEqualStrings("max-complexity", cfg.warnings[0].id);
+    try std.testing.expectEqual(@as(?language.Name, null), cfg.warnings[1].lang);
+    try std.testing.expectEqualStrings("max-nesting", cfg.warnings[1].id);
+}
+
+test "config: warnings list rejects invalid rule id" {
+    try expectParseErr("warnings:\n  - ts/no.console\n", error.InvalidRuleId, 2);
+}
+
 test "config: CRLF line endings are tolerated" {
     var cfg = try expectParseOk("disabled:\r\n  - ts/no-console\r\n");
     defer cfg.deinit();
@@ -241,7 +267,7 @@ test "errorMessage: returns descriptive text for known errors" {
         config.errorMessage(error.TabInIndent),
     );
     try std.testing.expectEqualStrings(
-        "unknown top-level key (expected 'disabled', 'metrics', or 'project-rules')",
+        "unknown top-level key (expected 'disabled', 'warnings', 'metrics', or 'project-rules')",
         config.errorMessage(error.UnknownTopLevelKey),
     );
 }

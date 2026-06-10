@@ -1,4 +1,5 @@
 const std = @import("std");
+const diagnostic = @import("diagnostic.zig");
 const language = @import("language.zig");
 const test_fixture = @import("../test_fixture.zig");
 
@@ -540,4 +541,79 @@ test "engine: where without exactly one string argument is a hard error" {
     defer f.deinit();
 
     try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
+}
+
+test "engine: severity defaults to error" {
+    const gpa = std.testing.allocator;
+    var f = try newFixture(gpa, &.{.ts});
+    defer f.deinit();
+
+    const diags = try f.engine.lint(gpa, "const x = (foo[0] as any).bar;", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(diagnostic.Severity.@"error", diags[0].severity);
+}
+
+test "engine: set severity warn stamps warn on diagnostics" {
+    const gpa = std.testing.allocator;
+    const rule =
+        "((comment) @match (#set! severity \"warn\") (#set! message \"no comments\"))\n";
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(gpa, "// hi\n", .go, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(diagnostic.Severity.warn, diags[0].severity);
+    try std.testing.expectEqualStrings("no comments", diags[0].message);
+}
+
+test "engine: set severity error keeps error" {
+    const gpa = std.testing.allocator;
+    const rule =
+        "((comment) @match (#set! severity \"error\") (#set! message \"no comments\"))\n";
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(gpa, "// hi\n", .go, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(diagnostic.Severity.@"error", diags[0].severity);
+}
+
+test "engine: unknown severity value is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! severity \"info\") (#set! message \"m\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "// hi\n", .go, null));
+}
+
+test "engine: warnings list demotes matching rule to warn" {
+    const gpa = std.testing.allocator;
+    var f = try newFixture(gpa, &.{.ts});
+    defer f.deinit();
+    f.engine.warnings = &.{.{ .lang = null, .id = "no-as-any" }};
+
+    const diags = try f.engine.lint(gpa, "const x = (foo[0] as any).bar;", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(diagnostic.Severity.warn, diags[0].severity);
+}
+
+test "engine: warnings list scoped to another language keeps error" {
+    const gpa = std.testing.allocator;
+    var f = try newFixture(gpa, &.{.ts});
+    defer f.deinit();
+    f.engine.warnings = &.{.{ .lang = .go, .id = "no-as-any" }};
+
+    const diags = try f.engine.lint(gpa, "const x = (foo[0] as any).bar;", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(diagnostic.Severity.@"error", diags[0].severity);
 }

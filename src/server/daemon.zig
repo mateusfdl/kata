@@ -178,7 +178,7 @@ pub fn handle(
     return reply(ctx, .ok, .{
         .language = lang.toString(),
         .diagnostics = all,
-        .clean = all.len == 0,
+        .clean = !diagnostic.hasErrors(all),
     }, null);
 }
 

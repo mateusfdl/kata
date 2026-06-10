@@ -35,7 +35,39 @@ test "check: run skips .git and gitignored folders" {
     try std.testing.expect(std.mem.indexOf(u8, written, "a.ts") != null);
     try std.testing.expectEqual(@as(?usize, null), std.mem.indexOf(u8, written, "node_modules"));
     try std.testing.expectEqual(@as(?usize, null), std.mem.indexOf(u8, written, ".git"));
-    try std.testing.expect(std.mem.indexOf(u8, written, "checked 1 files, 1 violations") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "checked 1 files, 1 violations, 0 warnings") != null);
+}
+
+test "check: warn severity counts separately and exits clean" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const warn_rule =
+        \\((as_expression (predefined_type) @t) @match
+        \\ (#eq? @t "any")
+        \\ (#set! severity "warn")
+        \\ (#set! message "as any is not allowed"))
+        \\
+    ;
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", warn_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const x = foo as any;\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &out.writer);
+
+    try std.testing.expectEqual(check.Outcome.clean, outcome);
+    const written = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, written, "a.ts:1:11 warn [no-as-any] as any is not allowed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "checked 1 files, 0 violations, 1 warnings") != null);
 }
 
 test "check: project rules report cross-file violations" {
@@ -77,5 +109,5 @@ test "check: project rules report cross-file violations" {
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
     try std.testing.expect(std.mem.indexOf(u8, written, "order-service.ts:5:5 [repository-isolation] call to UserRepository.find is restricted to *Repository callers") != null);
-    try std.testing.expect(std.mem.indexOf(u8, written, "checked 2 files, 1 violations") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "checked 2 files, 1 violations, 0 warnings") != null);
 }

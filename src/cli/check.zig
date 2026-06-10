@@ -10,7 +10,7 @@ pub const max_file_bytes = walk.max_file_bytes;
 
 pub const Outcome = enum { clean, violations };
 
-const Counts = struct { files: usize, violations: usize };
+const Counts = struct { files: usize, violations: usize, warnings: usize };
 
 pub fn run(
     io: std.Io,
@@ -34,7 +34,7 @@ pub fn run(
 
     if (index_ptr) |idx| counts.violations += try reportProjectViolations(gpa, project_rules, idx, stdout);
 
-    try stdout.print("checked {d} files, {d} violations\n", .{ counts.files, counts.violations });
+    try stdout.print("checked {d} files, {d} violations, {d} warnings\n", .{ counts.files, counts.violations, counts.warnings });
     try stdout.flush();
     return if (counts.violations > 0) .violations else .clean;
 }
@@ -52,7 +52,9 @@ fn checkFile(
     const source = try std.Io.Dir.cwd().readFileAlloc(io, target, gpa, .limited(max_file_bytes));
     defer gpa.free(source);
 
-    return .{ .files = 1, .violations = try reportFile(gpa, engine, lang, source, target, index, stdout) };
+    var counts: Counts = .{ .files = 1, .violations = 0, .warnings = 0 };
+    try reportFile(gpa, engine, lang, source, target, index, stdout, &counts);
+    return counts;
 }
 
 const DirVisit = struct {
@@ -60,7 +62,7 @@ const DirVisit = struct {
     engine: *Engine,
     index: ?*lint.ProjectIndex,
     stdout: *std.Io.Writer,
-    violations: *usize,
+    counts: *Counts,
 };
 
 fn checkDir(
@@ -71,20 +73,20 @@ fn checkDir(
     index: ?*lint.ProjectIndex,
     stdout: *std.Io.Writer,
 ) !Counts {
-    var violations: usize = 0;
+    var counts: Counts = .{ .files = 0, .violations = 0, .warnings = 0 };
     const visit: DirVisit = .{
         .gpa = gpa,
         .engine = engine,
         .index = index,
         .stdout = stdout,
-        .violations = &violations,
+        .counts = &counts,
     };
-    const files = try walk.walkSourceFiles(io, gpa, target, visit, visitFile);
-    return .{ .files = files, .violations = violations };
+    counts.files = try walk.walkSourceFiles(io, gpa, target, visit, visitFile);
+    return counts;
 }
 
 fn visitFile(visit: DirVisit, lang: language.Name, source: []const u8, path: []const u8) anyerror!void {
-    visit.violations.* += try reportFile(visit.gpa, visit.engine, lang, source, path, visit.index, visit.stdout);
+    try reportFile(visit.gpa, visit.engine, lang, source, path, visit.index, visit.stdout, visit.counts);
 }
 
 fn reportFile(
@@ -95,7 +97,8 @@ fn reportFile(
     path: []const u8,
     index: ?*lint.ProjectIndex,
     stdout: *std.Io.Writer,
-) !usize {
+    counts: *Counts,
+) !void {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const diagnostics = try engine.lint(arena.allocator(), source, lang, path);
@@ -103,15 +106,23 @@ fn reportFile(
     if (index) |idx| try idx.put(try engine.extractFacts(idx.allocator, source, lang, path));
 
     for (diagnostics) |d| {
-        try stdout.print("{s}:{d}:{d} [{s}] {s}\n", .{
+        const marker: []const u8 = switch (d.severity) {
+            .@"error" => "",
+            .warn => "warn ",
+        };
+        switch (d.severity) {
+            .@"error" => counts.violations += 1,
+            .warn => counts.warnings += 1,
+        }
+        try stdout.print("{s}:{d}:{d} {s}[{s}] {s}\n", .{
             path,
             d.range.start.line + 1,
             d.range.start.column + 1,
+            marker,
             d.rule_id,
             d.message,
         });
     }
-    return diagnostics.len;
 }
 
 fn reportProjectViolations(
