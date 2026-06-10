@@ -21,4 +21,5 @@ comptime {
     _ = @import("sources/loader_test.zig");
     _ = @import("sources/walk_test.zig");
     _ = @import("cli/new_rule_test.zig");
+    _ = @import("cli/harness_test.zig");
 }

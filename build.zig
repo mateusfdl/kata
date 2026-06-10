@@ -68,6 +68,11 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all unit tests");
     test_step.dependOn(&run_unit_tests.step);
 
+    const run_rule_tests = b.addRunArtifact(exe);
+    run_rule_tests.addArg("test");
+    run_rule_tests.addDirectoryArg(b.path("rules"));
+    test_step.dependOn(&run_rule_tests.step);
+
     const run_exe = b.addRunArtifact(exe);
     if (b.args) |args| run_exe.addArgs(args);
     const run_step = b.step("run", "Run kata (pass args after --)");

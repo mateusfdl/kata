@@ -3,6 +3,7 @@ const std = @import("std");
 const lint = @import("lint.zig");
 const server = @import("server.zig");
 const check = @import("cli/check.zig");
+const harness = @import("cli/harness.zig");
 
 const Engine = lint.Engine;
 const diagnostic = lint.diagnostic;
@@ -33,6 +34,7 @@ pub const Subcommand = union(enum) {
     daemon: ?[]const u8,
     check: []const u8,
     facts: []const u8,
+    rule_test: []const u8,
     stop,
     one_shot,
     unknown: []const u8,
@@ -44,6 +46,7 @@ pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
     if (std.mem.eql(u8, cmd, "daemon")) return .{ .daemon = rootFlag(args[1..]) };
     if (std.mem.eql(u8, cmd, "check")) return .{ .check = firstPositional(args[1..]) orelse "." };
     if (std.mem.eql(u8, cmd, "facts")) return .{ .facts = firstPositional(args[1..]) orelse "" };
+    if (std.mem.eql(u8, cmd, "test")) return .{ .rule_test = firstPositional(args[1..]) orelse "" };
     if (std.mem.eql(u8, cmd, "stop")) return .stop;
     if (std.mem.startsWith(u8, cmd, "--")) return .one_shot;
     return .{ .unknown = cmd };
@@ -67,6 +70,7 @@ pub fn dispatch(c: Command) !u8 {
         .daemon => |root| runDaemon(c, root),
         .check => |target| runCheck(c, target),
         .facts => |target| runFacts(c, target),
+        .rule_test => |dir| runRuleTest(c, dir),
         .stop => runStop(c),
         .one_shot => run(c.gpa, c.engine, .{
             .args = c.args,
@@ -80,7 +84,7 @@ pub fn dispatch(c: Command) !u8 {
 
 fn runUnknown(c: Command, cmd: []const u8) !u8 {
     try c.stderr.print("unknown subcommand: \"{s}\"\n", .{cmd});
-    try c.stderr.writeAll("usage: kata [daemon [--root <dir>] | check <path> | facts <file> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
+    try c.stderr.writeAll("usage: kata [daemon [--root <dir>] | check <path> | facts <file> | test <rules-dir> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
     try c.stderr.flush();
     return exit_usage;
 }
@@ -187,6 +191,15 @@ fn printFacts(stdout: *std.Io.Writer, file_facts: lint.facts.FileFacts) !void {
 
 fn orDash(s: []const u8) []const u8 {
     return if (s.len == 0) "-" else s;
+}
+
+fn runRuleTest(c: Command, dir: []const u8) !u8 {
+    if (dir.len == 0) return printAndExit(c.stderr, "usage: kata test <rules-dir>\n", exit_usage);
+    return switch (try harness.run(c.io, c.gpa, c.arena, dir, c.stdout, c.stderr)) {
+        .pass => exit_clean,
+        .failures => exit_violations,
+        .invalid => exit_internal_error,
+    };
 }
 
 fn runStop(c: Command) !u8 {
