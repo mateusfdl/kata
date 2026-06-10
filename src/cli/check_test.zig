@@ -117,6 +117,43 @@ test "check: project rules report cross-file violations" {
     try std.testing.expect(std.mem.indexOf(u8, written, "checked 2 files, 1 violations, 0 warnings") != null);
 }
 
+test "check: warnings demote project violations and exit clean" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+    f.engine.warnings = &.{.{ .lang = null, .id = "domain-no-infra" }};
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "domain");
+    try tmp.dir.createDirPath(io, "infra");
+    try tmp.dir.writeFile(io, .{ .sub_path = "domain/user.ts", .data = "import { Db } from \"../infra/db\";\nexport class User {}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "infra/db.ts", .data = "export const Db = 1;\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    const rules = [_]lint.project_rule.ProjectRule{.{
+        .id = "domain-no-infra",
+        .kind = .{ .import_boundary = .{
+            .from = "**/domain/**",
+            .deny = "**/infra/**",
+        } },
+    }};
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &out.writer);
+
+    try std.testing.expectEqual(check.Outcome.clean, outcome);
+    const written = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, written, "domain/user.ts:1:21 warn [domain-no-infra] import \"../infra/db\" is denied from **/domain/**") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "checked 2 files, 0 violations, 1 warnings") != null);
+}
+
 test "check: import-boundary project rules report violations" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;

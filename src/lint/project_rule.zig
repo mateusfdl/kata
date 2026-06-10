@@ -4,8 +4,11 @@ const diagnostic = @import("diagnostic.zig");
 const facts = @import("facts.zig");
 const glob = @import("glob.zig");
 const language = @import("language.zig");
+const rule = @import("rule.zig");
 
 const ProjectIndex = @import("ProjectIndex.zig").ProjectIndex;
+
+pub const ScopedId = rule.ScopedId;
 
 pub const ProjectRule = struct {
     id: []const u8,
@@ -43,26 +46,39 @@ pub const Violation = struct {
 pub fn evaluate(
     allocator: std.mem.Allocator,
     rules: []const ProjectRule,
+    warnings: []const ScopedId,
     index: *const ProjectIndex,
 ) ![]Violation {
     var out: std.ArrayList(Violation) = .empty;
     errdefer out.deinit(allocator);
 
-    for (rules) |rule| {
-        switch (rule.kind) {
-            .restricted_callers => |rc| try evaluateRestrictedCallers(allocator, rule.id, rc, index, &out),
-            .import_boundary => |ib| try evaluateImportBoundary(allocator, rule.id, ib, index, &out),
+    for (rules) |project| {
+        switch (project.kind) {
+            .restricted_callers => |rc| try evaluateRestrictedCallers(allocator, project.id, rc, index, &out),
+            .import_boundary => |ib| try evaluateImportBoundary(allocator, project.id, ib, index, &out),
         }
+    }
+
+    for (out.items) |*v| {
+        if (matchesWarning(warnings, v.diagnostic.language, v.diagnostic.rule_id)) v.diagnostic.severity = .warn;
     }
 
     std.mem.sort(Violation, out.items, {}, violationLessThan);
     return out.toOwnedSlice(allocator);
 }
 
+fn matchesWarning(warnings: []const ScopedId, lang_str: []const u8, id: []const u8) bool {
+    const lang = language.Name.fromString(lang_str) orelse return false;
+    for (warnings) |w| {
+        if (w.matches(lang, id)) return true;
+    }
+    return false;
+}
+
 fn evaluateRestrictedCallers(
     allocator: std.mem.Allocator,
     rule_id: []const u8,
-    rule: ProjectRule.RestrictedCallers,
+    restricted: ProjectRule.RestrictedCallers,
     index: *const ProjectIndex,
     out: *std.ArrayList(Violation),
 ) !void {
@@ -72,7 +88,7 @@ fn evaluateRestrictedCallers(
     var defs = index.files.valueIterator();
     while (defs.next()) |file| {
         for (file.classes) |class_def| {
-            if (!std.mem.endsWith(u8, class_def.name, rule.callee_suffix)) continue;
+            if (!std.mem.endsWith(u8, class_def.name, restricted.callee_suffix)) continue;
             try callee_types.put(allocator, class_def.name, {});
         }
     }
@@ -82,9 +98,9 @@ fn evaluateRestrictedCallers(
         for (file.calls) |call| {
             if (call.receiver.len == 0) continue;
             const receiver_type = receiverType(file, call.receiver) orelse continue;
-            if (!std.mem.endsWith(u8, receiver_type, rule.callee_suffix)) continue;
+            if (!std.mem.endsWith(u8, receiver_type, restricted.callee_suffix)) continue;
             if (!callee_types.contains(receiver_type)) continue;
-            if (call.container.len > 0 and std.mem.endsWith(u8, call.container, rule.caller_suffix)) continue;
+            if (call.container.len > 0 and std.mem.endsWith(u8, call.container, restricted.caller_suffix)) continue;
 
             try out.append(allocator, .{
                 .path = file.path,
@@ -94,7 +110,7 @@ fn evaluateRestrictedCallers(
                     .message = try std.fmt.allocPrint(
                         allocator,
                         "call to {s}.{s} is restricted to *{s} callers",
-                        .{ receiver_type, call.method, rule.caller_suffix },
+                        .{ receiver_type, call.method, restricted.caller_suffix },
                     ),
                     .range = call.range,
                 },
@@ -106,15 +122,15 @@ fn evaluateRestrictedCallers(
 fn evaluateImportBoundary(
     allocator: std.mem.Allocator,
     rule_id: []const u8,
-    rule: ProjectRule.ImportBoundary,
+    boundary: ProjectRule.ImportBoundary,
     index: *const ProjectIndex,
     out: *std.ArrayList(Violation),
 ) !void {
     var files = index.files.valueIterator();
     while (files.next()) |file| {
-        if (!glob.match(rule.from, file.path)) continue;
+        if (!glob.match(boundary.from, file.path)) continue;
         for (file.imports) |im| {
-            if (!try importDenied(allocator, rule.deny, file.path, file.lang, im.source)) continue;
+            if (!try importDenied(allocator, boundary.deny, file.path, file.lang, im.source)) continue;
             try out.append(allocator, .{
                 .path = file.path,
                 .diagnostic = .{
@@ -123,7 +139,7 @@ fn evaluateImportBoundary(
                     .message = try std.fmt.allocPrint(
                         allocator,
                         "import \"{s}\" is denied from {s}",
-                        .{ im.source, rule.from },
+                        .{ im.source, boundary.from },
                     ),
                     .range = im.range,
                 },

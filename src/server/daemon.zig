@@ -236,7 +236,7 @@ fn appendProjectDiagnostics(
 
     try project.index.put(try ctx.engine.extractFacts(project.index.allocator, source, lang, path));
 
-    const violations = try project_rule.evaluate(arena, project.rules, &project.index);
+    const violations = try project_rule.evaluate(arena, project.rules, ctx.engine.warnings, &project.index);
     var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
     try out.appendSlice(arena, diagnostics);
     for (violations) |v| {

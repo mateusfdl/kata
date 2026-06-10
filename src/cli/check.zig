@@ -42,7 +42,7 @@ pub fn run(
         else => return error.UnsupportedTarget,
     };
 
-    if (index_ptr) |idx| counts.violations += try reportProjectViolations(gpa, project_rules, idx, stdout);
+    if (index_ptr) |idx| counts.add(try reportProjectViolations(gpa, engine, project_rules, idx, stdout));
 
     try stdout.print("checked {d} files, {d} violations, {d} warnings\n", .{ counts.files, counts.violations, counts.warnings });
     try stdout.flush();
@@ -114,46 +114,51 @@ fn reportFile(
 
     var counts: Counts = .{ .files = 1 };
     for (diagnostics) |d| {
-        const marker: []const u8 = switch (d.severity) {
-            .@"error" => blk: {
-                counts.violations += 1;
-                break :blk "";
-            },
-            .warn => blk: {
-                counts.warnings += 1;
-                break :blk "warn ";
-            },
-        };
-        try stdout.print("{s}:{d}:{d} {s}[{s}] {s}\n", .{
-            path,
-            d.range.start.line + 1,
-            d.range.start.column + 1,
-            marker,
-            d.rule_id,
-            d.message,
-        });
+        try printDiagnostic(stdout, path, d, &counts);
     }
     return counts;
 }
 
 fn reportProjectViolations(
     gpa: std.mem.Allocator,
+    engine: *Engine,
     project_rules: []const lint.project_rule.ProjectRule,
     index: *const lint.ProjectIndex,
     stdout: *std.Io.Writer,
-) !usize {
+) !Counts {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    const violations = try lint.project_rule.evaluate(arena.allocator(), project_rules, index);
+    const violations = try lint.project_rule.evaluate(arena.allocator(), project_rules, engine.warnings, index);
 
+    var counts: Counts = .{};
     for (violations) |v| {
-        try stdout.print("{s}:{d}:{d} [{s}] {s}\n", .{
-            v.path,
-            v.diagnostic.range.start.line + 1,
-            v.diagnostic.range.start.column + 1,
-            v.diagnostic.rule_id,
-            v.diagnostic.message,
-        });
+        try printDiagnostic(stdout, v.path, v.diagnostic, &counts);
     }
-    return violations.len;
+    return counts;
+}
+
+fn printDiagnostic(
+    stdout: *std.Io.Writer,
+    path: []const u8,
+    d: lint.diagnostic.Diagnostic,
+    counts: *Counts,
+) !void {
+    const marker: []const u8 = switch (d.severity) {
+        .@"error" => blk: {
+            counts.violations += 1;
+            break :blk "";
+        },
+        .warn => blk: {
+            counts.warnings += 1;
+            break :blk "warn ";
+        },
+    };
+    try stdout.print("{s}:{d}:{d} {s}[{s}] {s}\n", .{
+        path,
+        d.range.start.line + 1,
+        d.range.start.column + 1,
+        marker,
+        d.rule_id,
+        d.message,
+    });
 }

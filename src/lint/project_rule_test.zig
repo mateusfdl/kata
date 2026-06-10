@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const lint_diagnostic = @import("diagnostic.zig");
 const project_rule = @import("project_rule.zig");
 const test_fixture = @import("../test_fixture.zig");
 
@@ -60,7 +61,7 @@ test "project rule: restricted-callers flags non-repository callers only" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &index);
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     const v = violations[0];
@@ -73,6 +74,25 @@ test "project rule: restricted-callers flags non-repository callers only" {
     );
     try std.testing.expectEqual(@as(u32, 4), v.diagnostic.range.start.line);
     try std.testing.expectEqual(@as(u32, 4), v.diagnostic.range.start.column);
+}
+
+test "project rule: warnings demote violations to warn severity" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+    try indexTsFiles(f, gpa, &index);
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const warnings = [_]project_rule.ScopedId{.{ .lang = null, .id = "repository-isolation" }};
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &warnings, &index);
+
+    try std.testing.expectEqual(@as(usize, 1), violations.len);
+    try std.testing.expectEqual(lint_diagnostic.Severity.warn, violations[0].diagnostic.severity);
 }
 
 test "project rule: go constructor channel resolves receivers" {
@@ -100,7 +120,7 @@ test "project rule: go constructor channel resolves receivers" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &index);
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     try std.testing.expectEqualStrings("internal/service/order.go", violations[0].path);
@@ -131,7 +151,7 @@ test "project rule: top-level callers are not repositories" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &index);
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     try std.testing.expectEqualStrings("scripts/seed.ts", violations[0].path);
@@ -160,7 +180,7 @@ test "project rule: ambiguous receivers are skipped" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &index);
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index);
 
     try std.testing.expectEqual(@as(usize, 0), violations.len);
 }
@@ -186,7 +206,7 @@ test "project rule: callee types not defined in the project are skipped" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &index);
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index);
 
     try std.testing.expectEqual(@as(usize, 0), violations.len);
 }
@@ -214,7 +234,7 @@ test "project rule: violations are sorted by path and position" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &index);
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index);
 
     try std.testing.expectEqual(@as(usize, 2), violations.len);
     try std.testing.expectEqualStrings("src/aa-caller.ts", violations[0].path);
@@ -250,7 +270,7 @@ test "project rule: import-boundary resolves ts relative specifiers" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &index);
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &.{}, &index);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     const v = violations[0];
@@ -293,7 +313,7 @@ test "project rule: import-boundary matches go import strings" {
             .deny = "**/infra/**",
         } },
     };
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{rule}, &index);
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{rule}, &.{}, &index);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     try std.testing.expectEqualStrings("internal/domain/order.go", violations[0].path);
@@ -316,7 +336,7 @@ test "project rule: import-boundary never denies relative imports escaping the r
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &index);
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &.{}, &index);
 
     try std.testing.expectEqual(@as(usize, 0), violations.len);
 }
@@ -344,7 +364,7 @@ test "project rule: import-boundary judges relative imports by resolved path onl
             .deny = "**/infra/**",
         } },
     };
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{rule}, &index);
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{rule}, &.{}, &index);
 
     try std.testing.expectEqual(@as(usize, 0), violations.len);
 }
@@ -366,7 +386,7 @@ test "project rule: import-boundary ignores imports outside the deny glob" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &index);
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &.{}, &index);
 
     try std.testing.expectEqual(@as(usize, 0), violations.len);
 }

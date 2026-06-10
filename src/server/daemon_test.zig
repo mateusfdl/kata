@@ -275,6 +275,35 @@ test "daemon: project rules report violations for the linted file only" {
     try std.testing.expectEqual(@as(u32, 4), report.diagnostics[0].range.start.line);
 }
 
+test "daemon: project violations demoted by warnings leave the report clean" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+    f.engine.warnings = &.{.{ .lang = null, .id = "repository-isolation" }};
+
+    var state = daemon.ProjectState.init(gpa, &repository_isolation);
+    defer state.deinit();
+    try state.index.put(try f.engine.extractFacts(gpa, user_repository_src, .ts, "/proj/user-repository.ts"));
+    try state.index.put(try f.engine.extractFacts(gpa, order_service_src, .ts, "/proj/other-service.ts"));
+
+    var ctx = context(f);
+    ctx.project = &state;
+
+    const resp = daemon.handle(ctx, arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = "/proj/order-service.ts",
+        .source = order_service_src,
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expect(report.clean);
+    try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+    try std.testing.expectEqual(lint.diagnostic.Severity.warn, report.diagnostics[0].severity);
+}
+
 test "daemon: lint requests update the project index incrementally" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
