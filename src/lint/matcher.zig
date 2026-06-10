@@ -105,7 +105,7 @@ fn renderPlaceholder(
     const ctx = metric_ctx orelse return out.appendSlice(allocator, "?");
     const measures: NodeMeasures = .{ .ctx = ctx, .match = match, .source = source };
     const value = (try measures.measure(p.measure, p.capture_id)) orelse return out.appendSlice(allocator, "?");
-    var buf: [10]u8 = undefined;
+    var buf: [std.fmt.count("{d}", .{std.math.maxInt(u32)})]u8 = undefined;
     const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch unreachable;
     try out.appendSlice(allocator, rendered);
 }

@@ -64,13 +64,17 @@ pub const MessageSegment = union(enum) {
     placeholder: Placeholder,
 };
 
+pub const Message = union(enum) {
+    plain: []const u8,
+    segments: []const MessageSegment,
+};
+
 pub const PatternMeta = struct {
     predicates: []Predicate,
-    message: ?[]const u8,
+    message: ?Message,
     rule_id: []const u8,
     exclude_paths: []const []const u8 = &.{},
     severity: diagnostic.Severity = .@"error",
-    message_segments: ?[]const MessageSegment = null,
 };
 
 pub const CompiledRule = struct {
@@ -166,7 +170,8 @@ fn anyWherePredicate(patterns: []const PatternMeta) bool {
 
 fn anyMessageSegments(patterns: []const PatternMeta) bool {
     for (patterns) |pattern| {
-        if (pattern.message_segments != null) return true;
+        const message = pattern.message orelse continue;
+        if (message == .segments) return true;
     }
     return false;
 }
@@ -225,23 +230,24 @@ fn parsePattern(
         start = idx + 1;
     }
 
-    var plain = message;
-    var segments = if (message) |msg| try compileMessageSegments(arena, query, msg) else null;
-    if (segments) |s| {
-        if (s.len == 1 and s[0] == .literal) {
-            plain = s[0].literal;
-            segments = null;
-        }
-    }
-
     return .{
         .predicates = try predicates.toOwnedSlice(arena),
-        .message = plain,
+        .message = if (message) |msg| try compileMessage(arena, query, msg) else null,
         .rule_id = "",
         .exclude_paths = exclude_paths,
         .severity = severity,
-        .message_segments = segments,
     };
+}
+
+fn compileMessage(
+    arena: std.mem.Allocator,
+    query: *ts.Query,
+    message: []const u8,
+) CompileError!Message {
+    const segments = (try compileMessageSegments(arena, query, message)) orelse
+        return .{ .plain = message };
+    if (segments.len == 1 and segments[0] == .literal) return .{ .plain = segments[0].literal };
+    return .{ .segments = segments };
 }
 
 fn compileDetail(err: anyerror) []const u8 {
@@ -305,8 +311,8 @@ fn parsePlaceholder(query: *ts.Query, inner: []const u8) CompileError!Placeholde
 
     const measure = expr.Measure.fromString(measure_name) orelse return error.UnknownPlaceholderMeasure;
     if (capture.len < 2 or capture[0] != '@') return error.MalformedPlaceholder;
-    const id = captureIdForName(query, capture[1..]);
-    if (id == invalid_capture_id) return error.UnknownPlaceholderCapture;
+    const resolver: QueryResolver = .{ .query = query };
+    const id = resolver.captureId(capture[1..]) orelse return error.UnknownPlaceholderCapture;
     return .{ .measure = measure, .capture_id = id };
 }
 

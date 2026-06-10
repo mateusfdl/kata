@@ -188,10 +188,10 @@ fn runRule(
         if (pathExcluded(meta.exclude_paths, path)) continue;
         if (!try matcher.evaluate(meta.predicates, match, source, metric_ctx)) continue;
 
-        const message = if (meta.message_segments) |segments|
-            try matcher.renderMessage(allocator, segments, match, source, metric_ctx)
-        else
-            meta.message orelse meta.rule_id;
+        const message = if (meta.message) |m| switch (m) {
+            .plain => |text| text,
+            .segments => |segments| try matcher.renderMessage(allocator, segments, match, source, metric_ctx),
+        } else meta.rule_id;
         try emitMatchDiagnostics(allocator, r, meta, match, lang_str, message, out);
     }
 }
