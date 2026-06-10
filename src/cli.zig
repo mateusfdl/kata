@@ -122,11 +122,11 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
             return internalError(c.stderr, "index project", err);
     }
 
-    daemon.serve(c.io, c.gpa, .{
+    daemon.serve(c.gpa, .{
         .engine = c.engine,
         .binary_mtime = binary_mtime,
-        .project = if (project_state) |*p| p else null,
         .io = c.io,
+        .project = if (project_state) |*p| p else null,
         .ratchet = c.ratchet,
     }, socket_path) catch |err| switch (err) {
         error.AlreadyRunning => return printAndExit(c.stderr, "kata daemon already running\n", exit_clean),

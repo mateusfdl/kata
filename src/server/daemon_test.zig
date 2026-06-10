@@ -13,7 +13,7 @@ fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
 }
 
 fn context(f: *test_fixture.Fixture) daemon.Context {
-    return .{ .engine = &f.engine, .binary_mtime = daemon_mtime };
+    return .{ .engine = &f.engine, .binary_mtime = daemon_mtime, .io = std.testing.io };
 }
 
 test "daemon: clean source replies ok with an empty report" {
@@ -545,7 +545,7 @@ test "daemon: ratchet compares error counts so warn diagnostics never mask error
     try std.testing.expectEqual(lint.diagnostic.Severity.@"error", report.diagnostics[1].severity);
 }
 
-test "daemon: ratchet without io leaves severity untouched" {
+test "daemon: ratchet without filename leaves severity untouched" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();

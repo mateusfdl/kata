@@ -12,8 +12,8 @@ const Engine = lint.Engine;
 pub const Context = struct {
     engine: *Engine,
     binary_mtime: i64,
+    io: std.Io,
     project: ?*ProjectState = null,
-    io: ?std.Io = null,
     ratchet: bool = false,
 };
 
@@ -81,11 +81,11 @@ fn installTeardown(socket_path: []const u8) void {
 }
 
 pub fn serve(
-    io: std.Io,
     gpa: std.mem.Allocator,
     ctx: Context,
     socket_path: []const u8,
 ) !void {
+    const io = ctx.io;
     const address = try std.Io.net.UnixAddress.init(socket_path);
     var server = try bind(io, address, socket_path);
     defer server.deinit(io);
@@ -195,7 +195,7 @@ fn applyRatchet(
     diagnostics: []diagnostic.Diagnostic,
 ) !void {
     if (!ctx.ratchet) return;
-    const io = ctx.io orelse return;
+    const io = ctx.io;
     const path = filename orelse return;
     if (!diagnostic.hasErrors(diagnostics)) return;
 
