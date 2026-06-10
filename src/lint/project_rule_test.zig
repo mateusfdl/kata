@@ -297,6 +297,54 @@ test "project rule: import-boundary matches go import strings" {
     try std.testing.expectEqual(@as(u32, 1), violations[0].diagnostic.range.start.line);
 }
 
+test "project rule: import-boundary never denies relative imports escaping the root" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    const domain_user =
+        "import { Db } from \"../../../src/infra/db\";\n" ++
+        "export class User {}\n";
+    try index.put(try f.engine.extractFacts(gpa, domain_user, .ts, "src/domain/user.ts"));
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &index);
+
+    try std.testing.expectEqual(@as(usize, 0), violations.len);
+}
+
+test "project rule: import-boundary judges relative imports by resolved path only" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    const domain_user =
+        "import { Db } from \"../infra/../shared/db\";\n" ++
+        "export class User {}\n";
+    try index.put(try f.engine.extractFacts(gpa, domain_user, .ts, "src/domain/user.ts"));
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const rule: project_rule.ProjectRule = .{
+        .id = "domain-no-infra",
+        .kind = .import_boundary,
+        .from = "src/domain/**",
+        .deny = "**/infra/**",
+    };
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{rule}, &index);
+
+    try std.testing.expectEqual(@as(usize, 0), violations.len);
+}
+
 test "project rule: import-boundary ignores imports outside the deny glob" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);

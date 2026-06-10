@@ -129,9 +129,8 @@ fn importDenied(
     lang: language.Name,
     specifier: []const u8,
 ) !bool {
-    if (glob.match(deny, specifier)) return true;
-    if (lang == .go or !isRelativeSpecifier(specifier)) return false;
-    const resolved = try resolveRelative(allocator, importer_path, specifier);
+    if (lang == .go or !isRelativeSpecifier(specifier)) return glob.match(deny, specifier);
+    const resolved = try resolveRelative(allocator, importer_path, specifier) orelse return false;
     return glob.match(deny, resolved);
 }
 
@@ -143,7 +142,7 @@ fn resolveRelative(
     allocator: std.mem.Allocator,
     importer_path: []const u8,
     specifier: []const u8,
-) ![]const u8 {
+) !?[]const u8 {
     var segments: std.ArrayList([]const u8) = .empty;
     defer segments.deinit(allocator);
 
@@ -155,12 +154,12 @@ fn resolveRelative(
     while (spec_it.next()) |segment| {
         if (std.mem.eql(u8, segment, ".")) continue;
         if (std.mem.eql(u8, segment, "..")) {
-            _ = segments.pop();
+            if (segments.pop() == null) return null;
             continue;
         }
         try segments.append(allocator, segment);
     }
-    return std.mem.join(allocator, "/", segments.items);
+    return try std.mem.join(allocator, "/", segments.items);
 }
 
 fn receiverType(file: *const facts.FileFacts, receiver: []const u8) ?[]const u8 {
