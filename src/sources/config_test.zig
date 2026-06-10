@@ -297,9 +297,8 @@ test "config: parses an import-boundary project rule" {
     try std.testing.expectEqual(@as(usize, 1), cfg.project_rules.len);
     const r = cfg.project_rules[0];
     try std.testing.expectEqualStrings("domain-no-infra", r.id);
-    try std.testing.expectEqual(lint.project_rule.ProjectRule.Kind.import_boundary, r.kind);
-    try std.testing.expectEqualStrings("src/domain/**", r.from);
-    try std.testing.expectEqualStrings("src/infra/**", r.deny);
+    try std.testing.expectEqualStrings("src/domain/**", r.kind.import_boundary.from);
+    try std.testing.expectEqualStrings("src/infra/**", r.kind.import_boundary.deny);
 }
 
 test "config: import-boundary without from is rejected" {
@@ -322,6 +321,32 @@ test "config: import-boundary without deny is rejected" {
         \\
     ;
     try expectParseErr(src, error.IncompleteImportBoundary, 2);
+}
+
+test "config: import-boundary with a restricted-callers key is rejected" {
+    const src =
+        \\project-rules:
+        \\  domain-no-infra:
+        \\    kind: import-boundary
+        \\    from: src/domain/**
+        \\    deny: src/infra/**
+        \\    callee-suffix: Repository
+        \\
+    ;
+    try expectParseErr(src, error.WrongKindProjectRuleKey, 2);
+}
+
+test "config: restricted-callers with an import-boundary key is rejected" {
+    const src =
+        \\project-rules:
+        \\  repository-isolation:
+        \\    kind: restricted-callers
+        \\    callee-suffix: Repository
+        \\    caller-suffix: Repository
+        \\    from: src/domain/**
+        \\
+    ;
+    try expectParseErr(src, error.WrongKindProjectRuleKey, 2);
 }
 
 test "errorMessage: returns descriptive text for known errors" {
@@ -417,9 +442,8 @@ test "config: parses a project rule" {
     try std.testing.expectEqual(@as(usize, 1), cfg.project_rules.len);
     const rule = cfg.project_rules[0];
     try std.testing.expectEqualStrings("repository-isolation", rule.id);
-    try std.testing.expectEqual(lint.project_rule.ProjectRule.Kind.restricted_callers, rule.kind);
-    try std.testing.expectEqualStrings("Repository", rule.callee_suffix);
-    try std.testing.expectEqualStrings("Repository", rule.caller_suffix);
+    try std.testing.expectEqualStrings("Repository", rule.kind.restricted_callers.callee_suffix);
+    try std.testing.expectEqualStrings("Repository", rule.kind.restricted_callers.caller_suffix);
 }
 
 test "config: parses multiple project rules alongside other sections" {
@@ -445,8 +469,8 @@ test "config: parses multiple project rules alongside other sections" {
     try std.testing.expectEqual(@as(?u32, 15), cfg.metrics.get(.complexity));
     try std.testing.expectEqual(@as(usize, 2), cfg.project_rules.len);
     try std.testing.expectEqualStrings("gateway-isolation", cfg.project_rules[1].id);
-    try std.testing.expectEqualStrings("Gateway", cfg.project_rules[1].callee_suffix);
-    try std.testing.expectEqualStrings("Service", cfg.project_rules[1].caller_suffix);
+    try std.testing.expectEqualStrings("Gateway", cfg.project_rules[1].kind.restricted_callers.callee_suffix);
+    try std.testing.expectEqualStrings("Service", cfg.project_rules[1].kind.restricted_callers.caller_suffix);
 }
 
 test "config: unknown project rule kind is rejected" {
@@ -461,7 +485,7 @@ test "config: project rule without kind is rejected" {
 
 test "config: project rule missing suffixes is rejected" {
     const src = "project-rules:\n  r:\n    kind: restricted-callers\n";
-    try expectParseErr(src, error.IncompleteProjectRule, 2);
+    try expectParseErr(src, error.IncompleteRestrictedCallers, 2);
 }
 
 test "config: unknown project rule key is rejected" {

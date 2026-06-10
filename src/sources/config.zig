@@ -41,9 +41,10 @@ pub const ParseError = error{
     MalformedMetricEntry,
     UnknownProjectRuleKind,
     MissingProjectRuleKind,
-    IncompleteProjectRule,
+    IncompleteRestrictedCallers,
     MalformedProjectRuleEntry,
     UnknownProjectRuleKey,
+    WrongKindProjectRuleKey,
     IncompleteImportBoundary,
     InvalidRatchetValue,
 } || std.mem.Allocator.Error;
@@ -67,9 +68,10 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.MalformedMetricEntry => "metric entry must be '  <metric>: <threshold>'",
         error.UnknownProjectRuleKind => "unknown project rule kind (expected 'restricted-callers' or 'import-boundary')",
         error.MissingProjectRuleKind => "project rule is missing 'kind'",
-        error.IncompleteProjectRule => "restricted-callers requires 'callee-suffix' and 'caller-suffix'",
+        error.IncompleteRestrictedCallers => "restricted-callers requires 'callee-suffix' and 'caller-suffix'",
         error.MalformedProjectRuleEntry => "project rule must be '  <id>:' followed by indented '<key>: <value>' properties",
         error.UnknownProjectRuleKey => "unknown project rule key (expected 'kind', 'callee-suffix', 'caller-suffix', 'from', or 'deny')",
+        error.WrongKindProjectRuleKey => "'callee-suffix' and 'caller-suffix' apply to restricted-callers; 'from' and 'deny' apply to import-boundary",
         error.IncompleteImportBoundary => "import-boundary requires 'from' and 'deny'",
         error.InvalidRatchetValue => "ratchet must be 'true' or 'false'",
         else => @errorName(err),
@@ -81,7 +83,7 @@ const State = enum { top, in_disabled, in_warnings, in_metrics, in_project_rules
 const PendingProjectRule = struct {
     id: []const u8,
     line: u32,
-    kind: ?project_rule.ProjectRule.Kind = null,
+    kind: ?project_rule.ProjectRule.Kind.Tag = null,
     callee_suffix: ?[]const u8 = null,
     caller_suffix: ?[]const u8 = null,
     from: ?[]const u8 = null,
@@ -193,22 +195,31 @@ fn finalizePending(
     };
     switch (kind) {
         .restricted_callers => {
+            if (p.from != null or p.deny != null) {
+                diag.line = p.line;
+                return error.WrongKindProjectRuleKey;
+            }
             const callee_suffix = p.callee_suffix orelse {
                 diag.line = p.line;
-                return error.IncompleteProjectRule;
+                return error.IncompleteRestrictedCallers;
             };
             const caller_suffix = p.caller_suffix orelse {
                 diag.line = p.line;
-                return error.IncompleteProjectRule;
+                return error.IncompleteRestrictedCallers;
             };
             try project_rules.append(arena, .{
                 .id = p.id,
-                .kind = kind,
-                .callee_suffix = callee_suffix,
-                .caller_suffix = caller_suffix,
+                .kind = .{ .restricted_callers = .{
+                    .callee_suffix = callee_suffix,
+                    .caller_suffix = caller_suffix,
+                } },
             });
         },
         .import_boundary => {
+            if (p.callee_suffix != null or p.caller_suffix != null) {
+                diag.line = p.line;
+                return error.WrongKindProjectRuleKey;
+            }
             const from = p.from orelse {
                 diag.line = p.line;
                 return error.IncompleteImportBoundary;
@@ -219,9 +230,7 @@ fn finalizePending(
             };
             try project_rules.append(arena, .{
                 .id = p.id,
-                .kind = kind,
-                .from = from,
-                .deny = deny,
+                .kind = .{ .import_boundary = .{ .from = from, .deny = deny } },
             });
         },
     }
@@ -249,7 +258,7 @@ fn setProjectRuleProperty(
     if (value.len == 0) return error.MalformedProjectRuleEntry;
 
     if (std.mem.eql(u8, key, "kind")) {
-        pending.kind = project_rule.ProjectRule.Kind.fromString(value) orelse return error.UnknownProjectRuleKind;
+        pending.kind = project_rule.ProjectRule.Kind.tagFromString(value) orelse return error.UnknownProjectRuleKind;
         return;
     }
     if (std.mem.eql(u8, key, "callee-suffix")) {

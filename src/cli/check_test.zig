@@ -100,9 +100,10 @@ test "check: project rules report cross-file violations" {
 
     const rules = [_]lint.project_rule.ProjectRule{.{
         .id = "repository-isolation",
-        .kind = .restricted_callers,
-        .callee_suffix = "Repository",
-        .caller_suffix = "Repository",
+        .kind = .{ .restricted_callers = .{
+            .callee_suffix = "Repository",
+            .caller_suffix = "Repository",
+        } },
     }};
     const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &out.writer);
 
@@ -135,9 +136,10 @@ test "check: import-boundary project rules report violations" {
 
     const rules = [_]lint.project_rule.ProjectRule{.{
         .id = "domain-no-infra",
-        .kind = .import_boundary,
-        .from = "**/domain/**",
-        .deny = "**/infra/**",
+        .kind = .{ .import_boundary = .{
+            .from = "**/domain/**",
+            .deny = "**/infra/**",
+        } },
     }};
     const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &out.writer);
 

@@ -10,16 +10,24 @@ const ProjectIndex = @import("ProjectIndex.zig").ProjectIndex;
 pub const ProjectRule = struct {
     id: []const u8,
     kind: Kind,
-    callee_suffix: []const u8 = "",
-    caller_suffix: []const u8 = "",
-    from: []const u8 = "",
-    deny: []const u8 = "",
 
-    pub const Kind = enum {
-        restricted_callers,
-        import_boundary,
+    pub const RestrictedCallers = struct {
+        callee_suffix: []const u8,
+        caller_suffix: []const u8,
+    };
 
-        pub fn fromString(s: []const u8) ?Kind {
+    pub const ImportBoundary = struct {
+        from: []const u8,
+        deny: []const u8,
+    };
+
+    pub const Kind = union(enum) {
+        restricted_callers: RestrictedCallers,
+        import_boundary: ImportBoundary,
+
+        pub const Tag = std.meta.Tag(Kind);
+
+        pub fn tagFromString(s: []const u8) ?Tag {
             if (std.mem.eql(u8, s, "restricted-callers")) return .restricted_callers;
             if (std.mem.eql(u8, s, "import-boundary")) return .import_boundary;
             return null;
@@ -42,8 +50,8 @@ pub fn evaluate(
 
     for (rules) |rule| {
         switch (rule.kind) {
-            .restricted_callers => try evaluateRestrictedCallers(allocator, rule, index, &out),
-            .import_boundary => try evaluateImportBoundary(allocator, rule, index, &out),
+            .restricted_callers => |rc| try evaluateRestrictedCallers(allocator, rule.id, rc, index, &out),
+            .import_boundary => |ib| try evaluateImportBoundary(allocator, rule.id, ib, index, &out),
         }
     }
 
@@ -53,7 +61,8 @@ pub fn evaluate(
 
 fn evaluateRestrictedCallers(
     allocator: std.mem.Allocator,
-    rule: ProjectRule,
+    rule_id: []const u8,
+    rule: ProjectRule.RestrictedCallers,
     index: *const ProjectIndex,
     out: *std.ArrayList(Violation),
 ) !void {
@@ -80,7 +89,7 @@ fn evaluateRestrictedCallers(
             try out.append(allocator, .{
                 .path = file.path,
                 .diagnostic = .{
-                    .rule_id = rule.id,
+                    .rule_id = rule_id,
                     .language = file.lang.toString(),
                     .message = try std.fmt.allocPrint(
                         allocator,
@@ -96,7 +105,8 @@ fn evaluateRestrictedCallers(
 
 fn evaluateImportBoundary(
     allocator: std.mem.Allocator,
-    rule: ProjectRule,
+    rule_id: []const u8,
+    rule: ProjectRule.ImportBoundary,
     index: *const ProjectIndex,
     out: *std.ArrayList(Violation),
 ) !void {
@@ -108,7 +118,7 @@ fn evaluateImportBoundary(
             try out.append(allocator, .{
                 .path = file.path,
                 .diagnostic = .{
-                    .rule_id = rule.id,
+                    .rule_id = rule_id,
                     .language = file.lang.toString(),
                     .message = try std.fmt.allocPrint(
                         allocator,

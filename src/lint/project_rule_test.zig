@@ -11,9 +11,10 @@ const comment_rule = "((comment) @match (#set! message \"no comments\"))\n";
 
 const repository_isolation: project_rule.ProjectRule = .{
     .id = "repository-isolation",
-    .kind = .restricted_callers,
-    .callee_suffix = "Repository",
-    .caller_suffix = "Repository",
+    .kind = .{ .restricted_callers = .{
+        .callee_suffix = "Repository",
+        .caller_suffix = "Repository",
+    } },
 };
 
 const user_repository_ts =
@@ -222,9 +223,10 @@ test "project rule: violations are sorted by path and position" {
 
 const domain_no_infra: project_rule.ProjectRule = .{
     .id = "domain-no-infra",
-    .kind = .import_boundary,
-    .from = "src/domain/**",
-    .deny = "src/infra/**",
+    .kind = .{ .import_boundary = .{
+        .from = "src/domain/**",
+        .deny = "src/infra/**",
+    } },
 };
 
 test "project rule: import-boundary resolves ts relative specifiers" {
@@ -286,9 +288,10 @@ test "project rule: import-boundary matches go import strings" {
 
     const rule: project_rule.ProjectRule = .{
         .id = "domain-no-infra",
-        .kind = .import_boundary,
-        .from = "**/domain/**",
-        .deny = "**/infra/**",
+        .kind = .{ .import_boundary = .{
+            .from = "**/domain/**",
+            .deny = "**/infra/**",
+        } },
     };
     const violations = try project_rule.evaluate(arena_state.allocator(), &.{rule}, &index);
 
@@ -336,9 +339,10 @@ test "project rule: import-boundary judges relative imports by resolved path onl
 
     const rule: project_rule.ProjectRule = .{
         .id = "domain-no-infra",
-        .kind = .import_boundary,
-        .from = "src/domain/**",
-        .deny = "**/infra/**",
+        .kind = .{ .import_boundary = .{
+            .from = "src/domain/**",
+            .deny = "**/infra/**",
+        } },
     };
     const violations = try project_rule.evaluate(arena_state.allocator(), &.{rule}, &index);
 

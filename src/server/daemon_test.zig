@@ -217,9 +217,10 @@ test "daemon: processConnection replies fail on a malformed frame" {
 
 const repository_isolation = [_]@import("../lint.zig").project_rule.ProjectRule{.{
     .id = "repository-isolation",
-    .kind = .restricted_callers,
-    .callee_suffix = "Repository",
-    .caller_suffix = "Repository",
+    .kind = .{ .restricted_callers = .{
+        .callee_suffix = "Repository",
+        .caller_suffix = "Repository",
+    } },
 }};
 
 const user_repository_src =
