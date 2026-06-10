@@ -375,3 +375,152 @@ test "daemon: warn-only diagnostics keep the report clean" {
     try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
     try std.testing.expectEqual(lint.diagnostic.Severity.warn, report.diagnostics[0].severity);
 }
+
+const ratchet_disk_one_violation = "const a = x as any;\n";
+const ratchet_proposed_same_count = "const b = y as any;\n";
+const ratchet_proposed_growth = "const a = x as any;\nconst b = y as any;\n";
+
+fn ratchetContext(f: *test_fixture.Fixture, io: std.Io) daemon.Context {
+    return .{ .engine = &f.engine, .binary_mtime = daemon_mtime, .io = io, .ratchet = true };
+}
+
+test "daemon: ratchet demotes unchanged violation count to warn" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = ratchet_disk_one_violation });
+
+    var path_buf: [256]u8 = undefined;
+    const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
+
+    const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = filename,
+        .source = ratchet_proposed_same_count,
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expect(report.clean);
+    try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+    try std.testing.expectEqual(lint.diagnostic.Severity.warn, report.diagnostics[0].severity);
+}
+
+test "daemon: ratchet keeps violation growth as error" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = ratchet_disk_one_violation });
+
+    var path_buf: [256]u8 = undefined;
+    const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
+
+    const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = filename,
+        .source = ratchet_proposed_growth,
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expect(!report.clean);
+    try std.testing.expectEqual(@as(usize, 2), report.diagnostics.len);
+    try std.testing.expectEqual(lint.diagnostic.Severity.@"error", report.diagnostics[0].severity);
+    try std.testing.expectEqual(lint.diagnostic.Severity.@"error", report.diagnostics[1].severity);
+}
+
+test "daemon: ratchet treats a missing file as zero baseline" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var path_buf: [256]u8 = undefined;
+    const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/new.ts", .{dir});
+
+    const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = filename,
+        .source = ratchet_disk_one_violation,
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expect(!report.clean);
+    try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+    try std.testing.expectEqual(lint.diagnostic.Severity.@"error", report.diagnostics[0].severity);
+}
+
+test "daemon: ratchet baseline follows the current disk state" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = ratchet_disk_one_violation });
+
+    var path_buf: [256]u8 = undefined;
+    const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
+
+    const first = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = filename,
+        .source = ratchet_proposed_same_count,
+    });
+    try std.testing.expect(first.report.?.clean);
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const clean: string = \"ok\";\n" });
+
+    const second = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = filename,
+        .source = ratchet_proposed_same_count,
+    });
+    try std.testing.expect(!second.report.?.clean);
+    try std.testing.expectEqual(lint.diagnostic.Severity.@"error", second.report.?.diagnostics[0].severity);
+}
+
+test "daemon: ratchet without io leaves severity untouched" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var ctx = context(f);
+    ctx.ratchet = true;
+
+    const resp = daemon.handle(ctx, arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .language = "ts",
+        .source = ratchet_disk_one_violation,
+    });
+
+    try std.testing.expect(!resp.report.?.clean);
+    try std.testing.expectEqual(lint.diagnostic.Severity.@"error", resp.report.?.diagnostics[0].severity);
+}

@@ -17,6 +17,7 @@ pub const Config = struct {
     warnings: []const ScopedId,
     metrics: metric.Set,
     project_rules: []const project_rule.ProjectRule,
+    ratchet: bool,
     arena: *std.heap.ArenaAllocator,
 
     pub fn deinit(self: *Config) void {
@@ -43,6 +44,7 @@ pub const ParseError = error{
     IncompleteProjectRule,
     MalformedProjectRuleEntry,
     UnknownProjectRuleKey,
+    InvalidRatchetValue,
 } || std.mem.Allocator.Error;
 
 pub const Diagnostic = struct {
@@ -67,6 +69,7 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.IncompleteProjectRule => "restricted-callers requires 'callee-suffix' and 'caller-suffix'",
         error.MalformedProjectRuleEntry => "project rule must be '  <id>:' followed by indented '<key>: <value>' properties",
         error.UnknownProjectRuleKey => "unknown project rule key (expected 'kind', 'callee-suffix', or 'caller-suffix')",
+        error.InvalidRatchetValue => "ratchet must be 'true' or 'false'",
         else => @errorName(err),
     };
 }
@@ -92,6 +95,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     var warnings: std.ArrayList(ScopedId) = .empty;
     var metrics: metric.Set = metric.empty;
     var project_rules: std.ArrayList(project_rule.ProjectRule) = .empty;
+    var ratchet = false;
     var pending: ?PendingProjectRule = null;
 
     var line_no: u32 = 0;
@@ -115,6 +119,11 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
 
         if (indent == 0) {
             try finalizePending(arena, &pending, &project_rules, diag);
+            if (std.mem.startsWith(u8, content, "ratchet:")) {
+                ratchet = try parseRatchetValue(content["ratchet:".len..]);
+                state = .top;
+                continue;
+            }
             state = try parseTopLevelKey(content);
             continue;
         }
@@ -154,8 +163,16 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
         .warnings = try warnings.toOwnedSlice(arena),
         .metrics = metrics,
         .project_rules = try project_rules.toOwnedSlice(arena),
+        .ratchet = ratchet,
         .arena = arena_ptr,
     };
+}
+
+fn parseRatchetValue(raw: []const u8) ParseError!bool {
+    const value = std.mem.trim(u8, raw, " ");
+    if (std.mem.eql(u8, value, "true")) return true;
+    if (std.mem.eql(u8, value, "false")) return false;
+    return error.InvalidRatchetValue;
 }
 
 fn finalizePending(

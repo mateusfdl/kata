@@ -84,6 +84,7 @@ pub fn main(init: std.process.Init) !void {
         .environ = init.environ_map,
         .args = user_args,
         .project_rules = if (cfg_opt) |cfg| cfg.project_rules else &.{},
+        .ratchet = if (cfg_opt) |cfg| cfg.ratchet else false,
         .stdin = &stdin_reader.interface,
         .stdout = &stdout_writer.interface,
         .stderr = stderr,

@@ -107,6 +107,28 @@ test "config: warnings list rejects invalid rule id" {
     try expectParseErr("warnings:\n  - ts/no.console\n", error.InvalidRuleId, 2);
 }
 
+test "config: ratchet defaults to false" {
+    var cfg = try expectParseOk("");
+    defer cfg.deinit();
+    try std.testing.expectEqual(false, cfg.ratchet);
+}
+
+test "config: parses ratchet true" {
+    var cfg = try expectParseOk("ratchet: true\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(true, cfg.ratchet);
+}
+
+test "config: parses ratchet false" {
+    var cfg = try expectParseOk("ratchet: false\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(false, cfg.ratchet);
+}
+
+test "config: ratchet rejects non-boolean values" {
+    try expectParseErr("ratchet: yes\n", error.InvalidRatchetValue, 1);
+}
+
 test "config: CRLF line endings are tolerated" {
     var cfg = try expectParseOk("disabled:\r\n  - ts/no-console\r\n");
     defer cfg.deinit();

@@ -13,6 +13,8 @@ pub const Context = struct {
     engine: *Engine,
     binary_mtime: i64,
     project: ?*ProjectState = null,
+    io: ?std.Io = null,
+    ratchet: bool = false,
 };
 
 pub const ProjectState = struct {
@@ -172,6 +174,9 @@ pub fn handle(
     const diagnostics = ctx.engine.lint(arena, source, lang, req.filename) catch
         return reply(ctx, .fail, null, "lint failed");
 
+    applyRatchet(ctx, arena, lang, req.filename, diagnostics) catch
+        return reply(ctx, .fail, null, "ratchet baseline failed");
+
     const all = appendProjectDiagnostics(ctx, arena, source, lang, req.filename, diagnostics) catch
         return reply(ctx, .fail, null, "project analysis failed");
 
@@ -180,6 +185,39 @@ pub fn handle(
         .diagnostics = all,
         .clean = !diagnostic.hasErrors(all),
     }, null);
+}
+
+fn applyRatchet(
+    ctx: Context,
+    arena: std.mem.Allocator,
+    lang: language.Name,
+    filename: ?[]const u8,
+    diagnostics: []diagnostic.Diagnostic,
+) !void {
+    if (!ctx.ratchet) return;
+    const io = ctx.io orelse return;
+    const path = filename orelse return;
+
+    const baseline_source = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(walk.max_file_bytes)) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    const baseline = try ctx.engine.lint(arena, baseline_source, lang, path);
+
+    for (diagnostics) |*d| {
+        if (d.severity != .@"error") continue;
+        const before = countRule(baseline, d.rule_id);
+        const now = countRule(diagnostics, d.rule_id);
+        if (now <= before) d.severity = .warn;
+    }
+}
+
+fn countRule(diagnostics: []const diagnostic.Diagnostic, rule_id: []const u8) usize {
+    var n: usize = 0;
+    for (diagnostics) |d| {
+        if (std.mem.eql(u8, d.rule_id, rule_id)) n += 1;
+    }
+    return n;
 }
 
 fn appendProjectDiagnostics(

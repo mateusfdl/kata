@@ -23,6 +23,7 @@ pub const Command = struct {
     environ: *std.process.Environ.Map,
     args: []const [:0]const u8,
     project_rules: []const lint.project_rule.ProjectRule = &.{},
+    ratchet: bool = false,
     stdin: *std.Io.Reader,
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
@@ -121,6 +122,8 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
         .engine = c.engine,
         .binary_mtime = binary_mtime,
         .project = if (project_state) |*p| p else null,
+        .io = c.io,
+        .ratchet = c.ratchet,
     }, socket_path) catch |err| switch (err) {
         error.AlreadyRunning => return printAndExit(c.stderr, "kata daemon already running\n", exit_clean),
         else => return internalError(c.stderr, "serve", err),
