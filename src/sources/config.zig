@@ -55,7 +55,7 @@ pub const Diagnostic = struct {
 
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
-        error.UnknownTopLevelKey => "unknown top-level key (expected 'disabled', 'warnings', 'metrics', or 'project-rules')",
+        error.UnknownTopLevelKey => "unknown top-level key (expected 'disabled', 'warnings', 'metrics', 'project-rules', or 'ratchet')",
         error.TabInIndent => "tabs are not allowed in indentation",
         error.BadIndent => "indent must be 0 or 2 spaces",
         error.MalformedListItem => "list item must be '  - <rule-id>'",
@@ -282,15 +282,22 @@ fn setProjectRuleProperty(
 
 fn parseTopLevelKey(content: []const u8) ParseError!State {
     if (std.mem.endsWith(u8, content, ":")) {
-        const key = content[0 .. content.len - 1];
-        if (std.mem.eql(u8, key, "disabled")) return .in_disabled;
-        if (std.mem.eql(u8, key, "warnings")) return .in_warnings;
-        if (std.mem.eql(u8, key, "metrics")) return .in_metrics;
-        if (std.mem.eql(u8, key, "project-rules")) return .in_project_rules;
+        return sectionState(content[0 .. content.len - 1]) orelse error.UnknownTopLevelKey;
+    }
+    if (std.mem.indexOfScalar(u8, content, ':')) |colon| {
+        const key = std.mem.trimEnd(u8, content[0..colon], " ");
+        if (sectionState(key) != null) return error.ContentAfterKey;
         return error.UnknownTopLevelKey;
     }
-    if (std.mem.indexOfScalar(u8, content, ':') != null) return error.ContentAfterKey;
     return error.UnknownTopLevelKey;
+}
+
+fn sectionState(key: []const u8) ?State {
+    if (std.mem.eql(u8, key, "disabled")) return .in_disabled;
+    if (std.mem.eql(u8, key, "warnings")) return .in_warnings;
+    if (std.mem.eql(u8, key, "metrics")) return .in_metrics;
+    if (std.mem.eql(u8, key, "project-rules")) return .in_project_rules;
+    return null;
 }
 
 fn setMetricEntry(metrics: *metric.Set, content: []const u8) ParseError!void {

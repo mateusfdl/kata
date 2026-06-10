@@ -167,6 +167,14 @@ test "config: content after key without colon is rejected" {
     try expectParseErr("disabled here\n", error.UnknownTopLevelKey, 1);
 }
 
+test "config: misspelled scalar key reports an unknown key" {
+    try expectParseErr("rachet: true\n", error.UnknownTopLevelKey, 1);
+}
+
+test "config: inline content after a known key is rejected" {
+    try expectParseErr("disabled: ts/no-console\n", error.ContentAfterKey, 1);
+}
+
 const RuleFixture = struct {
     arena_state: std.heap.ArenaAllocator,
     set: loader.RuleSet,
@@ -355,7 +363,7 @@ test "errorMessage: returns descriptive text for known errors" {
         config.errorMessage(error.TabInIndent),
     );
     try std.testing.expectEqualStrings(
-        "unknown top-level key (expected 'disabled', 'warnings', 'metrics', or 'project-rules')",
+        "unknown top-level key (expected 'disabled', 'warnings', 'metrics', 'project-rules', or 'ratchet')",
         config.errorMessage(error.UnknownTopLevelKey),
     );
 }
