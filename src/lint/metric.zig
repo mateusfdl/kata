@@ -243,7 +243,7 @@ pub fn lengthOf(node: ts.Node) u32 {
 pub fn paramsOf(node: ts.Node, lang: language.Name) ?u32 {
     if (node.childByFieldName("parameters")) |params| {
         return switch (lang) {
-            .ts, .tsx => params.namedChildCount(),
+            .ts, .tsx => countNonExtraNamed(params),
             .go => goParamCount(params),
         };
     }
@@ -256,10 +256,28 @@ fn goParamCount(params: ts.Node) u32 {
     var i: u32 = 0;
     while (i < params.namedChildCount()) : (i += 1) {
         const decl = params.namedChild(i) orelse continue;
+        if (!isGoParameterDeclaration(decl)) continue;
         const names = countFieldChildren(decl, "name");
         total += if (names == 0) 1 else names;
     }
     return total;
+}
+
+fn isGoParameterDeclaration(node: ts.Node) bool {
+    const kind = node.kind();
+    return std.mem.eql(u8, kind, "parameter_declaration") or
+        std.mem.eql(u8, kind, "variadic_parameter_declaration");
+}
+
+fn countNonExtraNamed(node: ts.Node) u32 {
+    var count: u32 = 0;
+    var i: u32 = 0;
+    while (i < node.namedChildCount()) : (i += 1) {
+        const child = node.namedChild(i) orelse continue;
+        if (child.isExtra()) continue;
+        count += 1;
+    }
+    return count;
 }
 
 fn countFieldChildren(node: ts.Node, field: []const u8) u32 {
@@ -274,7 +292,7 @@ fn countFieldChildren(node: ts.Node, field: []const u8) u32 {
 
 pub fn argsOf(node: ts.Node) ?u32 {
     const arguments = node.childByFieldName("arguments") orelse return null;
-    return arguments.namedChildCount();
+    return countNonExtraNamed(arguments);
 }
 
 fn ownedByNode(spans: []const Span, p: Span, node: ts.Node) bool {

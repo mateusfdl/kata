@@ -669,6 +669,48 @@ test "engine: where args counts call arguments" {
     try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
 }
 
+test "engine: where args ignores comments between arguments" {
+    const gpa = std.testing.allocator;
+    const rule =
+        "((call_expression) @match (#where? \"(> (args @match) 2)\") (#set! message \"too many args\"))\n";
+    var f = try Fixture.init(gpa, &.{.ts}, "max-args", rule);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(gpa, "f(1, /* note */ 2);\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 0), diags.len);
+}
+
+test "engine: where params ignores comments in ts parameter list" {
+    const gpa = std.testing.allocator;
+    const rule =
+        "((function_declaration) @match (#where? \"(> (params @match) 2)\") (#set! message \"too many params\"))\n";
+    var f = try Fixture.init(gpa, &.{.ts}, "max-params", rule);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(gpa, "function f(a, /* note */ b) {}\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 0), diags.len);
+}
+
+test "engine: where params ignores comments in go parameter list" {
+    const gpa = std.testing.allocator;
+    const rule =
+        "((function_declaration) @match (#where? \"(> (params @match) 2)\") (#set! message \"too many params\"))\n";
+    var f = try Fixture.init(gpa, &.{.go}, "max-params", rule);
+    defer f.deinit();
+
+    const src =
+        "package main\n" ++
+        "func f(a, b int /* note */) {}\n";
+    const diags = try f.engine.lint(gpa, src, .go, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 0), diags.len);
+}
+
 test "engine: where text compares numeric capture text" {
     const gpa = std.testing.allocator;
     const rule =
