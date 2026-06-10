@@ -42,13 +42,7 @@ pub fn run(
     var engine = Engine.init(gpa, &registry, &rule_set);
     defer engine.deinit();
     engine.prewarm() catch {
-        const d = engine.compile_diag;
-        if (d.lang) |lang| {
-            try stderr.print("kata test: rule {s}/{s}: {s}\n", .{ lang.toString(), d.rule_id, d.detail });
-        } else {
-            try stderr.writeAll("kata test: rule compilation failed\n");
-        }
-        try stderr.flush();
+        try engine.compile_diag.write("kata test", stderr);
         return .invalid;
     };
 

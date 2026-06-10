@@ -91,13 +91,7 @@ fn runUnknown(c: Command, cmd: []const u8) !u8 {
 
 fn validateRules(engine: *Engine, stderr: *std.Io.Writer) !?u8 {
     engine.prewarm() catch {
-        const d = engine.compile_diag;
-        if (d.lang) |lang| {
-            try stderr.print("kata: rule {s}/{s}: {s}\n", .{ lang.toString(), d.rule_id, d.detail });
-        } else {
-            try stderr.writeAll("kata: rule compilation failed\n");
-        }
-        try stderr.flush();
+        try engine.compile_diag.write("kata", stderr);
         return exit_internal_error;
     };
     return null;

@@ -111,6 +111,15 @@ pub const Diagnostic = struct {
     lang: ?language.Name = null,
     rule_id: []const u8 = "",
     detail: []const u8 = "",
+
+    pub fn write(self: Diagnostic, prefix: []const u8, out: *std.Io.Writer) !void {
+        if (self.lang) |lang| {
+            try out.print("{s}: rule {s}/{s}: {s}\n", .{ prefix, lang.toString(), self.rule_id, self.detail });
+        } else {
+            try out.print("{s}: rule compilation failed\n", .{prefix});
+        }
+        try out.flush();
+    }
 };
 
 pub fn compile(
