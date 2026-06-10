@@ -4,6 +4,7 @@ const lint = @import("../lint.zig");
 const loader = @import("loader.zig");
 
 const language = lint.language;
+const metric = lint.metric;
 const rule = lint.rule;
 
 pub const max_config_bytes: usize = 64 * 1024;
@@ -15,6 +16,7 @@ pub const ScopedId = struct {
 
 pub const Config = struct {
     disabled: []const ScopedId,
+    metrics: metric.Set,
     arena: *std.heap.ArenaAllocator,
 
     pub fn deinit(self: *Config) void {
@@ -33,6 +35,9 @@ pub const ParseError = error{
     UnknownLanguage,
     InvalidRuleId,
     UnexpectedListItem,
+    UnknownMetric,
+    InvalidThreshold,
+    MalformedMetricEntry,
 } || std.mem.Allocator.Error;
 
 pub const Diagnostic = struct {
@@ -41,7 +46,7 @@ pub const Diagnostic = struct {
 
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
-        error.UnknownTopLevelKey => "unknown top-level key (expected 'disabled')",
+        error.UnknownTopLevelKey => "unknown top-level key (expected 'disabled' or 'metrics')",
         error.TabInIndent => "tabs are not allowed in indentation",
         error.BadIndent => "indent must be 0 or 2 spaces",
         error.MalformedListItem => "list item must be '  - <rule-id>'",
@@ -49,11 +54,14 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.UnknownLanguage => "unknown language (expected ts, tsx, or go)",
         error.InvalidRuleId => "rule id must match [A-Za-z0-9_-]+",
         error.UnexpectedListItem => "list item without a preceding key",
+        error.UnknownMetric => "unknown metric (expected 'function-length')",
+        error.InvalidThreshold => "metric threshold must be a positive integer",
+        error.MalformedMetricEntry => "metric entry must be '  <metric>: <threshold>'",
         else => @errorName(err),
     };
 }
 
-const State = enum { top, in_disabled };
+const State = enum { top, in_disabled, in_metrics };
 
 pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) ParseError!Config {
     const arena_ptr = try gpa.create(std.heap.ArenaAllocator);
@@ -63,6 +71,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     const arena = arena_ptr.allocator();
 
     var disabled: std.ArrayList(ScopedId) = .empty;
+    var metrics: metric.Set = metric.empty;
 
     var line_no: u32 = 0;
     var iter = std.mem.splitScalar(u8, source, '\n');
@@ -89,8 +98,11 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
         }
 
         if (indent == 2) {
-            if (state != .in_disabled) return error.UnexpectedListItem;
-            try appendListItem(arena, &disabled, content);
+            switch (state) {
+                .top => return error.UnexpectedListItem,
+                .in_disabled => try appendListItem(arena, &disabled, content),
+                .in_metrics => try setMetricEntry(&metrics, content),
+            }
             continue;
         }
 
@@ -100,6 +112,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     diag.line = 0;
     return .{
         .disabled = try disabled.toOwnedSlice(arena),
+        .metrics = metrics,
         .arena = arena_ptr,
     };
 }
@@ -108,10 +121,21 @@ fn parseTopLevelKey(content: []const u8) ParseError!State {
     if (std.mem.endsWith(u8, content, ":")) {
         const key = content[0 .. content.len - 1];
         if (std.mem.eql(u8, key, "disabled")) return .in_disabled;
+        if (std.mem.eql(u8, key, "metrics")) return .in_metrics;
         return error.UnknownTopLevelKey;
     }
     if (std.mem.indexOfScalar(u8, content, ':') != null) return error.ContentAfterKey;
     return error.UnknownTopLevelKey;
+}
+
+fn setMetricEntry(metrics: *metric.Set, content: []const u8) ParseError!void {
+    const colon = std.mem.indexOfScalar(u8, content, ':') orelse return error.MalformedMetricEntry;
+    const key = std.mem.trimEnd(u8, content[0..colon], " ");
+    const value = std.mem.trim(u8, content[colon + 1 ..], " ");
+    const name = metric.Name.fromString(key) orelse return error.UnknownMetric;
+    const threshold = std.fmt.parseInt(u32, value, 10) catch return error.InvalidThreshold;
+    if (threshold == 0) return error.InvalidThreshold;
+    metrics.set(name, threshold);
 }
 
 fn appendListItem(

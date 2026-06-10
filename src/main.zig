@@ -66,13 +66,16 @@ pub fn main(init: std.process.Init) !void {
 
     var diag: config.Diagnostic = .{};
     var cfg_opt = config.loadFromDisk(gpa, io, init.environ_map, &diag) catch |err| dieConfig(stderr, diag, err);
+    var metrics: lint.metric.Set = lint.metric.empty;
     if (cfg_opt) |*cfg| {
         defer cfg.deinit();
         config.filterDisabled(&rule_set, cfg.*);
+        metrics = cfg.metrics;
     }
 
     var engine = Engine.init(gpa, &registry, &rule_set);
     defer engine.deinit();
+    engine.metrics = metrics;
 
     const code = cli.dispatch(.{
         .gpa = gpa,

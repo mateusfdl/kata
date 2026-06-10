@@ -137,8 +137,9 @@ fn reportFile(
     path: []const u8,
     stdout: *std.Io.Writer,
 ) !usize {
-    const diagnostics = try engine.lint(gpa, source, lang, path);
-    defer gpa.free(diagnostics);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const diagnostics = try engine.lint(arena.allocator(), source, lang, path);
 
     for (diagnostics) |d| {
         try stdout.print("{s}:{d}:{d} [{s}] {s}\n", .{

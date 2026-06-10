@@ -5,6 +5,7 @@ const diagnostic = @import("diagnostic.zig");
 const glob = @import("glob.zig");
 const language = @import("language.zig");
 const matcher = @import("matcher.zig");
+const metric = @import("metric.zig");
 const rule = @import("rule.zig");
 
 const RuleSet = @import("RuleSet.zig").RuleSet;
@@ -17,6 +18,8 @@ pub const Engine = struct {
     rules: *RuleSet,
     compiled: std.EnumArray(language.Name, ?rule.CompiledRule) = .initFill(null),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
+    metrics: metric.Set = metric.empty,
+    metric_queries: std.EnumArray(language.Name, ?*ts.Query) = .initFill(null),
     cursor: *ts.QueryCursor,
     compile_diag: rule.Diagnostic = .{},
 
@@ -42,6 +45,10 @@ pub const Engine = struct {
         while (pit.next()) |entry| {
             if (entry.value.*) |parser| parser.destroy();
         }
+        var mit = self.metric_queries.iterator();
+        while (mit.next()) |entry| {
+            if (entry.value.*) |query| query.destroy();
+        }
         self.cursor.destroy();
     }
 
@@ -49,6 +56,7 @@ pub const Engine = struct {
         for (std.enums.values(language.Name)) |lang| {
             _ = try self.ensureCompiled(lang);
             _ = try self.ensureParser(lang);
+            if (metric.anyEnabled(self.metrics)) _ = try self.ensureMetricQuery(lang);
         }
     }
 
@@ -68,6 +76,15 @@ pub const Engine = struct {
         return &slot.*.?;
     }
 
+    fn ensureMetricQuery(self: *Engine, lang: language.Name) !*ts.Query {
+        if (self.metric_queries.get(lang)) |cached| return cached;
+        var error_offset: u32 = 0;
+        const query = ts.Query.create(self.registry.get(lang), metric.querySource(lang), &error_offset) catch
+            return error.MetricQueryCompileFailed;
+        self.metric_queries.set(lang, query);
+        return query;
+    }
+
     pub fn lint(
         self: *Engine,
         allocator: std.mem.Allocator,
@@ -84,6 +101,11 @@ pub const Engine = struct {
         errdefer out.deinit(allocator);
 
         try runRule(allocator, compiled, self.cursor, tree.rootNode(), source, lang, path, &out);
+
+        if (metric.anyEnabled(self.metrics)) {
+            const metric_query = try self.ensureMetricQuery(lang);
+            try metric.run(allocator, self.metrics, metric_query, self.cursor, tree.rootNode(), lang, &out);
+        }
 
         return out.toOwnedSlice(allocator);
     }
