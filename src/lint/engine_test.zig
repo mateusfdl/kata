@@ -118,10 +118,6 @@ test "engine: clean sources produce no diagnostics" {
     for (cases) |src| {
         const diags = try f.engine.lint(gpa, src, .ts, null);
         defer gpa.free(diags);
-        if (diags.len != 0) {
-            std.debug.print("unexpected diagnostics for {s}:\n", .{src});
-            for (diags) |d| std.debug.print("  {s}: {s}\n", .{ d.rule_id, d.message });
-        }
         try std.testing.expectEqual(@as(usize, 0), diags.len);
     }
 }

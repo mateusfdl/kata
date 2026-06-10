@@ -11,10 +11,6 @@ pub const Range = struct {
 pub const Severity = enum {
     @"error",
     warn,
-
-    pub fn toString(self: Severity) []const u8 {
-        return @tagName(self);
-    }
 };
 
 pub const Diagnostic = struct {
