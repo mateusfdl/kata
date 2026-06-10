@@ -161,8 +161,7 @@ fn demoteWarnings(
 
 fn matchesWarning(warnings: []const rule.ScopedId, lang: language.Name, rule_id: []const u8) bool {
     for (warnings) |w| {
-        const lang_matches = w.lang == null or w.lang.? == lang;
-        if (lang_matches and std.mem.eql(u8, w.id, rule_id)) return true;
+        if (w.matches(lang, rule_id)) return true;
     }
     return false;
 }

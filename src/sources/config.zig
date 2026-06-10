@@ -296,7 +296,7 @@ fn setMetricEntry(metrics: *metric.Set, content: []const u8) ParseError!void {
 
 fn appendListItem(
     arena: std.mem.Allocator,
-    disabled: *std.ArrayList(ScopedId),
+    list: *std.ArrayList(ScopedId),
     content: []const u8,
 ) ParseError!void {
     if (!std.mem.startsWith(u8, content, "- ")) return error.MalformedListItem;
@@ -308,12 +308,12 @@ fn appendListItem(
         const id = item[slash + 1 ..];
         if (!rule.isValidId(lang_str) or !rule.isValidId(id)) return error.InvalidRuleId;
         const lang = language.Name.fromString(lang_str) orelse return error.UnknownLanguage;
-        try disabled.append(arena, .{ .lang = lang, .id = try arena.dupe(u8, id) });
+        try list.append(arena, .{ .lang = lang, .id = try arena.dupe(u8, id) });
         return;
     }
 
     if (!rule.isValidId(item)) return error.InvalidRuleId;
-    try disabled.append(arena, .{ .lang = null, .id = try arena.dupe(u8, item) });
+    try list.append(arena, .{ .lang = null, .id = try arena.dupe(u8, item) });
 }
 
 fn stripComment(line: []const u8) []const u8 {
@@ -380,8 +380,7 @@ pub fn filterDisabled(set: *loader.RuleSet, cfg: Config) void {
 
 fn isDisabled(lang: language.Name, id: []const u8, cfg: Config) bool {
     for (cfg.disabled) |d| {
-        const lang_matches = d.lang == null or d.lang.? == lang;
-        if (lang_matches and std.mem.eql(u8, d.id, id)) return true;
+        if (d.matches(lang, id)) return true;
     }
     return false;
 }

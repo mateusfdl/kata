@@ -22,6 +22,11 @@ pub const RawRule = struct {
 pub const ScopedId = struct {
     lang: ?language.Name,
     id: []const u8,
+
+    pub fn matches(self: ScopedId, lang: language.Name, id: []const u8) bool {
+        const lang_matches = self.lang == null or self.lang.? == lang;
+        return lang_matches and std.mem.eql(u8, self.id, id);
+    }
 };
 
 pub fn isValidId(s: []const u8) bool {
