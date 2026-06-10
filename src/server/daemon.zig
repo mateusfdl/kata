@@ -197,25 +197,28 @@ fn applyRatchet(
     if (!ctx.ratchet) return;
     const io = ctx.io orelse return;
     const path = filename orelse return;
+    if (!diagnostic.hasErrors(diagnostics)) return;
 
     const baseline_source = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(walk.max_file_bytes)) catch |err| switch (err) {
-        error.FileNotFound => return,
+        error.FileNotFound, error.StreamTooLong => return,
         else => return err,
     };
     const baseline = try ctx.engine.lint(arena, baseline_source, lang, path);
 
-    for (diagnostics) |*d| {
+    var demote: std.ArrayList(usize) = .empty;
+    for (diagnostics, 0..) |d, i| {
         if (d.severity != .@"error") continue;
-        const before = countRule(baseline, d.rule_id);
-        const now = countRule(diagnostics, d.rule_id);
-        if (now <= before) d.severity = .warn;
+        const before = countErrors(baseline, d.rule_id);
+        const now = countErrors(diagnostics, d.rule_id);
+        if (now <= before) try demote.append(arena, i);
     }
+    for (demote.items) |i| diagnostics[i].severity = .warn;
 }
 
-fn countRule(diagnostics: []const diagnostic.Diagnostic, rule_id: []const u8) usize {
+fn countErrors(diagnostics: []const diagnostic.Diagnostic, rule_id: []const u8) usize {
     var n: usize = 0;
     for (diagnostics) |d| {
-        if (std.mem.eql(u8, d.rule_id, rule_id)) n += 1;
+        if (d.severity == .@"error" and std.mem.eql(u8, d.rule_id, rule_id)) n += 1;
     }
     return n;
 }

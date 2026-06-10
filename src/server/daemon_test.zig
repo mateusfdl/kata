@@ -505,6 +505,46 @@ test "daemon: ratchet baseline follows the current disk state" {
     try std.testing.expectEqual(lint.diagnostic.Severity.@"error", second.report.?.diagnostics[0].severity);
 }
 
+test "daemon: ratchet compares error counts so warn diagnostics never mask error growth" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const mixed_rule =
+        \\((as_expression (predefined_type) @t) @match
+        \\ (#eq? @t "any")
+        \\ (#set! message "as any is not allowed"))
+        \\((non_null_expression) @match
+        \\ (#set! severity "warn")
+        \\ (#set! message "no non-null assertions"))
+        \\
+    ;
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", mixed_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const a = x as any;\nconst b = y!;\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
+
+    const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = filename,
+        .source = "const a = x as any;\nconst c = z as any;\n",
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expect(!report.clean);
+    try std.testing.expectEqual(@as(usize, 2), report.diagnostics.len);
+    try std.testing.expectEqual(lint.diagnostic.Severity.@"error", report.diagnostics[0].severity);
+    try std.testing.expectEqual(lint.diagnostic.Severity.@"error", report.diagnostics[1].severity);
+}
+
 test "daemon: ratchet without io leaves severity untouched" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
