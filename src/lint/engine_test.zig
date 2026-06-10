@@ -697,3 +697,69 @@ test "engine: where text on non-numeric capture never fires" {
 
     try std.testing.expectEqual(@as(usize, 0), diags.len);
 }
+
+test "engine: message interpolates measures and capture text" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rule =
+        "((function_declaration name: (identifier) @name) @match" ++
+        " (#where? \"(> (complexity @match) 2)\")" ++
+        " (#set! message \"complexity {complexity @match} exceeds 2 in {text @name}\"))\n";
+    var f = try Fixture.init(gpa, &.{.ts}, "max-complexity", rule);
+    defer f.deinit();
+
+    const src =
+        "function handler(a, b) {\n" ++
+        "  if (a) { return 1; }\n" ++
+        "  if (b) { return 2; }\n" ++
+        "  return 3;\n" ++
+        "}\n";
+    const diags = try f.engine.lint(arena.allocator(), src, .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("complexity 3 exceeds 2 in handler", diags[0].message);
+}
+
+test "engine: message interpolation works without a where predicate" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rule =
+        "((function_declaration) @match (#set! message \"spans {length @match} lines\"))\n";
+    var f = try Fixture.init(gpa, &.{.ts}, "length-report", rule);
+    defer f.deinit();
+
+    const src =
+        "function f() {\n" ++
+        "  return 1;\n" ++
+        "}\n";
+    const diags = try f.engine.lint(arena.allocator(), src, .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("spans 3 lines", diags[0].message);
+}
+
+test "engine: message with unknown placeholder measure is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((function_declaration) @match (#set! message \"{lines @match}\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "function f() {}", .ts, null));
+}
+
+test "engine: message with unknown placeholder capture is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((function_declaration) @match (#set! message \"{length @nope}\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "function f() {}", .ts, null));
+}
+
+test "engine: message with unclosed placeholder is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((function_declaration) @match (#set! message \"oops {length @match\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "function f() {}", .ts, null));
+}

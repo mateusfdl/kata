@@ -5,4 +5,4 @@
   (arrow_function)
   (method_definition)] @match
  (#where? "(> (complexity @match) 10)")
- (#set! message "cyclomatic complexity exceeds 10 - extract smaller functions"))
+ (#set! message "cyclomatic complexity {complexity @match} exceeds 10 - extract smaller functions"))

@@ -66,7 +66,7 @@ pub const Engine = struct {
         for (std.enums.values(language.Name)) |lang| {
             const compiled = try self.ensureCompiled(lang);
             _ = try self.ensureParser(lang);
-            if (metric.anyEnabled(self.metrics) or compiled.has_where) _ = try self.ensureMetricQuery(lang);
+            if (metric.anyEnabled(self.metrics) or compiled.needs_measures) _ = try self.ensureMetricQuery(lang);
         }
     }
 
@@ -129,7 +129,7 @@ pub const Engine = struct {
         var out: std.ArrayList(diagnostic.Diagnostic) = try .initCapacity(allocator, initial_diagnostic_capacity);
         errdefer out.deinit(allocator);
 
-        const metric_ctx: ?matcher.MetricContext = if (compiled.has_where) .{
+        const metric_ctx: ?matcher.MetricContext = if (compiled.needs_measures) .{
             .allocator = allocator,
             .compiled = try self.ensureMetricQuery(lang),
             .cursor = self.metric_cursor,
@@ -188,7 +188,10 @@ fn runRule(
         if (pathExcluded(meta.exclude_paths, path)) continue;
         if (!try matcher.evaluate(meta.predicates, match, source, metric_ctx)) continue;
 
-        const message = meta.message orelse meta.rule_id;
+        const message = if (meta.message_segments) |segments|
+            try matcher.renderMessage(allocator, segments, match, source, metric_ctx)
+        else
+            meta.message orelse meta.rule_id;
         try emitMatchDiagnostics(allocator, r, meta, match, lang_str, message, out);
     }
 }

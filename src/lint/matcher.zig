@@ -72,6 +72,44 @@ const NodeMeasures = struct {
     }
 };
 
+pub fn renderMessage(
+    allocator: std.mem.Allocator,
+    segments: []const rule.MessageSegment,
+    match: ts.Query.Match,
+    source: []const u8,
+    metric_ctx: ?MetricContext,
+) std.mem.Allocator.Error![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    for (segments) |segment| {
+        switch (segment) {
+            .literal => |text| try out.appendSlice(allocator, text),
+            .placeholder => |p| try renderPlaceholder(allocator, &out, p, match, source, metric_ctx),
+        }
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+fn renderPlaceholder(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    p: rule.Placeholder,
+    match: ts.Query.Match,
+    source: []const u8,
+    metric_ctx: ?MetricContext,
+) std.mem.Allocator.Error!void {
+    if (p.measure == .text) {
+        const text = findCaptureText(p.capture_id, match, source) orelse "?";
+        return out.appendSlice(allocator, text);
+    }
+    const ctx = metric_ctx orelse return out.appendSlice(allocator, "?");
+    const measures: NodeMeasures = .{ .ctx = ctx, .match = match, .source = source };
+    const value = (try measures.measure(p.measure, p.capture_id)) orelse return out.appendSlice(allocator, "?");
+    var buf: [10]u8 = undefined;
+    const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch unreachable;
+    try out.appendSlice(allocator, rendered);
+}
+
 fn evalEq(
     pred: rule.Predicate,
     match: ts.Query.Match,

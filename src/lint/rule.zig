@@ -54,12 +54,23 @@ pub const Predicate = struct {
     where: ?*const expr.Expr = null,
 };
 
+pub const Placeholder = struct {
+    measure: expr.Measure,
+    capture_id: u32,
+};
+
+pub const MessageSegment = union(enum) {
+    literal: []const u8,
+    placeholder: Placeholder,
+};
+
 pub const PatternMeta = struct {
     predicates: []Predicate,
     message: ?[]const u8,
     rule_id: []const u8,
     exclude_paths: []const []const u8 = &.{},
     severity: diagnostic.Severity = .@"error",
+    message_segments: ?[]const MessageSegment = null,
 };
 
 pub const CompiledRule = struct {
@@ -67,7 +78,7 @@ pub const CompiledRule = struct {
     query: *ts.Query,
     patterns: []PatternMeta,
     match_capture_id: u32,
-    has_where: bool,
+    needs_measures: bool,
     arena: *std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
 
@@ -133,7 +144,7 @@ pub fn compile(
         .query = query,
         .patterns = patterns,
         .match_capture_id = captureIdForName(query, match_capture),
-        .has_where = anyWherePredicate(patterns),
+        .needs_measures = anyWherePredicate(patterns) or anyMessageSegments(patterns),
         .arena = arena_ptr,
         .allocator = allocator,
     };
@@ -144,6 +155,13 @@ fn anyWherePredicate(patterns: []const PatternMeta) bool {
         for (pattern.predicates) |pred| {
             if (pred.op == .where) return true;
         }
+    }
+    return false;
+}
+
+fn anyMessageSegments(patterns: []const PatternMeta) bool {
+    for (patterns) |pattern| {
+        if (pattern.message_segments != null) return true;
     }
     return false;
 }
@@ -208,7 +226,44 @@ fn parsePattern(
         .rule_id = "",
         .exclude_paths = exclude_paths,
         .severity = severity,
+        .message_segments = if (message) |msg| try compileMessageSegments(arena, query, msg) else null,
     };
+}
+
+fn compileMessageSegments(
+    arena: std.mem.Allocator,
+    query: *ts.Query,
+    message: []const u8,
+) !?[]const MessageSegment {
+    if (std.mem.indexOfScalar(u8, message, '{') == null) return null;
+
+    var segments: std.ArrayList(MessageSegment) = .empty;
+    var rest: []const u8 = message;
+    while (rest.len > 0) {
+        const open = std.mem.indexOfScalar(u8, rest, '{') orelse {
+            try segments.append(arena, .{ .literal = rest });
+            break;
+        };
+        if (open > 0) try segments.append(arena, .{ .literal = rest[0..open] });
+        const close = std.mem.indexOfScalar(u8, rest[open..], '}') orelse return error.RuleCompileFailed;
+        const inner = rest[open + 1 .. open + close];
+        try segments.append(arena, .{ .placeholder = try parsePlaceholder(query, inner) });
+        rest = rest[open + close + 1 ..];
+    }
+    return try segments.toOwnedSlice(arena);
+}
+
+fn parsePlaceholder(query: *ts.Query, inner: []const u8) CompileError!Placeholder {
+    var it = std.mem.tokenizeScalar(u8, inner, ' ');
+    const measure_name = it.next() orelse return error.RuleCompileFailed;
+    const capture = it.next() orelse return error.RuleCompileFailed;
+    if (it.next() != null) return error.RuleCompileFailed;
+
+    const measure = expr.Measure.fromString(measure_name) orelse return error.RuleCompileFailed;
+    if (capture.len < 2 or capture[0] != '@') return error.RuleCompileFailed;
+    const id = captureIdForName(query, capture[1..]);
+    if (id == invalid_capture_id) return error.RuleCompileFailed;
+    return .{ .measure = measure, .capture_id = id };
 }
 
 fn parsePredicateGroup(
