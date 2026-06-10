@@ -66,16 +66,12 @@ pub fn main(init: std.process.Init) !void {
 
     var diag: config.Diagnostic = .{};
     var cfg_opt = config.loadFromDisk(gpa, io, init.environ_map, &diag) catch |err| dieConfig(stderr, diag, err);
-    var metrics: lint.metric.Set = lint.metric.empty;
-    if (cfg_opt) |*cfg| {
-        defer cfg.deinit();
-        config.filterDisabled(&rule_set, cfg.*);
-        metrics = cfg.metrics;
-    }
+    defer if (cfg_opt) |*cfg| cfg.deinit();
+    if (cfg_opt) |cfg| config.filterDisabled(&rule_set, cfg);
 
     var engine = Engine.init(gpa, &registry, &rule_set);
     defer engine.deinit();
-    engine.metrics = metrics;
+    if (cfg_opt) |cfg| engine.metrics = cfg.metrics;
 
     const code = cli.dispatch(.{
         .gpa = gpa,
@@ -84,6 +80,7 @@ pub fn main(init: std.process.Init) !void {
         .engine = &engine,
         .environ = init.environ_map,
         .args = user_args,
+        .project_rules = if (cfg_opt) |cfg| cfg.project_rules else &.{},
         .stdin = &stdin_reader.interface,
         .stdout = &stdout_writer.interface,
         .stderr = stderr,

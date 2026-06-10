@@ -5,6 +5,7 @@ const loader = @import("loader.zig");
 
 const language = lint.language;
 const metric = lint.metric;
+const project_rule = lint.project_rule;
 const rule = lint.rule;
 
 pub const max_config_bytes: usize = 64 * 1024;
@@ -17,6 +18,7 @@ pub const ScopedId = struct {
 pub const Config = struct {
     disabled: []const ScopedId,
     metrics: metric.Set,
+    project_rules: []const project_rule.ProjectRule,
     arena: *std.heap.ArenaAllocator,
 
     pub fn deinit(self: *Config) void {
@@ -38,6 +40,11 @@ pub const ParseError = error{
     UnknownMetric,
     InvalidThreshold,
     MalformedMetricEntry,
+    UnknownProjectRuleKind,
+    MissingProjectRuleKind,
+    IncompleteProjectRule,
+    MalformedProjectRuleEntry,
+    UnknownProjectRuleKey,
 } || std.mem.Allocator.Error;
 
 pub const Diagnostic = struct {
@@ -46,7 +53,7 @@ pub const Diagnostic = struct {
 
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
-        error.UnknownTopLevelKey => "unknown top-level key (expected 'disabled' or 'metrics')",
+        error.UnknownTopLevelKey => "unknown top-level key (expected 'disabled', 'metrics', or 'project-rules')",
         error.TabInIndent => "tabs are not allowed in indentation",
         error.BadIndent => "indent must be 0 or 2 spaces",
         error.MalformedListItem => "list item must be '  - <rule-id>'",
@@ -57,11 +64,24 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.UnknownMetric => "unknown metric (expected 'complexity', 'nesting-depth', or 'function-length')",
         error.InvalidThreshold => "metric threshold must be a positive integer",
         error.MalformedMetricEntry => "metric entry must be '  <metric>: <threshold>'",
+        error.UnknownProjectRuleKind => "unknown project rule kind (expected 'restricted-callers')",
+        error.MissingProjectRuleKind => "project rule is missing 'kind'",
+        error.IncompleteProjectRule => "restricted-callers requires 'callee-suffix' and 'caller-suffix'",
+        error.MalformedProjectRuleEntry => "project rule must be '  <id>:' followed by indented '<key>: <value>' properties",
+        error.UnknownProjectRuleKey => "unknown project rule key (expected 'kind', 'callee-suffix', or 'caller-suffix')",
         else => @errorName(err),
     };
 }
 
-const State = enum { top, in_disabled, in_metrics };
+const State = enum { top, in_disabled, in_metrics, in_project_rules };
+
+const PendingProjectRule = struct {
+    id: []const u8,
+    line: u32,
+    kind: ?project_rule.ProjectRule.Kind = null,
+    callee_suffix: ?[]const u8 = null,
+    caller_suffix: ?[]const u8 = null,
+};
 
 pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) ParseError!Config {
     const arena_ptr = try gpa.create(std.heap.ArenaAllocator);
@@ -72,6 +92,8 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
 
     var disabled: std.ArrayList(ScopedId) = .empty;
     var metrics: metric.Set = metric.empty;
+    var project_rules: std.ArrayList(project_rule.ProjectRule) = .empty;
+    var pending: ?PendingProjectRule = null;
 
     var line_no: u32 = 0;
     var iter = std.mem.splitScalar(u8, source, '\n');
@@ -93,6 +115,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
         const content = trimmed_right[indent..];
 
         if (indent == 0) {
+            try finalizePending(arena, &pending, &project_rules, diag);
             state = try parseTopLevelKey(content);
             continue;
         }
@@ -102,19 +125,100 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
                 .top => return error.UnexpectedListItem,
                 .in_disabled => try appendListItem(arena, &disabled, content),
                 .in_metrics => try setMetricEntry(&metrics, content),
+                .in_project_rules => {
+                    try finalizePending(arena, &pending, &project_rules, diag);
+                    diag.line = line_no;
+                    pending = try startProjectRule(arena, content, line_no);
+                },
             }
             continue;
+        }
+
+        if (indent == 4 and state == .in_project_rules) {
+            if (pending) |*p| {
+                try setProjectRuleProperty(arena, p, content);
+                continue;
+            }
+            return error.BadIndent;
         }
 
         return error.BadIndent;
     }
 
+    diag.line = line_no;
+    try finalizePending(arena, &pending, &project_rules, diag);
+
     diag.line = 0;
     return .{
         .disabled = try disabled.toOwnedSlice(arena),
         .metrics = metrics,
+        .project_rules = try project_rules.toOwnedSlice(arena),
         .arena = arena_ptr,
     };
+}
+
+fn finalizePending(
+    arena: std.mem.Allocator,
+    pending: *?PendingProjectRule,
+    project_rules: *std.ArrayList(project_rule.ProjectRule),
+    diag: *Diagnostic,
+) ParseError!void {
+    const p = pending.* orelse return;
+    pending.* = null;
+    const kind = p.kind orelse {
+        diag.line = p.line;
+        return error.MissingProjectRuleKind;
+    };
+    const callee_suffix = p.callee_suffix orelse {
+        diag.line = p.line;
+        return error.IncompleteProjectRule;
+    };
+    const caller_suffix = p.caller_suffix orelse {
+        diag.line = p.line;
+        return error.IncompleteProjectRule;
+    };
+    try project_rules.append(arena, .{
+        .id = p.id,
+        .kind = kind,
+        .callee_suffix = callee_suffix,
+        .caller_suffix = caller_suffix,
+    });
+}
+
+fn startProjectRule(
+    arena: std.mem.Allocator,
+    content: []const u8,
+    line: u32,
+) ParseError!PendingProjectRule {
+    if (!std.mem.endsWith(u8, content, ":")) return error.MalformedProjectRuleEntry;
+    const id = content[0 .. content.len - 1];
+    if (!rule.isValidId(id)) return error.InvalidRuleId;
+    return .{ .id = try arena.dupe(u8, id), .line = line };
+}
+
+fn setProjectRuleProperty(
+    arena: std.mem.Allocator,
+    pending: *PendingProjectRule,
+    content: []const u8,
+) ParseError!void {
+    const colon = std.mem.indexOfScalar(u8, content, ':') orelse return error.MalformedProjectRuleEntry;
+    const key = std.mem.trimEnd(u8, content[0..colon], " ");
+    const value = std.mem.trim(u8, content[colon + 1 ..], " ");
+    if (value.len == 0) return error.MalformedProjectRuleEntry;
+
+    if (std.mem.eql(u8, key, "kind")) {
+        pending.kind = project_rule.ProjectRule.Kind.fromString(value) orelse return error.UnknownProjectRuleKind;
+        return;
+    }
+    if (std.mem.eql(u8, key, "callee-suffix")) {
+        pending.callee_suffix = try arena.dupe(u8, value);
+        return;
+    }
+    if (std.mem.eql(u8, key, "caller-suffix")) {
+        pending.caller_suffix = try arena.dupe(u8, value);
+        return;
+    }
+    return error.UnknownProjectRuleKey;
 }
 
 fn parseTopLevelKey(content: []const u8) ParseError!State {
@@ -122,6 +226,7 @@ fn parseTopLevelKey(content: []const u8) ParseError!State {
         const key = content[0 .. content.len - 1];
         if (std.mem.eql(u8, key, "disabled")) return .in_disabled;
         if (std.mem.eql(u8, key, "metrics")) return .in_metrics;
+        if (std.mem.eql(u8, key, "project-rules")) return .in_project_rules;
         return error.UnknownTopLevelKey;
     }
     if (std.mem.indexOfScalar(u8, content, ':') != null) return error.ContentAfterKey;

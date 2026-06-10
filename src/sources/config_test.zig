@@ -241,7 +241,7 @@ test "errorMessage: returns descriptive text for known errors" {
         config.errorMessage(error.TabInIndent),
     );
     try std.testing.expectEqualStrings(
-        "unknown top-level key (expected 'disabled' or 'metrics')",
+        "unknown top-level key (expected 'disabled', 'metrics', or 'project-rules')",
         config.errorMessage(error.UnknownTopLevelKey),
     );
 }
@@ -312,4 +312,82 @@ test "config: metric entry without colon is rejected" {
 
 test "config: metric entry without preceding key is rejected" {
     try expectParseErr("  function-length: 80\n", error.UnexpectedListItem, 1);
+}
+
+test "config: parses a project rule" {
+    const src =
+        \\project-rules:
+        \\  repository-isolation:
+        \\    kind: restricted-callers
+        \\    callee-suffix: Repository
+        \\    caller-suffix: Repository
+        \\
+    ;
+    var cfg = try expectParseOk(src);
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 1), cfg.project_rules.len);
+    const rule = cfg.project_rules[0];
+    try std.testing.expectEqualStrings("repository-isolation", rule.id);
+    try std.testing.expectEqual(lint.project_rule.ProjectRule.Kind.restricted_callers, rule.kind);
+    try std.testing.expectEqualStrings("Repository", rule.callee_suffix);
+    try std.testing.expectEqualStrings("Repository", rule.caller_suffix);
+}
+
+test "config: parses multiple project rules alongside other sections" {
+    const src =
+        \\disabled:
+        \\  - ts/no-console
+        \\project-rules:
+        \\  repository-isolation:
+        \\    kind: restricted-callers
+        \\    callee-suffix: Repository
+        \\    caller-suffix: Repository
+        \\  gateway-isolation:
+        \\    kind: restricted-callers
+        \\    callee-suffix: Gateway
+        \\    caller-suffix: Service
+        \\metrics:
+        \\  complexity: 15
+        \\
+    ;
+    var cfg = try expectParseOk(src);
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 1), cfg.disabled.len);
+    try std.testing.expectEqual(@as(?u32, 15), cfg.metrics.get(.complexity));
+    try std.testing.expectEqual(@as(usize, 2), cfg.project_rules.len);
+    try std.testing.expectEqualStrings("gateway-isolation", cfg.project_rules[1].id);
+    try std.testing.expectEqualStrings("Gateway", cfg.project_rules[1].callee_suffix);
+    try std.testing.expectEqualStrings("Service", cfg.project_rules[1].caller_suffix);
+}
+
+test "config: unknown project rule kind is rejected" {
+    const src = "project-rules:\n  r:\n    kind: taint-mode\n";
+    try expectParseErr(src, error.UnknownProjectRuleKind, 3);
+}
+
+test "config: project rule without kind is rejected" {
+    const src = "project-rules:\n  r:\n    callee-suffix: Repository\n    caller-suffix: Repository\n";
+    try expectParseErr(src, error.MissingProjectRuleKind, 2);
+}
+
+test "config: project rule missing suffixes is rejected" {
+    const src = "project-rules:\n  r:\n    kind: restricted-callers\n";
+    try expectParseErr(src, error.IncompleteProjectRule, 2);
+}
+
+test "config: unknown project rule key is rejected" {
+    const src = "project-rules:\n  r:\n    kind: restricted-callers\n    color: red\n";
+    try expectParseErr(src, error.UnknownProjectRuleKey, 4);
+}
+
+test "config: project rule property without a rule is rejected" {
+    try expectParseErr("project-rules:\n    kind: restricted-callers\n", error.BadIndent, 2);
+}
+
+test "config: four-space indent outside project rules is rejected" {
+    try expectParseErr("disabled:\n    - ts/no-console\n", error.BadIndent, 2);
+}
+
+test "config: project rule entry without colon is rejected" {
+    try expectParseErr("project-rules:\n  repository-isolation\n", error.MalformedProjectRuleEntry, 2);
 }

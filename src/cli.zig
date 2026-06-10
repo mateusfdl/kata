@@ -22,6 +22,7 @@ pub const Command = struct {
     engine: *Engine,
     environ: *std.process.Environ.Map,
     args: []const [:0]const u8,
+    project_rules: []const lint.project_rule.ProjectRule = &.{},
     stdin: *std.Io.Reader,
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
@@ -106,7 +107,7 @@ fn runDaemon(c: Command) !u8 {
 fn runCheck(c: Command, target: []const u8) !u8 {
     if (try validateRules(c.engine, c.stderr)) |code| return code;
 
-    const outcome = check.run(c.io, c.gpa, c.engine, target, c.stdout) catch |err| switch (err) {
+    const outcome = check.run(c.io, c.gpa, c.engine, target, c.project_rules, c.stdout) catch |err| switch (err) {
         error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{target}, exit_usage),
         else => return internalError(c.stderr, "check", err),
     };

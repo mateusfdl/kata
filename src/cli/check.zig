@@ -19,14 +19,22 @@ pub fn run(
     gpa: std.mem.Allocator,
     engine: *Engine,
     target: []const u8,
+    project_rules: []const lint.project_rule.ProjectRule,
     stdout: *std.Io.Writer,
 ) !Outcome {
     const stat = try std.Io.Dir.cwd().statFile(io, target, .{});
-    const counts = switch (stat.kind) {
-        .directory => try checkDir(io, gpa, engine, target, stdout),
-        .file => try checkFile(io, gpa, engine, target, stdout),
+
+    var index = lint.ProjectIndex.init(gpa);
+    defer index.deinit();
+    const index_ptr: ?*lint.ProjectIndex = if (project_rules.len > 0) &index else null;
+
+    var counts = switch (stat.kind) {
+        .directory => try checkDir(io, gpa, engine, target, index_ptr, stdout),
+        .file => try checkFile(io, gpa, engine, target, index_ptr, stdout),
         else => return error.UnsupportedTarget,
     };
+
+    if (index_ptr) |idx| counts.violations += try reportProjectViolations(gpa, project_rules, idx, stdout);
 
     try stdout.print("checked {d} files, {d} violations\n", .{ counts.files, counts.violations });
     try stdout.flush();
@@ -38,6 +46,7 @@ fn checkFile(
     gpa: std.mem.Allocator,
     engine: *Engine,
     target: []const u8,
+    index: ?*lint.ProjectIndex,
     stdout: *std.Io.Writer,
 ) !Counts {
     const lang = languageOf(target) orelse return error.UnsupportedTarget;
@@ -45,7 +54,7 @@ fn checkFile(
     const source = try std.Io.Dir.cwd().readFileAlloc(io, target, gpa, .limited(max_file_bytes));
     defer gpa.free(source);
 
-    return .{ .files = 1, .violations = try reportFile(gpa, engine, lang, source, target, stdout) };
+    return .{ .files = 1, .violations = try reportFile(gpa, engine, lang, source, target, index, stdout) };
 }
 
 fn checkDir(
@@ -53,6 +62,7 @@ fn checkDir(
     gpa: std.mem.Allocator,
     engine: *Engine,
     target: []const u8,
+    index: ?*lint.ProjectIndex,
     stdout: *std.Io.Writer,
 ) !Counts {
     var dir = try std.Io.Dir.cwd().openDir(io, target, .{ .iterate = true });
@@ -82,7 +92,7 @@ fn checkDir(
         defer gpa.free(path);
 
         counts.files += 1;
-        counts.violations += try reportFile(gpa, engine, lang, source, path, stdout);
+        counts.violations += try reportFile(gpa, engine, lang, source, path, index, stdout);
     }
     return counts;
 }
@@ -135,11 +145,14 @@ fn reportFile(
     lang: language.Name,
     source: []const u8,
     path: []const u8,
+    index: ?*lint.ProjectIndex,
     stdout: *std.Io.Writer,
 ) !usize {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const diagnostics = try engine.lint(arena.allocator(), source, lang, path);
+
+    if (index) |idx| try idx.put(try engine.extractFacts(idx.allocator, source, lang, path));
 
     for (diagnostics) |d| {
         try stdout.print("{s}:{d}:{d} [{s}] {s}\n", .{
@@ -151,4 +164,26 @@ fn reportFile(
         });
     }
     return diagnostics.len;
+}
+
+fn reportProjectViolations(
+    gpa: std.mem.Allocator,
+    project_rules: []const lint.project_rule.ProjectRule,
+    index: *const lint.ProjectIndex,
+    stdout: *std.Io.Writer,
+) !usize {
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const violations = try lint.project_rule.evaluate(arena.allocator(), project_rules, index);
+
+    for (violations) |v| {
+        try stdout.print("{s}:{d}:{d} [{s}] {s}\n", .{
+            v.path,
+            v.diagnostic.range.start.line + 1,
+            v.diagnostic.range.start.column + 1,
+            v.diagnostic.rule_id,
+            v.diagnostic.message,
+        });
+    }
+    return violations.len;
 }
