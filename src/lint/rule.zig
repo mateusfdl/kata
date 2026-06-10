@@ -91,6 +91,11 @@ pub const CompiledRule = struct {
 
 pub const CompileError = error{
     RuleCompileFailed,
+    UnclosedPlaceholder,
+    StrayBraceInMessage,
+    MalformedPlaceholder,
+    UnknownPlaceholderMeasure,
+    UnknownPlaceholderCapture,
 } || std.mem.Allocator.Error;
 
 pub const Diagnostic = struct {
@@ -133,7 +138,7 @@ pub fn compile(
     for (patterns, 0..) |*pattern, idx| {
         const owner_id = ownerId(rule_starts, raws, query.startByteForPattern(@intCast(idx)));
         pattern.* = parsePattern(arena, query, @intCast(idx)) catch |err| {
-            diag.* = .{ .lang = lang, .rule_id = owner_id, .detail = "unsupported predicate, #set! key, regex, or where expression" };
+            diag.* = .{ .lang = lang, .rule_id = owner_id, .detail = compileDetail(err) };
             return err;
         };
         pattern.rule_id = owner_id;
@@ -220,13 +225,33 @@ fn parsePattern(
         start = idx + 1;
     }
 
+    var plain = message;
+    var segments = if (message) |msg| try compileMessageSegments(arena, query, msg) else null;
+    if (segments) |s| {
+        if (s.len == 1 and s[0] == .literal) {
+            plain = s[0].literal;
+            segments = null;
+        }
+    }
+
     return .{
         .predicates = try predicates.toOwnedSlice(arena),
-        .message = message,
+        .message = plain,
         .rule_id = "",
         .exclude_paths = exclude_paths,
         .severity = severity,
-        .message_segments = if (message) |msg| try compileMessageSegments(arena, query, msg) else null,
+        .message_segments = segments,
+    };
+}
+
+fn compileDetail(err: anyerror) []const u8 {
+    return switch (err) {
+        error.UnclosedPlaceholder => "unclosed { in message, use {{ for a literal",
+        error.StrayBraceInMessage => "stray } in message, use }} for a literal",
+        error.MalformedPlaceholder => "message placeholder must be {<measure> @capture}",
+        error.UnknownPlaceholderMeasure => "unknown measure in message placeholder",
+        error.UnknownPlaceholderCapture => "unknown capture in message placeholder",
+        else => "unsupported predicate, #set! key, regex, or where expression",
     };
 }
 
@@ -234,35 +259,54 @@ fn compileMessageSegments(
     arena: std.mem.Allocator,
     query: *ts.Query,
     message: []const u8,
-) !?[]const MessageSegment {
-    if (std.mem.indexOfScalar(u8, message, '{') == null) return null;
+) CompileError!?[]const MessageSegment {
+    if (std.mem.indexOfAny(u8, message, "{}") == null) return null;
 
     var segments: std.ArrayList(MessageSegment) = .empty;
-    var rest: []const u8 = message;
-    while (rest.len > 0) {
-        const open = std.mem.indexOfScalar(u8, rest, '{') orelse {
-            try segments.append(arena, .{ .literal = rest });
-            break;
-        };
-        if (open > 0) try segments.append(arena, .{ .literal = rest[0..open] });
-        const close = std.mem.indexOfScalar(u8, rest[open..], '}') orelse return error.RuleCompileFailed;
-        const inner = rest[open + 1 .. open + close];
-        try segments.append(arena, .{ .placeholder = try parsePlaceholder(query, inner) });
-        rest = rest[open + close + 1 ..];
+    var literal: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < message.len) {
+        const c = message[i];
+        if (c == '{') {
+            if (i + 1 < message.len and message[i + 1] == '{') {
+                try literal.append(arena, '{');
+                i += 2;
+                continue;
+            }
+            const close = std.mem.indexOfScalarPos(u8, message, i + 1, '}') orelse
+                return error.UnclosedPlaceholder;
+            if (literal.items.len > 0)
+                try segments.append(arena, .{ .literal = try literal.toOwnedSlice(arena) });
+            try segments.append(arena, .{ .placeholder = try parsePlaceholder(query, message[i + 1 .. close]) });
+            i = close + 1;
+            continue;
+        }
+        if (c == '}') {
+            if (i + 1 < message.len and message[i + 1] == '}') {
+                try literal.append(arena, '}');
+                i += 2;
+                continue;
+            }
+            return error.StrayBraceInMessage;
+        }
+        try literal.append(arena, c);
+        i += 1;
     }
+    if (literal.items.len > 0)
+        try segments.append(arena, .{ .literal = try literal.toOwnedSlice(arena) });
     return try segments.toOwnedSlice(arena);
 }
 
 fn parsePlaceholder(query: *ts.Query, inner: []const u8) CompileError!Placeholder {
     var it = std.mem.tokenizeScalar(u8, inner, ' ');
-    const measure_name = it.next() orelse return error.RuleCompileFailed;
-    const capture = it.next() orelse return error.RuleCompileFailed;
-    if (it.next() != null) return error.RuleCompileFailed;
+    const measure_name = it.next() orelse return error.MalformedPlaceholder;
+    const capture = it.next() orelse return error.MalformedPlaceholder;
+    if (it.next() != null) return error.MalformedPlaceholder;
 
-    const measure = expr.Measure.fromString(measure_name) orelse return error.RuleCompileFailed;
-    if (capture.len < 2 or capture[0] != '@') return error.RuleCompileFailed;
+    const measure = expr.Measure.fromString(measure_name) orelse return error.UnknownPlaceholderMeasure;
+    if (capture.len < 2 or capture[0] != '@') return error.MalformedPlaceholder;
     const id = captureIdForName(query, capture[1..]);
-    if (id == invalid_capture_id) return error.RuleCompileFailed;
+    if (id == invalid_capture_id) return error.UnknownPlaceholderCapture;
     return .{ .measure = measure, .capture_id = id };
 }
 

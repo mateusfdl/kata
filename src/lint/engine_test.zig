@@ -782,12 +782,43 @@ test "engine: message interpolation works without a where predicate" {
     try std.testing.expectEqualStrings("spans 3 lines", diags[0].message);
 }
 
+test "engine: message renders doubled braces as literals" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rule =
+        "((function_declaration) @match (#set! message \"avoid interface{{}} here\"))\n";
+    var f = try Fixture.init(gpa, &.{.ts}, "no-empty-iface", rule);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(arena.allocator(), "function f() {}", .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("avoid interface{} here", diags[0].message);
+}
+
+test "engine: message renders escaped braces around a placeholder" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rule =
+        "((function_declaration) @match (#set! message \"{{{length @match}}}\"))\n";
+    var f = try Fixture.init(gpa, &.{.ts}, "length-report", rule);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(arena.allocator(), "function f() {}", .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("{1}", diags[0].message);
+}
+
 test "engine: message with unknown placeholder measure is a hard error" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.ts}, "bad", "((function_declaration) @match (#set! message \"{lines @match}\"))\n");
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "function f() {}", .ts, null));
+    try std.testing.expectError(error.UnknownPlaceholderMeasure, f.engine.lint(gpa, "function f() {}", .ts, null));
+    try std.testing.expectEqualStrings("unknown measure in message placeholder", f.engine.compile_diag.detail);
 }
 
 test "engine: message with unknown placeholder capture is a hard error" {
@@ -795,7 +826,8 @@ test "engine: message with unknown placeholder capture is a hard error" {
     var f = try Fixture.init(gpa, &.{.ts}, "bad", "((function_declaration) @match (#set! message \"{length @nope}\"))\n");
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "function f() {}", .ts, null));
+    try std.testing.expectError(error.UnknownPlaceholderCapture, f.engine.lint(gpa, "function f() {}", .ts, null));
+    try std.testing.expectEqualStrings("unknown capture in message placeholder", f.engine.compile_diag.detail);
 }
 
 test "engine: message with unclosed placeholder is a hard error" {
@@ -803,5 +835,15 @@ test "engine: message with unclosed placeholder is a hard error" {
     var f = try Fixture.init(gpa, &.{.ts}, "bad", "((function_declaration) @match (#set! message \"oops {length @match\"))\n");
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "function f() {}", .ts, null));
+    try std.testing.expectError(error.UnclosedPlaceholder, f.engine.lint(gpa, "function f() {}", .ts, null));
+    try std.testing.expectEqualStrings("unclosed { in message, use {{ for a literal", f.engine.compile_diag.detail);
+}
+
+test "engine: message with stray close brace is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((function_declaration) @match (#set! message \"oops } here\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.StrayBraceInMessage, f.engine.lint(gpa, "function f() {}", .ts, null));
+    try std.testing.expectEqualStrings("stray } in message, use }} for a literal", f.engine.compile_diag.detail);
 }
