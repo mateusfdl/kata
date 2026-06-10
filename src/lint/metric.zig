@@ -182,6 +182,70 @@ pub fn run(
     if (set.get(.nesting_depth)) |max| try checkNestingDepth(allocator, spans.items, owners, max, lang_str, out);
 }
 
+pub fn complexityOf(
+    allocator: std.mem.Allocator,
+    compiled: *const Compiled,
+    cursor: *ts.QueryCursor,
+    node: ts.Node,
+) std.mem.Allocator.Error!u32 {
+    var spans: std.ArrayList(Span) = .empty;
+    defer spans.deinit(allocator);
+    try collectSpans(allocator, compiled, cursor, node, &spans);
+
+    var cc: u32 = 1;
+    for (spans.items) |p| {
+        if (!isComplexityPoint(p.kind)) continue;
+        if (!ownedByNode(spans.items, p, node)) continue;
+        cc += 1;
+    }
+    return cc;
+}
+
+pub fn nestingOf(
+    allocator: std.mem.Allocator,
+    compiled: *const Compiled,
+    cursor: *ts.QueryCursor,
+    node: ts.Node,
+) std.mem.Allocator.Error!u32 {
+    var spans: std.ArrayList(Span) = .empty;
+    defer spans.deinit(allocator);
+    try collectSpans(allocator, compiled, cursor, node, &spans);
+
+    var containers: std.ArrayList(Container) = .empty;
+    defer containers.deinit(allocator);
+
+    var deepest: u32 = 0;
+    for (spans.items, 0..) |n, ni| {
+        if (!isNestingConstruct(n.kind)) continue;
+        if (!ownedByNode(spans.items, n, node)) continue;
+
+        containers.clearRetainingCapacity();
+        for (spans.items, 0..) |p, pi| {
+            if (pi == ni) continue;
+            if (!isNestingConstruct(p.kind)) continue;
+            if (!ownedByNode(spans.items, p, node)) continue;
+            if (!containsSpan(p, n)) continue;
+            const entry: Container = .{ .kind = p.kind, .end = p.end };
+            if (entry.kind == n.kind and entry.end == n.end) continue;
+            if (!hasContainer(containers.items, entry)) try containers.append(allocator, entry);
+        }
+
+        const depth: u32 = @intCast(containers.items.len + 1);
+        if (depth > deepest) deepest = depth;
+    }
+    return deepest;
+}
+
+pub fn lengthOf(node: ts.Node) u32 {
+    return node.endPoint().row - node.startPoint().row + 1;
+}
+
+fn ownedByNode(spans: []const Span, p: Span, node: ts.Node) bool {
+    const owner = innermostFunction(spans, p) orelse return true;
+    const f = spans[owner];
+    return f.start == node.startByte() and f.end == node.endByte();
+}
+
 fn collectSpans(
     allocator: std.mem.Allocator,
     compiled: *const Compiled,

@@ -345,3 +345,199 @@ test "engine: go detects console output" {
         try std.testing.expectEqualStrings("console output is not allowed - use proper instrumentation", d.message);
     }
 }
+
+const repo_complexity_rule =
+    \\((class_declaration
+    \\   name: (type_identifier) @name
+    \\   body: (class_body (method_definition) @fn)) @match
+    \\ (#match? @name "Repository$")
+    \\ (#where? "(> (complexity @fn) 2)")
+    \\ (#set! message "repository methods must keep complexity <= 2"))
+    \\
+;
+
+test "engine: where scopes complexity to matching classes only" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "repo-complexity", repo_complexity_rule);
+    defer f.deinit();
+
+    const src =
+        "class UserRepository {\n" ++
+        "  find(a, b) {\n" ++
+        "    if (a) {\n" ++
+        "      if (b) { return 1; }\n" ++
+        "    }\n" ++
+        "    return 2;\n" ++
+        "  }\n" ++
+        "}\n" ++
+        "class OrderService {\n" ++
+        "  create(a, b) {\n" ++
+        "    if (a) {\n" ++
+        "      if (b) { return 1; }\n" ++
+        "    }\n" ++
+        "    return 2;\n" ++
+        "  }\n" ++
+        "}\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("repo-complexity", diags[0].rule_id);
+    try std.testing.expectEqualStrings("repository methods must keep complexity <= 2", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+}
+
+test "engine: where complexity excludes nested functions" {
+    const gpa = std.testing.allocator;
+    const rule =
+        \\((method_definition) @match
+        \\ (#where? "(> (complexity @match) 1)")
+        \\ (#set! message "too complex"))
+        \\
+    ;
+    var f = try Fixture.init(gpa, &.{.ts}, "method-complexity", rule);
+    defer f.deinit();
+
+    const src =
+        "class UserRepository {\n" ++
+        "  find(xs) {\n" ++
+        "    const f = (x) => {\n" ++
+        "      if (x) return 1;\n" ++
+        "      return 2;\n" ++
+        "    };\n" ++
+        "    return xs.map(f);\n" ++
+        "  }\n" ++
+        "}\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 0), diags.len);
+}
+
+test "engine: where scopes complexity to go receiver types" {
+    const gpa = std.testing.allocator;
+    const rule =
+        \\((method_declaration
+        \\   receiver: (parameter_list (parameter_declaration type: (pointer_type (type_identifier) @recv)))) @match
+        \\ (#match? @recv "Repository$")
+        \\ (#where? "(> (complexity @match) 1)")
+        \\ (#set! message "repository methods must keep complexity <= 1"))
+        \\
+    ;
+    var f = try Fixture.init(gpa, &.{.go}, "repo-complexity", rule);
+    defer f.deinit();
+
+    const src =
+        "package main\n" ++
+        "func (r *UserRepository) Find(a int) int {\n" ++
+        "\tif a > 0 {\n" ++
+        "\t\treturn 1\n" ++
+        "\t}\n" ++
+        "\treturn 2\n" ++
+        "}\n" ++
+        "func (s *OrderService) Create(a int) int {\n" ++
+        "\tif a > 0 {\n" ++
+        "\t\treturn 1\n" ++
+        "\t}\n" ++
+        "\treturn 2\n" ++
+        "}\n";
+    const diags = try f.engine.lint(gpa, src, .go, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(@as(u32, 1), diags[0].range.start.line);
+}
+
+test "engine: where nesting fires beyond the threshold" {
+    const gpa = std.testing.allocator;
+    const rule =
+        \\((function_declaration) @match
+        \\ (#where? "(> (nesting @match) 2)")
+        \\ (#set! message "too deep"))
+        \\
+    ;
+    var f = try Fixture.init(gpa, &.{.ts}, "max-nesting", rule);
+    defer f.deinit();
+
+    const deep =
+        "function deep(a) {\n" ++
+        "  if (a) {\n" ++
+        "    for (;;) {\n" ++
+        "      if (a) b();\n" ++
+        "    }\n" ++
+        "  }\n" ++
+        "}\n";
+    const diags = try f.engine.lint(gpa, deep, .ts, null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("too deep", diags[0].message);
+
+    const shallow =
+        "function shallow(a) {\n" ++
+        "  if (a) {\n" ++
+        "    for (;;) {\n" ++
+        "      b();\n" ++
+        "    }\n" ++
+        "  }\n" ++
+        "}\n";
+    const clean = try f.engine.lint(gpa, shallow, .ts, null);
+    defer gpa.free(clean);
+    try std.testing.expectEqual(@as(usize, 0), clean.len);
+}
+
+test "engine: where composes length and complexity" {
+    const gpa = std.testing.allocator;
+    const rule =
+        \\((method_definition) @match
+        \\ (#where? "(and (> (length @match) 3) (> (complexity @match) 1))")
+        \\ (#set! message "long and complex"))
+        \\
+    ;
+    var f = try Fixture.init(gpa, &.{.ts}, "long-complex", rule);
+    defer f.deinit();
+
+    const src =
+        "class C {\n" ++
+        "  longComplex(a) {\n" ++
+        "    if (a) { b(); }\n" ++
+        "    c();\n" ++
+        "    d();\n" ++
+        "  }\n" ++
+        "  longSimple() {\n" ++
+        "    a();\n" ++
+        "    b();\n" ++
+        "    c();\n" ++
+        "  }\n" ++
+        "  shortComplex(a) { return a ? 1 : 2; }\n" ++
+        "}\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("long and complex", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 1), diags[0].range.start.line);
+}
+
+test "engine: malformed where expression is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((method_definition) @match (#where? \"(> (complexity @match) lots)\") (#set! message \"m\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
+}
+
+test "engine: where expression referencing unknown capture is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((method_definition) @match (#where? \"(> (complexity @nope) 1)\") (#set! message \"m\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
+}
+
+test "engine: where without exactly one string argument is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((method_definition) @match (#where? @match \"(> 1 0)\") (#set! message \"m\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
+}

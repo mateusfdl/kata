@@ -2,6 +2,7 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 const mvzr = @import("mvzr");
 
+const expr = @import("expr.zig");
 const language = @import("language.zig");
 
 pub const match_capture = "match";
@@ -31,6 +32,7 @@ pub const PredicateOp = enum {
     not_any_of,
     match,
     not_match,
+    where,
 };
 
 pub const PredicateOperand = union(enum) {
@@ -42,6 +44,7 @@ pub const Predicate = struct {
     op: PredicateOp,
     args: []PredicateOperand,
     regex: ?mvzr.Regex = null,
+    where: ?*const expr.Expr = null,
 };
 
 pub const PatternMeta = struct {
@@ -56,6 +59,7 @@ pub const CompiledRule = struct {
     query: *ts.Query,
     patterns: []PatternMeta,
     match_capture_id: u32,
+    has_where: bool,
     arena: *std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
 
@@ -110,7 +114,7 @@ pub fn compile(
     for (patterns, 0..) |*pattern, idx| {
         const owner_id = ownerId(rule_starts, raws, query.startByteForPattern(@intCast(idx)));
         pattern.* = parsePattern(arena, query, @intCast(idx)) catch |err| {
-            diag.* = .{ .lang = lang, .rule_id = owner_id, .detail = "unsupported predicate, #set! key, or regex" };
+            diag.* = .{ .lang = lang, .rule_id = owner_id, .detail = "unsupported predicate, #set! key, regex, or where expression" };
             return err;
         };
         pattern.rule_id = owner_id;
@@ -121,9 +125,19 @@ pub fn compile(
         .query = query,
         .patterns = patterns,
         .match_capture_id = captureIdForName(query, match_capture),
+        .has_where = anyWherePredicate(patterns),
         .arena = arena_ptr,
         .allocator = allocator,
     };
+}
+
+fn anyWherePredicate(patterns: []const PatternMeta) bool {
+    for (patterns) |pattern| {
+        for (pattern.predicates) |pred| {
+            if (pred.op == .where) return true;
+        }
+    }
+    return false;
 }
 
 fn ownerId(rule_starts: []const u32, raws: []const RawRule, offset: u32) []const u8 {
@@ -157,6 +171,7 @@ fn predicateOpFromName(name: []const u8) ?PredicateOp {
     if (std.mem.eql(u8, name, "not-any-of?")) return .not_any_of;
     if (std.mem.eql(u8, name, "match?")) return .match;
     if (std.mem.eql(u8, name, "not-match?")) return .not_match;
+    if (std.mem.eql(u8, name, "where?")) return .where;
     return null;
 }
 
@@ -254,8 +269,37 @@ fn buildPredicate(
         .op = op,
         .args = args,
         .regex = try compileRegexArg(op, args),
+        .where = try compileWhereArg(arena, query, op, args),
     };
 }
+
+fn compileWhereArg(
+    arena: std.mem.Allocator,
+    query: *ts.Query,
+    op: PredicateOp,
+    args: []const PredicateOperand,
+) !?*const expr.Expr {
+    if (op != .where) return null;
+    if (args.len != 1) return error.RuleCompileFailed;
+    const source = switch (args[0]) {
+        .string => |s| s,
+        .capture => return error.RuleCompileFailed,
+    };
+    const resolver: QueryResolver = .{ .query = query };
+    return expr.parse(arena, source, resolver) catch |err| switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.RuleCompileFailed,
+    };
+}
+
+const QueryResolver = struct {
+    query: *ts.Query,
+
+    pub fn captureId(self: QueryResolver, name: []const u8) ?u32 {
+        const id = captureIdForName(self.query, name);
+        return if (id == invalid_capture_id) null else id;
+    }
+};
 
 fn compileRegexArg(op: PredicateOp, args: []const PredicateOperand) !?mvzr.Regex {
     if (op != .match and op != .not_match) return null;

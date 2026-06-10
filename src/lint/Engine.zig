@@ -23,6 +23,7 @@ pub const Engine = struct {
     metric_queries: std.EnumArray(language.Name, ?metric.Compiled) = .initFill(null),
     facts_queries: std.EnumArray(language.Name, ?facts.Compiled) = .initFill(null),
     cursor: *ts.QueryCursor,
+    metric_cursor: *ts.QueryCursor,
     compile_diag: rule.Diagnostic = .{},
 
     pub fn init(
@@ -35,6 +36,7 @@ pub const Engine = struct {
             .registry = registry,
             .rules = rules,
             .cursor = ts.QueryCursor.create(),
+            .metric_cursor = ts.QueryCursor.create(),
         };
     }
 
@@ -56,13 +58,14 @@ pub const Engine = struct {
             if (entry.value.*) |*compiled| compiled.deinit(self.allocator);
         }
         self.cursor.destroy();
+        self.metric_cursor.destroy();
     }
 
     pub fn prewarm(self: *Engine) !void {
         for (std.enums.values(language.Name)) |lang| {
-            _ = try self.ensureCompiled(lang);
+            const compiled = try self.ensureCompiled(lang);
             _ = try self.ensureParser(lang);
-            if (metric.anyEnabled(self.metrics)) _ = try self.ensureMetricQuery(lang);
+            if (metric.anyEnabled(self.metrics) or compiled.has_where) _ = try self.ensureMetricQuery(lang);
         }
     }
 
@@ -125,7 +128,13 @@ pub const Engine = struct {
         var out: std.ArrayList(diagnostic.Diagnostic) = try .initCapacity(allocator, initial_diagnostic_capacity);
         errdefer out.deinit(allocator);
 
-        try runRule(allocator, compiled, self.cursor, tree.rootNode(), source, lang, path, &out);
+        const metric_ctx: ?matcher.MetricContext = if (compiled.has_where) .{
+            .allocator = allocator,
+            .compiled = try self.ensureMetricQuery(lang),
+            .cursor = self.metric_cursor,
+        } else null;
+
+        try runRule(allocator, compiled, self.cursor, tree.rootNode(), source, lang, path, metric_ctx, &out);
 
         if (metric.anyEnabled(self.metrics)) {
             const metric_query = try self.ensureMetricQuery(lang);
@@ -144,6 +153,7 @@ fn runRule(
     source: []const u8,
     lang: language.Name,
     path: ?[]const u8,
+    metric_ctx: ?matcher.MetricContext,
     out: *std.ArrayList(diagnostic.Diagnostic),
 ) !void {
     if (r.match_capture_id == rule.invalid_capture_id) return;
@@ -154,7 +164,7 @@ fn runRule(
     while (cursor.nextMatch()) |match| {
         const meta = r.patterns[match.pattern_index];
         if (pathExcluded(meta.exclude_paths, path)) continue;
-        if (!matcher.evaluate(meta.predicates, match, source)) continue;
+        if (!try matcher.evaluate(meta.predicates, match, source, metric_ctx)) continue;
 
         const message = meta.message orelse meta.rule_id;
         try emitMatchDiagnostics(allocator, r, meta.rule_id, match, lang_str, message, out);
