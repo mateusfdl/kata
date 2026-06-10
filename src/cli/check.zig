@@ -10,7 +10,17 @@ pub const max_file_bytes = walk.max_file_bytes;
 
 pub const Outcome = enum { clean, violations };
 
-const Counts = struct { files: usize, violations: usize, warnings: usize };
+const Counts = struct {
+    files: usize = 0,
+    violations: usize = 0,
+    warnings: usize = 0,
+
+    fn add(self: *Counts, other: Counts) void {
+        self.files += other.files;
+        self.violations += other.violations;
+        self.warnings += other.warnings;
+    }
+};
 
 pub fn run(
     io: std.Io,
@@ -52,9 +62,7 @@ fn checkFile(
     const source = try std.Io.Dir.cwd().readFileAlloc(io, target, gpa, .limited(max_file_bytes));
     defer gpa.free(source);
 
-    var counts: Counts = .{ .files = 1, .violations = 0, .warnings = 0 };
-    try reportFile(gpa, engine, lang, source, target, index, stdout, &counts);
-    return counts;
+    return reportFile(gpa, engine, lang, source, target, index, stdout);
 }
 
 const DirVisit = struct {
@@ -73,7 +81,7 @@ fn checkDir(
     index: ?*lint.ProjectIndex,
     stdout: *std.Io.Writer,
 ) !Counts {
-    var counts: Counts = .{ .files = 0, .violations = 0, .warnings = 0 };
+    var counts: Counts = .{};
     const visit: DirVisit = .{
         .gpa = gpa,
         .engine = engine,
@@ -81,12 +89,12 @@ fn checkDir(
         .stdout = stdout,
         .counts = &counts,
     };
-    counts.files = try walk.walkSourceFiles(io, gpa, target, visit, visitFile);
+    _ = try walk.walkSourceFiles(io, gpa, target, visit, visitFile);
     return counts;
 }
 
 fn visitFile(visit: DirVisit, lang: language.Name, source: []const u8, path: []const u8) anyerror!void {
-    try reportFile(visit.gpa, visit.engine, lang, source, path, visit.index, visit.stdout, visit.counts);
+    visit.counts.add(try reportFile(visit.gpa, visit.engine, lang, source, path, visit.index, visit.stdout));
 }
 
 fn reportFile(
@@ -97,23 +105,25 @@ fn reportFile(
     path: []const u8,
     index: ?*lint.ProjectIndex,
     stdout: *std.Io.Writer,
-    counts: *Counts,
-) !void {
+) !Counts {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const diagnostics = try engine.lint(arena.allocator(), source, lang, path);
 
     if (index) |idx| try idx.put(try engine.extractFacts(idx.allocator, source, lang, path));
 
+    var counts: Counts = .{ .files = 1 };
     for (diagnostics) |d| {
         const marker: []const u8 = switch (d.severity) {
-            .@"error" => "",
-            .warn => "warn ",
+            .@"error" => blk: {
+                counts.violations += 1;
+                break :blk "";
+            },
+            .warn => blk: {
+                counts.warnings += 1;
+                break :blk "warn ";
+            },
         };
-        switch (d.severity) {
-            .@"error" => counts.violations += 1,
-            .warn => counts.warnings += 1,
-        }
         try stdout.print("{s}:{d}:{d} {s}[{s}] {s}\n", .{
             path,
             d.range.start.line + 1,
@@ -123,6 +133,7 @@ fn reportFile(
             d.message,
         });
     }
+    return counts;
 }
 
 fn reportProjectViolations(
