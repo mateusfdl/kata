@@ -82,8 +82,12 @@ test "harness: expected rule that never fires reports missing" {
     const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
 
     try std.testing.expectEqual(harness.Outcome.failures, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:2 missing [flag-any]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 1 failures") != null);
+    const expected = try std.fmt.allocPrint(
+        s.arena.allocator(),
+        "{s}/ts/tests/sample.ts:2 missing [flag-any]\ntested 1 fixtures, 1 failures\n",
+        .{s.rules_dir},
+    );
+    try std.testing.expectEqualStrings(expected, s.out.written());
 }
 
 test "harness: diagnostic on an unannotated line reports unexpected" {
@@ -96,7 +100,71 @@ test "harness: diagnostic on an unannotated line reports unexpected" {
     const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
 
     try std.testing.expectEqual(harness.Outcome.failures, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:1 unexpected [flag-any]") != null);
+    const expected = try std.fmt.allocPrint(
+        s.arena.allocator(),
+        "{s}/ts/tests/sample.ts:1 unexpected [flag-any]\ntested 1 fixtures, 1 failures\n",
+        .{s.rules_dir},
+    );
+    try std.testing.expectEqualStrings(expected, s.out.written());
+}
+
+test "harness: missing rules dir is invalid" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var err: std.Io.Writer.Allocating = .init(gpa);
+    defer err.deinit();
+
+    const outcome = try harness.run(io, gpa, arena.allocator(), "no-such-dir", &out.writer, &err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.invalid, outcome);
+    try std.testing.expectEqualStrings("kata test: cannot load rules from \"no-such-dir\": RulesDirMissing\n", err.written());
+}
+
+test "harness: rule that fails to compile is invalid" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "broken.scm", "((as_expression) @match (#unknown-pred? @match))\n",
+        "sample.ts",
+        "const ok: string = \"1\";\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.invalid, outcome);
+    try std.testing.expectEqualStrings(
+        "kata test: rule ts/broken: unsupported predicate, #set! key, regex, or where expression\n",
+        s.err.written(),
+    );
+}
+
+test "harness: combined language dir runs fixtures for each extension" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var err: std.Io.Writer.Allocating = .init(gpa);
+    defer err.deinit();
+
+    try tmp.dir.createDirPath(io, "rules/ts+tsx/tests");
+    try tmp.dir.writeFile(io, .{ .sub_path = "rules/ts+tsx/flag-any.scm", .data = flag_any_rule });
+    try tmp.dir.writeFile(io, .{ .sub_path = "rules/ts+tsx/tests/sample.ts", .data = "// kata-expect: flag-any\nconst x = foo as any;\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "rules/ts+tsx/tests/widget.tsx", .data = "// kata-expect: flag-any\nconst y = bar as any;\n" });
+
+    var rel_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&rel_buf, &tmp.sub_path);
+    const rules_dir = try std.fmt.allocPrint(arena.allocator(), "{s}/rules", .{rel});
+
+    const outcome = try harness.run(io, gpa, arena.allocator(), rules_dir, &out.writer, &err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.pass, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "tested 2 fixtures, 0 failures") != null);
 }
 
 test "harness: annotation lines are exempt from diagnostics" {

@@ -195,6 +195,16 @@ test "parseSubcommand: 'facts' without a target captures an empty path" {
     try std.testing.expectEqualStrings("", sub.facts);
 }
 
+test "parseSubcommand: 'test' with a rules dir" {
+    const sub = cli.parseSubcommand(&.{ "test", "rules" });
+    try std.testing.expectEqualStrings("rules", sub.rule_test);
+}
+
+test "parseSubcommand: 'test' without a target captures an empty dir" {
+    const sub = cli.parseSubcommand(&.{"test"});
+    try std.testing.expectEqualStrings("", sub.rule_test);
+}
+
 test "parseSubcommand: 'stop' is recognised" {
     const sub = cli.parseSubcommand(&.{"stop"});
     try std.testing.expectEqual(cli.Subcommand.stop, sub);

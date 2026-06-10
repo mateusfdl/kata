@@ -65,9 +65,13 @@ test "check: warn severity counts separately and exits clean" {
     const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &out.writer);
 
     try std.testing.expectEqual(check.Outcome.clean, outcome);
-    const written = out.written();
-    try std.testing.expect(std.mem.indexOf(u8, written, "a.ts:1:11 warn [no-as-any] as any is not allowed") != null);
-    try std.testing.expect(std.mem.indexOf(u8, written, "checked 1 files, 0 violations, 1 warnings") != null);
+    const expected = try std.fmt.allocPrint(
+        gpa,
+        "{s}/a.ts:1:11 warn [no-as-any] as any is not allowed\nchecked 1 files, 0 violations, 1 warnings\n",
+        .{rel},
+    );
+    defer gpa.free(expected);
+    try std.testing.expectEqualStrings(expected, out.written());
 }
 
 test "check: project rules report cross-file violations" {
