@@ -2,6 +2,7 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 
 const expr = @import("expr.zig");
+const language = @import("language.zig");
 const metric = @import("metric.zig");
 const rule = @import("rule.zig");
 
@@ -9,6 +10,7 @@ pub const MetricContext = struct {
     allocator: std.mem.Allocator,
     compiled: *const metric.Compiled,
     cursor: *ts.QueryCursor,
+    lang: language.Name,
 };
 
 pub fn evaluate(
@@ -25,7 +27,7 @@ pub fn evaluate(
             .not_any_of => if (!evalAnyOf(pred, match, source, true)) return false,
             .match => if (!evalMatch(pred, match, source, false)) return false,
             .not_match => if (!evalMatch(pred, match, source, true)) return false,
-            .where => if (!try evalWhere(pred, match, metric_ctx)) return false,
+            .where => if (!try evalWhere(pred, match, source, metric_ctx)) return false,
         }
     }
     return true;
@@ -34,17 +36,19 @@ pub fn evaluate(
 fn evalWhere(
     pred: rule.Predicate,
     match: ts.Query.Match,
+    source: []const u8,
     metric_ctx: ?MetricContext,
 ) std.mem.Allocator.Error!bool {
     const parsed = pred.where orelse return false;
     const ctx = metric_ctx orelse return false;
-    const measures: NodeMeasures = .{ .ctx = ctx, .match = match };
+    const measures: NodeMeasures = .{ .ctx = ctx, .match = match, .source = source };
     return expr.evaluate(parsed, measures);
 }
 
 const NodeMeasures = struct {
     ctx: MetricContext,
     match: ts.Query.Match,
+    source: []const u8,
 
     pub const Error = std.mem.Allocator.Error;
 
@@ -54,7 +58,17 @@ const NodeMeasures = struct {
             .complexity => try metric.complexityOf(self.ctx.allocator, self.ctx.compiled, self.ctx.cursor, node),
             .nesting => try metric.nestingOf(self.ctx.allocator, self.ctx.compiled, self.ctx.cursor, node),
             .length => metric.lengthOf(node),
+            .text => self.numericText(node),
+            .params => metric.paramsOf(node, self.ctx.lang),
+            .args => metric.argsOf(node),
         };
+    }
+
+    fn numericText(self: NodeMeasures, node: ts.Node) ?u32 {
+        const end = node.endByte();
+        if (end > self.source.len) return null;
+        const text = self.source[node.startByte()..end];
+        return std.fmt.parseInt(u32, text, 10) catch null;
     }
 };
 

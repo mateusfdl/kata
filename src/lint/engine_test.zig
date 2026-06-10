@@ -617,3 +617,83 @@ test "engine: warnings list scoped to another language keeps error" {
     try std.testing.expectEqual(@as(usize, 1), diags.len);
     try std.testing.expectEqual(diagnostic.Severity.@"error", diags[0].severity);
 }
+
+test "engine: where params counts ts function parameters" {
+    const gpa = std.testing.allocator;
+    const rule =
+        "((function_declaration) @match (#where? \"(> (params @match) 4)\") (#set! message \"too many params\"))\n";
+    var f = try Fixture.init(gpa, &.{.ts}, "max-params", rule);
+    defer f.deinit();
+
+    const src =
+        "function wide(a, b, c, d, e) {}\n" ++
+        "function narrow(a, b, c, d) {}\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqualStrings("too many params", diags[0].message);
+}
+
+test "engine: where params counts go grouped parameter names" {
+    const gpa = std.testing.allocator;
+    const rule =
+        "((function_declaration) @match (#where? \"(> (params @match) 4)\") (#set! message \"too many params\"))\n";
+    var f = try Fixture.init(gpa, &.{.go}, "max-params", rule);
+    defer f.deinit();
+
+    const src =
+        "package main\n" ++
+        "func wide(a, b, c int, d string, e ...bool) {}\n" ++
+        "func narrow(a, b int, c string) {}\n";
+    const diags = try f.engine.lint(gpa, src, .go, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(@as(u32, 1), diags[0].range.start.line);
+}
+
+test "engine: where args counts call arguments" {
+    const gpa = std.testing.allocator;
+    const rule =
+        "((call_expression) @match (#where? \"(> (args @match) 3)\") (#set! message \"too many args\"))\n";
+    var f = try Fixture.init(gpa, &.{.ts}, "max-args", rule);
+    defer f.deinit();
+
+    const src = "f(1, 2, 3, 4);\ng(1, 2, 3);\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+}
+
+test "engine: where text compares numeric capture text" {
+    const gpa = std.testing.allocator;
+    const rule =
+        "((variable_declarator value: (number) @n) @match (#where? \"(> (text @n) 30000)\") (#set! message \"timeout too long\"))\n";
+    var f = try Fixture.init(gpa, &.{.ts}, "short-timeouts", rule);
+    defer f.deinit();
+
+    const src = "const slow = 60000;\nconst fast = 100;\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqualStrings("timeout too long", diags[0].message);
+}
+
+test "engine: where text on non-numeric capture never fires" {
+    const gpa = std.testing.allocator;
+    const rule =
+        "((variable_declarator name: (identifier) @n) @match (#where? \"(>= (text @n) 0)\") (#set! message \"m\"))\n";
+    var f = try Fixture.init(gpa, &.{.ts}, "never", rule);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(gpa, "const name = \"x\";\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 0), diags.len);
+}

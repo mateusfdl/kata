@@ -13,6 +13,9 @@ const FakeMeasures = struct {
     complexity: u32 = 0,
     nesting: u32 = 0,
     length: u32 = 0,
+    text: ?u32 = null,
+    params: u32 = 0,
+    args: u32 = 0,
     missing_capture: ?u32 = null,
 
     pub const Error = error{};
@@ -23,6 +26,9 @@ const FakeMeasures = struct {
             .complexity => self.complexity,
             .nesting => self.nesting,
             .length => self.length,
+            .text => self.text,
+            .params => self.params,
+            .args => self.args,
         };
     }
 };
@@ -118,6 +124,27 @@ test "expr: numbers compare on both sides" {
     try std.testing.expectEqual(false, try evalWith(a, "(> 2 3)", .{}));
 }
 
+test "expr: text measure compares parsed numeric text" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try std.testing.expectEqual(true, try evalWith(a, "(> (text @fn) 30000)", .{ .text = 60000 }));
+    try std.testing.expectEqual(false, try evalWith(a, "(> (text @fn) 30000)", .{ .text = 30000 }));
+    try std.testing.expectEqual(false, try evalWith(a, "(> (text @fn) 30000)", .{ .text = null }));
+}
+
+test "expr: params and args measures compare counts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try std.testing.expectEqual(true, try evalWith(a, "(> (params @fn) 4)", .{ .params = 5 }));
+    try std.testing.expectEqual(false, try evalWith(a, "(> (params @fn) 4)", .{ .params = 4 }));
+    try std.testing.expectEqual(true, try evalWith(a, "(> (args @fn) 3)", .{ .args = 4 }));
+    try std.testing.expectEqual(false, try evalWith(a, "(> (args @fn) 3)", .{ .args = 3 }));
+}
+
 test "expr: parse errors" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -132,7 +159,7 @@ test "expr: parse errors" {
         .{ .source = "(> (complexity fn) 15)", .expected = error.MalformedExpression },
         .{ .source = "(and)", .expected = error.MalformedExpression },
         .{ .source = "(between (complexity @fn) 1 5)", .expected = error.UnknownOperator },
-        .{ .source = "(> (params @fn) 4)", .expected = error.UnknownMeasure },
+        .{ .source = "(> (lines @fn) 4)", .expected = error.UnknownMeasure },
         .{ .source = "(> (complexity @nope) 15)", .expected = error.UnknownCapture },
         .{ .source = "(> (complexity @fn) lots)", .expected = error.InvalidNumber },
         .{ .source = "(> (complexity @fn) -1)", .expected = error.InvalidNumber },

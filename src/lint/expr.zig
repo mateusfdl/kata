@@ -4,12 +4,12 @@ pub const Measure = enum {
     complexity,
     nesting,
     length,
+    text,
+    params,
+    args,
 
     pub fn fromString(s: []const u8) ?Measure {
-        if (std.mem.eql(u8, s, "complexity")) return .complexity;
-        if (std.mem.eql(u8, s, "nesting")) return .nesting;
-        if (std.mem.eql(u8, s, "length")) return .length;
-        return null;
+        return std.meta.stringToEnum(Measure, s);
     }
 };
 

@@ -133,6 +133,7 @@ pub const Engine = struct {
             .allocator = allocator,
             .compiled = try self.ensureMetricQuery(lang),
             .cursor = self.metric_cursor,
+            .lang = lang,
         } else null;
 
         try runRule(allocator, compiled, self.cursor, tree.rootNode(), source, lang, path, metric_ctx, &out);
