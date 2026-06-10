@@ -263,13 +263,14 @@ pub fn run(
         .unsupported_language => |name| return try printfAndExit(opts.stderr, "lint: unsupported language: \"{s}\"\n", .{name}, exit_internal_error),
     };
 
-    const source = opts.stdin.allocRemaining(allocator, .unlimited) catch |err|
-        return try internalError(opts.stderr, "read stdin", err);
-    defer allocator.free(source);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
 
-    const diagnostics = engine.lint(allocator, source, lang, parsed.filename) catch |err|
+    const source = opts.stdin.allocRemaining(arena.allocator(), .unlimited) catch |err|
+        return try internalError(opts.stderr, "read stdin", err);
+
+    const diagnostics = engine.lint(arena.allocator(), source, lang, parsed.filename) catch |err|
         return try internalError(opts.stderr, "lint", err);
-    defer allocator.free(diagnostics);
 
     writeReport(opts.stdout, lang, diagnostics) catch |err|
         return try internalError(opts.stderr, "encode report", err);
