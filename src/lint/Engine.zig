@@ -2,6 +2,7 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 
 const diagnostic = @import("diagnostic.zig");
+const facts = @import("facts.zig");
 const glob = @import("glob.zig");
 const language = @import("language.zig");
 const matcher = @import("matcher.zig");
@@ -20,6 +21,7 @@ pub const Engine = struct {
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
     metrics: metric.Set = metric.empty,
     metric_queries: std.EnumArray(language.Name, ?metric.Compiled) = .initFill(null),
+    facts_queries: std.EnumArray(language.Name, ?facts.Compiled) = .initFill(null),
     cursor: *ts.QueryCursor,
     compile_diag: rule.Diagnostic = .{},
 
@@ -47,6 +49,10 @@ pub const Engine = struct {
         }
         var mit = self.metric_queries.iterator();
         while (mit.next()) |entry| {
+            if (entry.value.*) |*compiled| compiled.deinit(self.allocator);
+        }
+        var fit = self.facts_queries.iterator();
+        while (fit.next()) |entry| {
             if (entry.value.*) |*compiled| compiled.deinit(self.allocator);
         }
         self.cursor.destroy();
@@ -81,6 +87,27 @@ pub const Engine = struct {
         if (slot.*) |*cached| return cached;
         slot.* = try metric.compile(self.allocator, self.registry.get(lang), lang);
         return &slot.*.?;
+    }
+
+    fn ensureFactsQuery(self: *Engine, lang: language.Name) !*facts.Compiled {
+        const slot = self.facts_queries.getPtr(lang);
+        if (slot.*) |*cached| return cached;
+        slot.* = try facts.compile(self.allocator, self.registry.get(lang), lang);
+        return &slot.*.?;
+    }
+
+    pub fn extractFacts(
+        self: *Engine,
+        gpa: std.mem.Allocator,
+        source: []const u8,
+        lang: language.Name,
+        path: []const u8,
+    ) !facts.FileFacts {
+        const compiled = try self.ensureFactsQuery(lang);
+        const parser = try self.ensureParser(lang);
+        const tree = parser.parseString(source, null) orelse return error.ParseFailed;
+        defer tree.destroy();
+        return facts.extract(gpa, compiled, self.cursor, tree.rootNode(), source, path, lang);
     }
 
     pub fn lint(

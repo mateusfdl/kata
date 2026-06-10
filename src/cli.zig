@@ -30,6 +30,7 @@ pub const Command = struct {
 pub const Subcommand = union(enum) {
     daemon,
     check: []const u8,
+    facts: []const u8,
     stop,
     one_shot,
     unknown: []const u8,
@@ -39,6 +40,7 @@ pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
     if (args.len == 0) return .daemon;
     const cmd = args[0];
     if (std.mem.eql(u8, cmd, "check")) return .{ .check = firstPositional(args[1..]) orelse "." };
+    if (std.mem.eql(u8, cmd, "facts")) return .{ .facts = firstPositional(args[1..]) orelse "" };
     if (std.mem.eql(u8, cmd, "stop")) return .stop;
     if (std.mem.startsWith(u8, cmd, "--")) return .one_shot;
     return .{ .unknown = cmd };
@@ -48,6 +50,7 @@ pub fn dispatch(c: Command) !u8 {
     return switch (parseSubcommand(c.args)) {
         .daemon => runDaemon(c),
         .check => |target| runCheck(c, target),
+        .facts => |target| runFacts(c, target),
         .stop => runStop(c),
         .one_shot => run(c.gpa, c.engine, .{
             .args = c.args,
@@ -61,7 +64,7 @@ pub fn dispatch(c: Command) !u8 {
 
 fn runUnknown(c: Command, cmd: []const u8) !u8 {
     try c.stderr.print("unknown subcommand: \"{s}\"\n", .{cmd});
-    try c.stderr.writeAll("usage: kata [check <path> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
+    try c.stderr.writeAll("usage: kata [check <path> | facts <file> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
     try c.stderr.flush();
     return exit_usage;
 }
@@ -111,6 +114,50 @@ fn runCheck(c: Command, target: []const u8) !u8 {
         .clean => exit_clean,
         .violations => exit_violations,
     };
+}
+
+fn runFacts(c: Command, target: []const u8) !u8 {
+    if (target.len == 0) return printAndExit(c.stderr, "usage: kata facts <file>\n", exit_usage);
+
+    const lang = switch (language.resolve("", target)) {
+        .ok => |n| n,
+        else => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{target}, exit_usage),
+    };
+
+    const source = std.Io.Dir.cwd().readFileAlloc(c.io, target, c.gpa, .limited(check.max_file_bytes)) catch |err|
+        return internalError(c.stderr, "read file", err);
+    defer c.gpa.free(source);
+
+    var file_facts = c.engine.extractFacts(c.gpa, source, lang, target) catch |err|
+        return internalError(c.stderr, "extract facts", err);
+    defer file_facts.deinit();
+
+    printFacts(c.stdout, file_facts) catch |err|
+        return internalError(c.stderr, "print facts", err);
+    return exit_clean;
+}
+
+fn printFacts(stdout: *std.Io.Writer, file_facts: lint.facts.FileFacts) !void {
+    for (file_facts.classes) |cl| {
+        try stdout.print("class {s} @{d}:{d}\n", .{ cl.name, cl.range.start.line + 1, cl.range.start.column + 1 });
+    }
+    for (file_facts.methods) |m| {
+        try stdout.print("method {s}.{s} @{d}:{d}\n", .{ orDash(m.container), m.name, m.range.start.line + 1, m.range.start.column + 1 });
+    }
+    for (file_facts.typed_decls) |d| {
+        try stdout.print("decl {s}: {s} @{d}:{d}\n", .{ d.name, d.type_name, d.range.start.line + 1, d.range.start.column + 1 });
+    }
+    for (file_facts.calls) |call| {
+        try stdout.print("call {s}.{s} in {s} @{d}:{d}\n", .{ orDash(call.receiver), call.method, orDash(call.container), call.range.start.line + 1, call.range.start.column + 1 });
+    }
+    for (file_facts.imports) |im| {
+        try stdout.print("import {s} from {s}\n", .{ orDash(im.name), im.source });
+    }
+    try stdout.flush();
+}
+
+fn orDash(s: []const u8) []const u8 {
+    return if (s.len == 0) "-" else s;
 }
 
 fn runStop(c: Command) !u8 {

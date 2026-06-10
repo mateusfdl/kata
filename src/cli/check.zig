@@ -5,7 +5,7 @@ const lint = @import("../lint.zig");
 const Engine = lint.Engine;
 const language = lint.language;
 
-const max_file_bytes: usize = 4 * 1024 * 1024;
+pub const max_file_bytes: usize = 4 * 1024 * 1024;
 const max_gitignore_bytes: usize = 1024 * 1024;
 const git_dir = ".git";
 const gitignore_file = ".gitignore";

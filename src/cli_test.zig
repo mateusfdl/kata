@@ -168,6 +168,16 @@ test "parseSubcommand: 'check' with an explicit target" {
     try std.testing.expectEqualStrings("src/", sub.check);
 }
 
+test "parseSubcommand: 'facts' with an explicit target" {
+    const sub = cli.parseSubcommand(&.{ "facts", "src/app.ts" });
+    try std.testing.expectEqualStrings("src/app.ts", sub.facts);
+}
+
+test "parseSubcommand: 'facts' without a target captures an empty path" {
+    const sub = cli.parseSubcommand(&.{"facts"});
+    try std.testing.expectEqualStrings("", sub.facts);
+}
+
 test "parseSubcommand: 'stop' is recognised" {
     const sub = cli.parseSubcommand(&.{"stop"});
     try std.testing.expectEqual(cli.Subcommand.stop, sub);

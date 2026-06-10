@@ -9,6 +9,7 @@ comptime {
     _ = @import("lint/language_test.zig");
     _ = @import("lint/engine_test.zig");
     _ = @import("lint/metric_test.zig");
+    _ = @import("lint/facts_test.zig");
     _ = @import("lint/glob_test.zig");
     _ = @import("cli/check_test.zig");
     _ = @import("cli_test.zig");
