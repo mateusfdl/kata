@@ -121,6 +121,55 @@ test "query: clean when nothing matches" {
     try std.testing.expectEqualStrings("checked 1 files, 0 violations, 0 warnings\n", r.stdout);
 }
 
+test "query: comma-separated languages apply to each" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const x = foo as any;\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "b.tsx", .data = "const y = bar as any;\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    const r = try runQuery(gpa, .{ .text = as_any_query, .target = rel, .lang = "ts,tsx" });
+    defer r.deinit(gpa);
+
+    try std.testing.expectEqual(query.Outcome.matches, r.outcome);
+    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "a.ts:1:11 [query] found as any") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "b.tsx:1:11 [query] found as any") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "checked 2 files, 2 violations, 0 warnings") != null);
+}
+
+test "query: duplicate languages are deduplicated" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const x = foo as any;\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    const r = try runQuery(gpa, .{ .text = as_any_query, .target = rel, .lang = "ts,ts" });
+    defer r.deinit(gpa);
+
+    try std.testing.expectEqual(query.Outcome.matches, r.outcome);
+    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "checked 1 files, 1 violations, 0 warnings") != null);
+}
+
+test "query: unsupported language in a list is usage" {
+    const gpa = std.testing.allocator;
+
+    const r = try runQuery(gpa, .{ .text = as_any_query, .target = ".", .lang = "ts,python" });
+    defer r.deinit(gpa);
+
+    try std.testing.expectEqual(query.Outcome.usage, r.outcome);
+    try std.testing.expectEqualStrings("kata query: unsupported language: \"python\" (expected ts, tsx, or go)\n", r.stderr);
+}
+
 test "query: missing --lang is usage" {
     const gpa = std.testing.allocator;
 

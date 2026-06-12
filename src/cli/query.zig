@@ -33,12 +33,22 @@ pub fn run(
         return usageError(stderr, usage_line, .{});
     if (opts.lang.len == 0)
         return usageError(stderr, "kata query: --lang is required (expected " ++ language.supported_list ++ ")\n", .{});
-    const lang = language.Name.fromString(opts.lang) orelse
-        return usageError(stderr, "kata query: unsupported language: \"{s}\" (expected " ++ language.supported_list ++ ")\n", .{opts.lang});
+    var langs_buf: [language.max_langs_per_dir]language.Name = undefined;
+    var langs_len: usize = 0;
+    var it = std.mem.splitScalar(u8, opts.lang, ',');
+    while (it.next()) |token| {
+        const lang = language.Name.fromString(token) orelse
+            return usageError(stderr, "kata query: unsupported language: \"{s}\" (expected " ++ language.supported_list ++ ")\n", .{token});
+        if (containsLang(langs_buf[0..langs_len], lang)) continue;
+        langs_buf[langs_len] = lang;
+        langs_len += 1;
+    }
 
     var rule_set: lint.RuleSet = .{ .allocator = gpa };
     defer rule_set.deinit();
-    try rule_set.append(lang, .{ .id = rule_id, .language = lang, .source = opts.text });
+    for (langs_buf[0..langs_len]) |lang| {
+        try rule_set.append(lang, .{ .id = rule_id, .language = lang, .source = opts.text });
+    }
 
     var engine = Engine.init(gpa, registry, &rule_set);
     defer engine.deinit();
@@ -52,6 +62,13 @@ pub fn run(
         .clean => .clean,
         .violations => .matches,
     };
+}
+
+fn containsLang(langs: []const language.Name, lang: language.Name) bool {
+    for (langs) |l| {
+        if (l == lang) return true;
+    }
+    return false;
 }
 
 fn usageError(stderr: *std.Io.Writer, comptime fmt: []const u8, args: anytype) !Outcome {
