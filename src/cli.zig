@@ -4,6 +4,7 @@ const lint = @import("lint.zig");
 const server = @import("server.zig");
 const check = @import("cli/check.zig");
 const harness = @import("cli/harness.zig");
+const query = @import("cli/query.zig");
 
 const Engine = lint.Engine;
 const diagnostic = lint.diagnostic;
@@ -35,6 +36,7 @@ pub const Subcommand = union(enum) {
     check: []const u8,
     facts: []const u8,
     rule_test: []const u8,
+    query: query.Options,
     stop,
     one_shot,
     unknown: []const u8,
@@ -47,9 +49,43 @@ pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
     if (std.mem.eql(u8, cmd, "check")) return .{ .check = firstPositional(args[1..]) orelse "." };
     if (std.mem.eql(u8, cmd, "facts")) return .{ .facts = firstPositional(args[1..]) orelse "" };
     if (std.mem.eql(u8, cmd, "test")) return .{ .rule_test = firstPositional(args[1..]) orelse "" };
+    if (std.mem.eql(u8, cmd, "query")) return .{ .query = parseQueryArgs(args[1..]) };
     if (std.mem.eql(u8, cmd, "stop")) return .stop;
     if (std.mem.startsWith(u8, cmd, "--")) return .one_shot;
     return .{ .unknown = cmd };
+}
+
+fn parseQueryArgs(args: []const [:0]const u8) query.Options {
+    var q: query.Options = .{};
+    var positionals: usize = 0;
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        if (std.mem.startsWith(u8, a, "--lang=")) {
+            q.lang = a["--lang=".len..];
+            continue;
+        }
+        if (std.mem.eql(u8, a, "--lang")) {
+            if (i + 1 < args.len) {
+                i += 1;
+                q.lang = args[i];
+            }
+            continue;
+        }
+        if (std.mem.startsWith(u8, a, "--")) {
+            if (q.invalid_arg == null) q.invalid_arg = a;
+            continue;
+        }
+        positionals += 1;
+        switch (positionals) {
+            1 => q.text = a,
+            2 => q.target = a,
+            else => if (q.invalid_arg == null) {
+                q.invalid_arg = a;
+            },
+        }
+    }
+    return q;
 }
 
 fn rootFlag(args: []const [:0]const u8) ?[]const u8 {
@@ -71,6 +107,7 @@ pub fn dispatch(c: Command) !u8 {
         .check => |target| runCheck(c, target),
         .facts => |target| runFacts(c, target),
         .rule_test => |dir| runRuleTest(c, dir),
+        .query => |q| runQuery(c, q),
         .stop => runStop(c),
         .one_shot => run(c.gpa, c.engine, .{
             .args = c.args,
@@ -84,7 +121,7 @@ pub fn dispatch(c: Command) !u8 {
 
 fn runUnknown(c: Command, cmd: []const u8) !u8 {
     try c.stderr.print("unknown subcommand: \"{s}\"\n", .{cmd});
-    try c.stderr.writeAll("usage: kata [daemon [--root <dir>] | check <path> | facts <file> | test <rules-dir> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
+    try c.stderr.writeAll("usage: kata [daemon [--root <dir>] | check <path> | facts <file> | test <rules-dir> | query <scm> [path] --lang=<lang> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
     try c.stderr.flush();
     return exit_usage;
 }
@@ -185,6 +222,14 @@ fn printFacts(stdout: *std.Io.Writer, file_facts: lint.facts.FileFacts) !void {
 
 fn orDash(s: []const u8) []const u8 {
     return if (s.len == 0) "-" else s;
+}
+
+fn runQuery(c: Command, q: query.Options) !u8 {
+    return switch (try query.run(c.io, c.gpa, c.engine.registry, q, c.stdout, c.stderr)) {
+        .clean => exit_clean,
+        .matches => exit_violations,
+        .usage => exit_usage,
+    };
 }
 
 fn runRuleTest(c: Command, dir: []const u8) !u8 {

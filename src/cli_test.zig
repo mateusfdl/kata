@@ -205,6 +205,37 @@ test "parseSubcommand: 'test' without a target captures an empty dir" {
     try std.testing.expectEqualStrings("", sub.rule_test);
 }
 
+test "parseSubcommand: 'query' captures the text and defaults the target" {
+    const sub = cli.parseSubcommand(&.{ "query", "(comment) @match" });
+    try std.testing.expectEqualStrings("(comment) @match", sub.query.text);
+    try std.testing.expectEqualStrings(".", sub.query.target);
+    try std.testing.expectEqualStrings("", sub.query.lang);
+    try std.testing.expectEqual(@as(?[]const u8, null), sub.query.invalid_arg);
+}
+
+test "parseSubcommand: 'query' with a target and --lang" {
+    const sub = cli.parseSubcommand(&.{ "query", "(comment) @match", "src/", "--lang=ts" });
+    try std.testing.expectEqualStrings("(comment) @match", sub.query.text);
+    try std.testing.expectEqualStrings("src/", sub.query.target);
+    try std.testing.expectEqualStrings("ts", sub.query.lang);
+}
+
+test "parseSubcommand: 'query' accepts --lang before the text" {
+    const sub = cli.parseSubcommand(&.{ "query", "--lang", "go", "(comment) @match" });
+    try std.testing.expectEqualStrings("(comment) @match", sub.query.text);
+    try std.testing.expectEqualStrings("go", sub.query.lang);
+}
+
+test "parseSubcommand: 'query' flags an extra positional" {
+    const sub = cli.parseSubcommand(&.{ "query", "((comment)", "@match)", "src/", "--lang=ts" });
+    try std.testing.expectEqualStrings("src/", sub.query.invalid_arg.?);
+}
+
+test "parseSubcommand: 'query' flags an unknown flag" {
+    const sub = cli.parseSubcommand(&.{ "query", "(comment) @match", "--json" });
+    try std.testing.expectEqualStrings("--json", sub.query.invalid_arg.?);
+}
+
 test "parseSubcommand: 'stop' is recognised" {
     const sub = cli.parseSubcommand(&.{"stop"});
     try std.testing.expectEqual(cli.Subcommand.stop, sub);
