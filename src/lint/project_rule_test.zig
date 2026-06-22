@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const lint_diagnostic = @import("diagnostic.zig");
-const project_rule = @import("project_rule.zig");
+const project_rule = @import("ProjectRule.zig");
 const test_fixture = @import("../test_fixture.zig");
 
 const ProjectIndex = @import("ProjectIndex.zig").ProjectIndex;
