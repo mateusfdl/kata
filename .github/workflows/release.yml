@@ -38,7 +38,7 @@ jobs:
           restore-keys: |
             zig-release-${{ runner.os }}-
 
-      - run: zig fmt --check src tools build.zig
+      - run: zig fmt --check src pkg/gen-embedded-rules build.zig
 
       - run: zig build test --test-timeout 2000ms
 
