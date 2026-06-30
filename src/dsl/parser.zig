@@ -3,7 +3,6 @@ const ast = @import("ast.zig");
 const bytes = @import("bytes.zig");
 const tokenizer = @import("tokenizer.zig");
 
-const LexemeByte = bytes.LexemeByte;
 const Token = tokenizer.Token;
 const TokenKind = tokenizer.TokenKind;
 
@@ -18,6 +17,7 @@ pub const Error = tokenizer.Error || error{
     ExpectedCapture,
     ExpectedLeftBrace,
     ExpectedRightBrace,
+    ExpectedRightBracket,
     ExpectedRightParen,
     ExpectedColon,
     ExpectedMessage,
@@ -47,6 +47,16 @@ const Keyword = enum {
     where,
     emit,
     message,
+};
+
+const ParsedNodeKind = struct {
+    value: ast.NodeKind,
+    range: tokenizer.Range,
+};
+
+const AnonymousNodeKind = enum {
+    allowed,
+    rejected,
 };
 
 pub const Parser = struct {
@@ -224,11 +234,7 @@ pub const Parser = struct {
     }
 
     fn parseMatch(self: *Parser) Error!ast.Match {
-        if (self.current.kind != .symbol) {
-            self.failAt(self.current);
-            return error.ExpectedSymbol;
-        }
-        if (self.currentIs(.kind)) {
+        if (self.current.kind == .symbol and self.currentIs(.kind)) {
             const start = self.current;
             try self.advance();
             const kind = try self.expectSymbol(error.ExpectedSymbol);
@@ -239,14 +245,15 @@ pub const Parser = struct {
                 .range = .{ .start = start.range.start, .end = lastRangeEnd(capture, kind) },
             } };
         }
-        return .{ .node = try self.parseNodePattern() };
+        return .{ .node = try self.parseNodePattern(.rejected) };
     }
 
-    fn parseNodePattern(self: *Parser) Error!ast.NodePattern {
-        const node = try self.expectSymbol(error.ExpectedSymbol);
+    fn parseNodePattern(self: *Parser, anonymous: AnonymousNodeKind) Error!ast.NodePattern {
+        const node = try self.parseNodeKind(anonymous);
         const capture = try self.parseOptionalCapture();
         var fields: []const ast.FieldPattern = &.{};
-        var end = lastRangeEnd(capture, node);
+        var end = node.range.end;
+        if (capture) |value| end = value.range.end;
         if (try self.consume(.left_brace)) {
             var list: std.ArrayList(ast.FieldPattern) = .empty;
             while (self.current.kind != .right_brace) {
@@ -261,19 +268,55 @@ pub const Parser = struct {
             fields = try list.toOwnedSlice(self.allocator);
         }
         return .{
-            .node_kind = .{ .symbol = node.lexeme },
+            .node_kind = node.value,
             .capture = capture,
             .fields = fields,
             .range = .{ .start = node.range.start, .end = end },
         };
     }
 
+    fn parseNodeKind(self: *Parser, anonymous: AnonymousNodeKind) Error!ParsedNodeKind {
+        switch (self.current.kind) {
+            .symbol => {
+                const token = try self.expectSymbol(error.ExpectedSymbol);
+                return .{ .value = .{ .symbol = token.lexeme }, .range = token.range };
+            },
+            .string => {
+                if (anonymous == .rejected) {
+                    self.failAt(self.current);
+                    return error.ExpectedSymbol;
+                }
+                const token = try self.parseStringLiteral();
+                return .{ .value = .{ .anonymous = token.value }, .range = token.range };
+            },
+            .left_bracket => return self.parseAlternation(),
+            else => {
+                self.failAt(self.current);
+                return error.ExpectedSymbol;
+            },
+        }
+    }
+
+    fn parseAlternation(self: *Parser) Error!ParsedNodeKind {
+        const start = try self.expect(.left_bracket, error.ExpectedSymbol);
+        var kinds: std.ArrayList([]const u8) = .empty;
+        try kinds.append(self.allocator, (try self.expectSymbol(error.ExpectedSymbol)).lexeme);
+        while (try self.consume(.comma)) {
+            try kinds.append(self.allocator, (try self.expectSymbol(error.ExpectedSymbol)).lexeme);
+        }
+        const end = try self.expect(.right_bracket, error.ExpectedRightBracket);
+        return .{
+            .value = .{ .alternation = try kinds.toOwnedSlice(self.allocator) },
+            .range = .{ .start = start.range.start, .end = end.range.end },
+        };
+    }
+
     fn parseFieldPattern(self: *Parser) Error!ast.FieldPattern {
         const name = try self.expectSymbol(error.ExpectedSymbol);
         _ = try self.expect(.colon, error.ExpectedColon);
-        const pattern = try self.parseNodePattern();
+        const pattern = try self.parseNodePattern(.allowed);
         return .{
-            .name = name.lexeme,
+            .relation = patternRelation(name.lexeme),
             .pattern = pattern,
             .range = .{ .start = name.range.start, .end = pattern.range.end },
         };
@@ -499,6 +542,12 @@ pub const Parser = struct {
         self.diag.* = .{ .line = token.range.start.line, .column = token.range.start.column };
     }
 };
+
+fn patternRelation(name: []const u8) ast.PatternRelation {
+    if (std.mem.eql(u8, name, "child")) return .child;
+    if (std.mem.eql(u8, name, "children")) return .children;
+    return .{ .field = name };
+}
 
 fn isKeyword(token: Token, keyword: Keyword) bool {
     return std.mem.eql(u8, token.lexeme, @tagName(keyword));

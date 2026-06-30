@@ -51,9 +51,15 @@ pub const KindPattern = struct {
 };
 
 pub const FieldPattern = struct {
-    name: []const u8,
+    relation: PatternRelation,
     pattern: NodePattern,
     range: tokenizer.Range,
+};
+
+pub const PatternRelation = union(enum) {
+    field: []const u8,
+    child,
+    children,
 };
 
 pub const Predicate = struct {

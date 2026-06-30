@@ -7,6 +7,13 @@ fn parse(allocator: std.mem.Allocator, source: []const u8, diag: *parser.Diagnos
     return p.parseFile();
 }
 
+fn expectFieldRelation(expected: []const u8, relation: ast.PatternRelation) !void {
+    switch (relation) {
+        .field => |field| try std.testing.expectEqualStrings(expected, field),
+        else => return error.TestUnexpectedResult,
+    }
+}
+
 test "parser: parses one valid local rule" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -37,7 +44,7 @@ test "parser: parses one valid local rule" {
     try std.testing.expectEqualStrings("call_expression", match.node_kind.symbol);
     try std.testing.expectEqualStrings("call", match.capture.?.name);
     try std.testing.expectEqual(@as(usize, 1), match.fields.len);
-    try std.testing.expectEqualStrings("function", match.fields[0].name);
+    try expectFieldRelation("function", match.fields[0].relation);
     try std.testing.expectEqualStrings("member_expression", match.fields[0].pattern.node_kind.symbol);
     try std.testing.expectEqualStrings("member", match.fields[0].pattern.capture.?.name);
 
@@ -268,9 +275,143 @@ test "parser: parses nested matcher fields" {
 
     const member = file.rules[0].match.?.node.fields[0].pattern;
     try std.testing.expectEqual(@as(usize, 1), member.fields.len);
-    try std.testing.expectEqualStrings("object", member.fields[0].name);
+    try expectFieldRelation("object", member.fields[0].relation);
     try std.testing.expectEqualStrings("identifier", member.fields[0].pattern.node_kind.symbol);
     try std.testing.expectEqualStrings("receiver", member.fields[0].pattern.capture.?.name);
+}
+
+test "parser: parses anonymous token matcher fields" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule logical-operator {
+        \\  lang ts
+        \\  match binary_expression @match {
+        \\    operator: "&&"
+        \\  }
+        \\  emit @match { message "logical operator" }
+        \\}
+    , &diag);
+
+    const operator = file.rules[0].match.?.node.fields[0];
+    try expectFieldRelation("operator", operator.relation);
+    try std.testing.expectEqualStrings("&&", operator.pattern.node_kind.anonymous);
+}
+
+test "parser: parses alternation matchers" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule function-like {
+        \\  lang ts
+        \\  match [function_declaration, function_expression, arrow_function] @match
+        \\  emit @match { message "function-like" }
+        \\}
+    , &diag);
+
+    const kinds = file.rules[0].match.?.node.node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 3), kinds.len);
+    try std.testing.expectEqualStrings("function_declaration", kinds[0]);
+    try std.testing.expectEqualStrings("function_expression", kinds[1]);
+    try std.testing.expectEqualStrings("arrow_function", kinds[2]);
+    try std.testing.expectEqualStrings("match", file.rules[0].match.?.node.capture.?.name);
+}
+
+test "parser: parses nested alternation matchers" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule exits {
+        \\  lang ts
+        \\  match statement_block @body {
+        \\    child: [return_statement, throw_statement] @exit
+        \\  }
+        \\  emit @body { message "exit" }
+        \\}
+    , &diag);
+
+    const field = file.rules[0].match.?.node.fields[0];
+    try std.testing.expectEqual(ast.PatternRelation.child, field.relation);
+    const kinds = field.pattern.node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 2), kinds.len);
+    try std.testing.expectEqualStrings("return_statement", kinds[0]);
+    try std.testing.expectEqualStrings("throw_statement", kinds[1]);
+    try std.testing.expectEqualStrings("exit", field.pattern.capture.?.name);
+}
+
+test "parser: parses positional children relations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule positional {
+        \\  lang ts
+        \\  match statement_block @body {
+        \\    child: expression_statement @first
+        \\    children: return_statement @return
+        \\  }
+        \\  emit @body { message "positional" }
+        \\}
+    , &diag);
+
+    const fields = file.rules[0].match.?.node.fields;
+    try std.testing.expectEqual(ast.PatternRelation.child, fields[0].relation);
+    try std.testing.expectEqual(ast.PatternRelation.children, fields[1].relation);
+    try std.testing.expectEqualStrings("expression_statement", fields[0].pattern.node_kind.symbol);
+    try std.testing.expectEqualStrings("return_statement", fields[1].pattern.node_kind.symbol);
+}
+
+test "parser: rejects top-level anonymous token matchers" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedSymbol, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match "&&" @match
+        \\  emit @match { message "bad" }
+        \\}
+    , &diag));
+}
+
+test "parser: rejects malformed alternation matchers" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var empty_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedSymbol, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match [] @match
+        \\  emit @match { message "bad" }
+        \\}
+    , &empty_diag));
+
+    var comma_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedRightBracket, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match [identifier call_expression] @match
+        \\  emit @match { message "bad" }
+        \\}
+    , &comma_diag));
+
+    var close_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedRightBracket, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match [identifier, call_expression @match
+        \\  emit @match { message "bad" }
+        \\}
+    , &close_diag));
 }
 
 test "parser: parses repeated where clauses" {
