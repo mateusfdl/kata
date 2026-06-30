@@ -70,6 +70,16 @@ pub const Engine = struct {
         }
     }
 
+    /// Prewarm and, on failure, write the compile diagnostic under `label`.
+    /// Returns true when rules are ready, false when compilation failed.
+    pub fn prewarmOrReport(self: *Engine, label: []const u8, stderr: *std.Io.Writer) !bool {
+        self.prewarm() catch {
+            try self.compile_diag.write(label, stderr);
+            return false;
+        };
+        return true;
+    }
+
     fn ensureParser(self: *Engine, lang: language.Name) !*ts.Parser {
         if (self.parsers.get(lang)) |cached| return cached;
         const parser = ts.Parser.create();

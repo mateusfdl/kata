@@ -241,6 +241,11 @@ test "parseSubcommand: 'stop' is recognised" {
     try std.testing.expectEqual(cli.Subcommand.stop, sub);
 }
 
+test "parseSubcommand: 'new-rule' is recognised" {
+    const sub = cli.parseSubcommand(&.{ "new-rule", "ts", "no-foo" });
+    try std.testing.expectEqual(cli.Subcommand.new_rule, sub);
+}
+
 test "parseSubcommand: a flag dispatches to one-shot" {
     const sub = cli.parseSubcommand(&.{"--lang=ts"});
     try std.testing.expectEqual(cli.Subcommand.one_shot, sub);

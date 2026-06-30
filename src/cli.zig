@@ -2,20 +2,30 @@ const std = @import("std");
 
 const lint = @import("lint.zig");
 const server = @import("server.zig");
+const sources = @import("sources.zig");
+const args_mod = @import("cli/args.zig");
 const check = @import("cli/check.zig");
+const exit = @import("cli/exit.zig");
+const facts = @import("cli/facts.zig");
 const harness = @import("cli/harness.zig");
+const new_rule = @import("cli/new_rule.zig");
+const one_shot = @import("cli/one_shot.zig");
+const output = @import("cli/output.zig");
 const query = @import("cli/query.zig");
 
 const Engine = lint.Engine;
-const diagnostic = lint.diagnostic;
 const language = lint.language;
 const daemon = server.daemon;
 const protocol = server.protocol;
+const config = sources.config;
+const loader_mod = sources.loader;
 
-pub const exit_clean: u8 = 0;
-pub const exit_violations: u8 = 2;
-pub const exit_usage: u8 = 64;
-pub const exit_internal_error: u8 = 70;
+const io_buffer_size: usize = 8192;
+
+pub const exit_clean = exit.clean;
+pub const exit_violations = exit.violations;
+pub const exit_usage = exit.usage;
+pub const exit_internal_error = exit.internal_error;
 
 pub const Command = struct {
     gpa: std.mem.Allocator,
@@ -25,6 +35,7 @@ pub const Command = struct {
     environ: *std.process.Environ.Map,
     args: []const [:0]const u8,
     project_rules: []const lint.project_rule.ProjectRule = &.{},
+    user_rules_dir: ?[]const u8 = null,
     ratchet: bool = false,
     stdin: *std.Io.Reader,
     stdout: *std.Io.Writer,
@@ -38,6 +49,7 @@ pub const Subcommand = union(enum) {
     rule_test: []const u8,
     query: query.Options,
     stop,
+    new_rule,
     one_shot,
     unknown: []const u8,
 };
@@ -45,14 +57,16 @@ pub const Subcommand = union(enum) {
 pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
     if (args.len == 0) return .{ .daemon = null };
     const cmd = args[0];
-    if (std.mem.eql(u8, cmd, "daemon")) return .{ .daemon = rootFlag(args[1..]) };
-    if (std.mem.eql(u8, cmd, "check")) return .{ .check = firstPositional(args[1..]) orelse "." };
-    if (std.mem.eql(u8, cmd, "facts")) return .{ .facts = firstPositional(args[1..]) orelse "" };
-    if (std.mem.eql(u8, cmd, "test")) return .{ .rule_test = firstPositional(args[1..]) orelse "" };
-    if (std.mem.eql(u8, cmd, "query")) return .{ .query = parseQueryArgs(args[1..]) };
-    if (std.mem.eql(u8, cmd, "stop")) return .stop;
-    if (std.mem.startsWith(u8, cmd, "--")) return .one_shot;
-    return .{ .unknown = cmd };
+    if (args_mod.isFlag(cmd)) return .one_shot;
+    return switch (args_mod.CommandName.parse(cmd) orelse return .{ .unknown = cmd }) {
+        .daemon => .{ .daemon = rootFlag(args[1..]) },
+        .check => .{ .check = args_mod.firstPositional(args[1..]) orelse "." },
+        .facts => .{ .facts = args_mod.firstPositional(args[1..]) orelse "" },
+        .@"test" => .{ .rule_test = args_mod.firstPositional(args[1..]) orelse "" },
+        .query => .{ .query = parseQueryArgs(args[1..]) },
+        .stop => .stop,
+        .@"new-rule" => .new_rule,
+    };
 }
 
 fn parseQueryArgs(args: []const [:0]const u8) query.Options {
@@ -61,18 +75,15 @@ fn parseQueryArgs(args: []const [:0]const u8) query.Options {
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const a = args[i];
-        if (std.mem.startsWith(u8, a, "--lang=")) {
-            q.lang = a["--lang=".len..];
-            continue;
+        switch (args_mod.valueFor(args, &i, .lang)) {
+            .found => |value| {
+                q.lang = value;
+                continue;
+            },
+            .missing => continue,
+            .absent => {},
         }
-        if (std.mem.eql(u8, a, "--lang")) {
-            if (i + 1 < args.len) {
-                i += 1;
-                q.lang = args[i];
-            }
-            continue;
-        }
-        if (std.mem.startsWith(u8, a, "--")) {
+        if (args_mod.isFlag(a)) {
             if (q.invalid_arg == null) q.invalid_arg = a;
             continue;
         }
@@ -88,28 +99,92 @@ fn parseQueryArgs(args: []const [:0]const u8) query.Options {
     return q;
 }
 
+pub fn main(init: std.process.Init) u8 {
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+    const io = init.io;
+
+    var stdin_buf: [io_buffer_size]u8 = undefined;
+    var stdout_buf: [io_buffer_size]u8 = undefined;
+    var stderr_buf: [io_buffer_size]u8 = undefined;
+    var stdin_reader = std.Io.File.stdin().reader(io, &stdin_buf);
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
+    var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buf);
+    const stderr = &stderr_writer.interface;
+
+    const argv = init.minimal.args.toSlice(arena) catch |err| return die(stderr, "read args", err);
+    const user_args = if (argv.len > 0) argv[1..] else argv;
+    const user_dir = resolveUserRulesDir(arena, init.environ_map) catch |err| return die(stderr, "resolve user rules dir", err);
+
+    const subcommand = parseSubcommand(user_args);
+    if (subcommand == .new_rule) {
+        return runNewRule(arena, io, user_args, user_dir, &stdout_writer.interface, stderr) catch |err|
+            die(stderr, "new-rule", err);
+    }
+
+    var registry = language.Registry.init();
+    var rule_set = loader_mod.load(arena, io, .{
+        .external_dir = init.environ_map.get(args_mod.env_rules_dir),
+        .user_dir = user_dir,
+    }) catch |err| return die(stderr, "load rules", err);
+    defer rule_set.deinit();
+
+    drainWarnings(stderr, &rule_set);
+
+    var diag: config.Diagnostic = .{};
+    var cfg_opt = config.loadFromDisk(gpa, io, init.environ_map, &diag) catch |err| return dieConfig(stderr, diag, err);
+    defer if (cfg_opt) |*cfg| cfg.deinit();
+    if (cfg_opt) |cfg| config.filterDisabled(&rule_set, cfg);
+
+    var engine = Engine.init(gpa, &registry, &rule_set);
+    defer engine.deinit();
+    if (cfg_opt) |cfg| {
+        engine.metrics = cfg.metrics;
+        engine.warnings = cfg.warnings;
+    }
+
+    return dispatchSubcommand(.{
+        .gpa = gpa,
+        .arena = arena,
+        .io = io,
+        .engine = &engine,
+        .environ = init.environ_map,
+        .args = user_args,
+        .project_rules = if (cfg_opt) |cfg| cfg.project_rules else &.{},
+        .user_rules_dir = user_dir,
+        .ratchet = if (cfg_opt) |cfg| cfg.ratchet else false,
+        .stdin = &stdin_reader.interface,
+        .stdout = &stdout_writer.interface,
+        .stderr = stderr,
+    }, subcommand) catch |err| die(stderr, "kata", err);
+}
+
 fn rootFlag(args: []const [:0]const u8) ?[]const u8 {
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
-        const a = args[i];
-        if (std.mem.startsWith(u8, a, "--root=")) return a["--root=".len..];
-        if (std.mem.eql(u8, a, "--root")) {
-            if (i + 1 < args.len) return args[i + 1];
-            return null;
+        switch (args_mod.valueFor(args, &i, .root)) {
+            .found => |value| return value,
+            .missing => return null,
+            .absent => {},
         }
     }
     return null;
 }
 
 pub fn dispatch(c: Command) !u8 {
-    return switch (parseSubcommand(c.args)) {
+    return dispatchSubcommand(c, parseSubcommand(c.args));
+}
+
+fn dispatchSubcommand(c: Command, subcommand: Subcommand) !u8 {
+    return switch (subcommand) {
         .daemon => |root| runDaemon(c, root),
         .check => |target| runCheck(c, target),
         .facts => |target| runFacts(c, target),
         .rule_test => |dir| runRuleTest(c, dir),
         .query => |q| runQuery(c, q),
         .stop => runStop(c),
-        .one_shot => run(c.gpa, c.engine, .{
+        .new_rule => runNewRule(c.arena, c.io, c.args, c.user_rules_dir, c.stdout, c.stderr),
+        .one_shot => one_shot.run(c.gpa, c.engine, .{
             .args = c.args,
             .stdin = c.stdin,
             .stdout = c.stdout,
@@ -119,6 +194,22 @@ pub fn dispatch(c: Command) !u8 {
     };
 }
 
+fn runNewRule(
+    arena: std.mem.Allocator,
+    io: std.Io,
+    command_args: []const [:0]const u8,
+    user_rules_dir: ?[]const u8,
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+) !u8 {
+    return new_rule.run(arena, io, .{
+        .args = command_args,
+        .user_rules_dir = user_rules_dir,
+        .stdout = stdout,
+        .stderr = stderr,
+    });
+}
+
 fn runUnknown(c: Command, cmd: []const u8) !u8 {
     try c.stderr.print("unknown subcommand: \"{s}\"\n", .{cmd});
     try c.stderr.writeAll("usage: kata [daemon [--root <dir>] | check <path> | facts <file> | test <rules-dir> | query <scm> [path] --lang=<lang> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
@@ -126,16 +217,8 @@ fn runUnknown(c: Command, cmd: []const u8) !u8 {
     return exit_usage;
 }
 
-fn validateRules(engine: *Engine, stderr: *std.Io.Writer) !?u8 {
-    engine.prewarm() catch {
-        try engine.compile_diag.write("kata", stderr);
-        return exit_internal_error;
-    };
-    return null;
-}
-
 fn runDaemon(c: Command, root: ?[]const u8) !u8 {
-    if (try validateRules(c.engine, c.stderr)) |code| return code;
+    if (!try c.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
 
     const socket_path = resolveSocketPath(c.arena, c.environ) catch |err|
         return internalError(c.stderr, "resolve socket path", err);
@@ -168,7 +251,7 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
 }
 
 fn runCheck(c: Command, target: []const u8) !u8 {
-    if (try validateRules(c.engine, c.stderr)) |code| return code;
+    if (!try c.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
 
     const outcome = check.run(c.io, c.gpa, c.engine, target, c.project_rules, c.stdout) catch |err| switch (err) {
         error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{target}, exit_usage),
@@ -182,46 +265,7 @@ fn runCheck(c: Command, target: []const u8) !u8 {
 
 fn runFacts(c: Command, target: []const u8) !u8 {
     if (target.len == 0) return printAndExit(c.stderr, "usage: kata facts <file>\n", exit_usage);
-
-    const lang = switch (language.resolve("", target)) {
-        .ok => |n| n,
-        else => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{target}, exit_usage),
-    };
-
-    const source = std.Io.Dir.cwd().readFileAlloc(c.io, target, c.gpa, .limited(check.max_file_bytes)) catch |err|
-        return internalError(c.stderr, "read file", err);
-    defer c.gpa.free(source);
-
-    var file_facts = c.engine.extractFacts(c.gpa, source, lang, target) catch |err|
-        return internalError(c.stderr, "extract facts", err);
-    defer file_facts.deinit();
-
-    printFacts(c.stdout, file_facts) catch |err|
-        return internalError(c.stderr, "print facts", err);
-    return exit_clean;
-}
-
-fn printFacts(stdout: *std.Io.Writer, file_facts: lint.facts.FileFacts) !void {
-    for (file_facts.classes) |cl| {
-        try stdout.print("class {s} @{d}:{d}\n", .{ cl.name, cl.range.start.line + 1, cl.range.start.column + 1 });
-    }
-    for (file_facts.methods) |m| {
-        try stdout.print("method {s}.{s} @{d}:{d}\n", .{ orDash(m.container), m.name, m.range.start.line + 1, m.range.start.column + 1 });
-    }
-    for (file_facts.typed_decls) |d| {
-        try stdout.print("decl {s}: {s} @{d}:{d}\n", .{ d.name, d.type_name, d.range.start.line + 1, d.range.start.column + 1 });
-    }
-    for (file_facts.calls) |call| {
-        try stdout.print("call {s}.{s} in {s} @{d}:{d}\n", .{ orDash(call.receiver), call.method, orDash(call.container), call.range.start.line + 1, call.range.start.column + 1 });
-    }
-    for (file_facts.imports) |im| {
-        try stdout.print("import {s} from {s}\n", .{ orDash(im.name), im.source });
-    }
-    try stdout.flush();
-}
-
-fn orDash(s: []const u8) []const u8 {
-    return if (s.len == 0) "-" else s;
+    return facts.run(c.io, c.gpa, c.engine, target, c.stdout, c.stderr);
 }
 
 fn runQuery(c: Command, q: query.Options) !u8 {
@@ -260,129 +304,63 @@ fn runStop(c: Command) !u8 {
     return exit_clean;
 }
 
-fn firstPositional(args: []const [:0]const u8) ?[]const u8 {
-    for (args) |a| {
-        if (!std.mem.startsWith(u8, a, "--")) return a;
-    }
-    return null;
-}
-
 fn resolveSocketPath(
     arena: std.mem.Allocator,
     environ: *std.process.Environ.Map,
 ) ![]const u8 {
-    if (environ.get("KATA_SOCKET")) |path| return path;
-    if (environ.get("XDG_RUNTIME_DIR")) |dir|
+    if (environ.get(args_mod.env_socket)) |path| return path;
+    if (environ.get(args_mod.env_runtime_dir)) |dir|
         return std.fmt.allocPrint(arena, "{s}/kata.sock", .{dir});
-    return "/tmp/kata.sock";
+    return args_mod.fallback_socket_path;
 }
 
-pub const Options = struct {
-    args: []const [:0]const u8,
-    stdin: *std.Io.Reader,
-    stdout: *std.Io.Writer,
-    stderr: *std.Io.Writer,
-};
-
-const usage_line = "usage: kata --lang=<ts|tsx|go> [--filename=<path>] < source\n";
+pub const Options = one_shot.Options;
 
 pub fn run(
     allocator: std.mem.Allocator,
     engine: *Engine,
     opts: Options,
 ) !u8 {
-    const parsed = parseFlags(opts.args) catch return try usageError(opts.stderr);
-
-    if (try validateRules(engine, opts.stderr)) |code| return code;
-
-    const lang = switch (language.resolve(parsed.lang_flag, parsed.filename)) {
-        .ok => |n| n,
-        .missing => return try printAndExit(opts.stderr, "missing --lang (or provide --filename with a known extension)\n", exit_usage),
-        .unknown_extension => |ext| return try printfAndExit(opts.stderr, "cannot infer language from extension \"{s}\"\n", .{ext}, exit_usage),
-        .unsupported_language => |name| return try printfAndExit(opts.stderr, "lint: unsupported language: \"{s}\"\n", .{name}, exit_internal_error),
-    };
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const source = opts.stdin.allocRemaining(arena.allocator(), .unlimited) catch |err|
-        return try internalError(opts.stderr, "read stdin", err);
-
-    const diagnostics = engine.lint(arena.allocator(), source, lang, parsed.filename) catch |err|
-        return try internalError(opts.stderr, "lint", err);
-
-    writeReport(opts.stdout, lang, diagnostics) catch |err|
-        return try internalError(opts.stderr, "encode report", err);
-
-    return if (diagnostic.hasErrors(diagnostics)) exit_violations else exit_clean;
+    return one_shot.run(allocator, engine, opts);
 }
 
 fn printAndExit(stderr: *std.Io.Writer, message: []const u8, code: u8) !u8 {
-    try stderr.writeAll(message);
-    try stderr.flush();
-    return code;
+    return output.message(stderr, message, code);
 }
 
 fn printfAndExit(stderr: *std.Io.Writer, comptime fmt: []const u8, args: anytype, code: u8) !u8 {
-    try stderr.print(fmt, args);
-    try stderr.flush();
-    return code;
-}
-
-fn usageError(stderr: *std.Io.Writer) !u8 {
-    try stderr.writeAll(usage_line);
-    try stderr.flush();
-    return exit_usage;
+    return output.format(stderr, fmt, args, code);
 }
 
 fn internalError(stderr: *std.Io.Writer, context: []const u8, err: anyerror) !u8 {
-    try stderr.print("{s}: {s}\n", .{ context, @errorName(err) });
-    try stderr.flush();
+    return output.internal(stderr, context, err, exit_internal_error);
+}
+
+fn die(stderr: *std.Io.Writer, context: []const u8, err: anyerror) u8 {
+    _ = output.internal(stderr, context, err, exit_internal_error) catch {};
     return exit_internal_error;
 }
 
-fn writeReport(
-    stdout: *std.Io.Writer,
-    lang: language.Name,
-    diagnostics: []const diagnostic.Diagnostic,
-) !void {
-    const report: diagnostic.Report = .{
-        .language = lang.toString(),
-        .diagnostics = diagnostics,
-        .clean = !diagnostic.hasErrors(diagnostics),
-    };
-    try std.json.Stringify.value(report, .{ .whitespace = .indent_2 }, stdout);
-    try stdout.writeAll("\n");
-    try stdout.flush();
+fn resolveUserRulesDir(arena: std.mem.Allocator, environ: *const std.process.Environ.Map) !?[]const u8 {
+    const base = (try config.resolveConfigBase(arena, environ)) orelse return null;
+    return try std.fmt.allocPrint(arena, "{s}/rules", .{base});
 }
 
-const ParsedFlags = struct {
-    lang_flag: []const u8 = "",
-    filename: []const u8 = "",
-};
-
-const FlagError = error{ UnknownFlag, MissingValue };
-
-fn parseFlags(args: []const [:0]const u8) FlagError!ParsedFlags {
-    var p: ParsedFlags = .{};
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const a = args[i];
-        if (std.mem.startsWith(u8, a, "--lang=")) {
-            p.lang_flag = a["--lang=".len..];
-        } else if (std.mem.eql(u8, a, "--lang")) {
-            if (i + 1 >= args.len) return error.MissingValue;
-            i += 1;
-            p.lang_flag = args[i];
-        } else if (std.mem.startsWith(u8, a, "--filename=")) {
-            p.filename = a["--filename=".len..];
-        } else if (std.mem.eql(u8, a, "--filename")) {
-            if (i + 1 >= args.len) return error.MissingValue;
-            i += 1;
-            p.filename = args[i];
-        } else {
-            return error.UnknownFlag;
-        }
+fn drainWarnings(stderr: *std.Io.Writer, rule_set: *const loader_mod.RuleSet) void {
+    for (rule_set.warnings.items) |w| {
+        stderr.print("kata: warning: {s} rule {s}/{s} overrides previous definition\n", .{
+            @tagName(w.source), w.lang.toString(), w.id,
+        }) catch return;
     }
-    return p;
+    stderr.flush() catch {};
+}
+
+fn dieConfig(stderr: *std.Io.Writer, diag: config.Diagnostic, err: anyerror) u8 {
+    if (diag.line > 0) {
+        stderr.print("kata: rules.yaml: line {d}: {s}\n", .{ diag.line, config.errorMessage(err) }) catch {};
+    } else {
+        stderr.print("kata: rules.yaml: {s}\n", .{@errorName(err)}) catch {};
+    }
+    stderr.flush() catch {};
+    return exit_internal_error;
 }

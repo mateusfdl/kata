@@ -53,10 +53,7 @@ pub fn run(
     var engine = Engine.init(gpa, registry, &rule_set);
     defer engine.deinit();
 
-    engine.prewarm() catch {
-        try engine.compile_diag.write("kata", stderr);
-        return .usage;
-    };
+    if (!try engine.prewarmOrReport("kata", stderr)) return .usage;
 
     return switch (try check.run(io, gpa, &engine, opts.target, &.{}, stdout)) {
         .clean => .clean,

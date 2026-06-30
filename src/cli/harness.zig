@@ -41,10 +41,7 @@ pub fn run(
 
     var engine = Engine.init(gpa, &registry, &rule_set);
     defer engine.deinit();
-    engine.prewarm() catch {
-        try engine.compile_diag.write("kata test", stderr);
-        return .invalid;
-    };
+    if (!try engine.prewarmOrReport("kata test", stderr)) return .invalid;
 
     var totals: Totals = .{};
     var root = std.Io.Dir.cwd().openDir(io, rules_dir, .{ .iterate = true }) catch |err| {

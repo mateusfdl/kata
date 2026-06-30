@@ -89,6 +89,7 @@ fn checkDir(
         .stdout = stdout,
         .counts = &counts,
     };
+
     _ = try walk.walkSourceFiles(io, gpa, target, visit, visitFile);
     return counts;
 }
