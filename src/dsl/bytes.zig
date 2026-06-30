@@ -44,14 +44,17 @@ pub fn isLineBreak(c: u8) bool {
 }
 
 pub fn isValidEscape(c: u8) bool {
+    return decodedEscape(c) != null;
+}
+
+pub fn decodedEscape(c: u8) ?u8 {
     return switch (c) {
-        @intFromEnum(LexemeByte.backslash),
-        @intFromEnum(LexemeByte.double_quote),
-        @intFromEnum(LexemeByte.lowercase_n),
-        @intFromEnum(LexemeByte.lowercase_r),
-        @intFromEnum(LexemeByte.lowercase_t),
-        => true,
-        else => false,
+        @intFromEnum(LexemeByte.backslash) => @intFromEnum(LexemeByte.backslash),
+        @intFromEnum(LexemeByte.double_quote) => @intFromEnum(LexemeByte.double_quote),
+        @intFromEnum(LexemeByte.lowercase_n) => @intFromEnum(LexemeByte.line_feed),
+        @intFromEnum(LexemeByte.lowercase_r) => @intFromEnum(LexemeByte.carriage_return),
+        @intFromEnum(LexemeByte.lowercase_t) => @intFromEnum(LexemeByte.tab),
+        else => null,
     };
 }
 

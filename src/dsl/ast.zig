@@ -63,12 +63,22 @@ pub const Predicate = struct {
 
 pub const Expression = union(enum) {
     capture: Capture,
-    string: []const u8,
-    number: u32,
+    string: StringLiteral,
+    number: NumberLiteral,
     call: Call,
     compare: Compare,
     logical: Logical,
-    negate: *const Expression,
+    negate: Negate,
+};
+
+pub const StringLiteral = struct {
+    value: []const u8,
+    range: tokenizer.Range,
+};
+
+pub const NumberLiteral = struct {
+    value: u32,
+    range: tokenizer.Range,
 };
 
 pub const Call = struct {
@@ -103,6 +113,11 @@ pub const Logical = struct {
 pub const LogicalOp = enum {
     @"and",
     @"or",
+};
+
+pub const Negate = struct {
+    expression: *const Expression,
+    range: tokenizer.Range,
 };
 
 pub const Emit = struct {
