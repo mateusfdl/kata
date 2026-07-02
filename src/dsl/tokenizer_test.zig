@@ -50,21 +50,21 @@ test "tokenizer: tokenizes a representative rule" {
 
     const kinds = try collectKinds(arena.allocator(), source);
     try std.testing.expectEqualSlices(TokenKind, &.{
-        .symbol, .symbol, .left_brace,
-        .symbol, .symbol, .comma, .symbol,
-        .symbol, .symbol, .capture, .left_brace,
-        .symbol, .colon, .symbol, .left_brace,
-        .symbol, .colon, .symbol, .capture,
-        .right_brace,
-        .right_brace,
-        .symbol, .left_brace,
-        .symbol, .left_paren, .capture, .right_paren, .equal_equal, .string, .amp_amp, .bang, .symbol, .left_paren, .capture, .right_paren,
-        .right_brace,
-        .symbol, .capture, .left_brace,
-        .symbol, .string,
-        .right_brace,
-        .right_brace,
-        .eof,
+        .symbol,      .symbol,      .left_brace,
+        .symbol,      .symbol,      .comma,
+        .symbol,      .symbol,      .symbol,
+        .capture,     .left_brace,  .symbol,
+        .colon,       .symbol,      .left_brace,
+        .symbol,      .colon,       .symbol,
+        .capture,     .right_brace, .right_brace,
+        .symbol,      .left_brace,  .symbol,
+        .left_paren,  .capture,     .right_paren,
+        .equal_equal, .string,      .amp_amp,
+        .bang,        .symbol,      .left_paren,
+        .capture,     .right_paren, .right_brace,
+        .symbol,      .capture,     .left_brace,
+        .symbol,      .string,      .right_brace,
+        .right_brace, .eof,
     }, kinds);
 }
 
