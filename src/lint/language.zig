@@ -1,4 +1,5 @@
 const std = @import("std");
+const path = @import("../fs/path.zig");
 const ts = @import("tree_sitter");
 
 extern fn tree_sitter_typescript() callconv(.c) *const ts.Language;
@@ -95,7 +96,7 @@ pub fn resolve(lang_flag: []const u8, filename: []const u8) Resolution {
 }
 
 fn resolveFromFilename(filename: []const u8) Resolution {
-    const ext = std.fs.path.extension(filename);
+    const ext = path.fileExtension(filename);
     if (ext.len == 0) return .{ .unknown_extension = ext };
 
     var buf: [8]u8 = undefined;

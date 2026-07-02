@@ -1,6 +1,8 @@
 const std = @import("std");
 
 const lint = @import("../lint.zig");
+const file = @import("file.zig");
+const paths = @import("path.zig");
 
 const language = lint.language;
 
@@ -10,7 +12,7 @@ const max_gitignore_bytes: usize = 1024 * 1024;
 const git_dir = ".git";
 const gitignore_file = ".gitignore";
 
-pub fn walkSourceFiles(
+pub fn walkFiles(
     io: std.Io,
     gpa: std.mem.Allocator,
     target: []const u8,
@@ -39,20 +41,32 @@ pub fn walkSourceFiles(
         const source = entry.dir.readFileAlloc(io, entry.basename, gpa, .limited(max_file_bytes)) catch continue;
         defer gpa.free(source);
 
-        const path = try indexPath(gpa, target, entry.path);
-        defer gpa.free(path);
+        const indexed_path = try indexPath(gpa, target, entry.path);
+        defer gpa.free(indexed_path);
 
         files += 1;
-        try visit(context, lang, source, path);
+        try visit(context, lang, source, indexed_path);
     }
     return files;
+}
+
+pub fn read(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8) ![]u8 {
+    return file.readAlloc(io, allocator, file_path, max_file_bytes);
+}
+
+pub fn statTarget(io: std.Io, path: []const u8) !std.Io.File.Stat {
+    return file.stat(io, path);
+}
+
+pub fn readOptional(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8) !?[]u8 {
+    return file.readOptionalAlloc(io, allocator, file_path, max_file_bytes);
 }
 
 pub fn indexPath(gpa: std.mem.Allocator, target: []const u8, sub_path: []const u8) ![]u8 {
     const trimmed = std.mem.trimEnd(u8, target, "/");
     if (trimmed.len == 0 or std.mem.eql(u8, trimmed, ".")) return gpa.dupe(u8, sub_path);
     const base = if (std.mem.startsWith(u8, trimmed, "./")) trimmed[2..] else trimmed;
-    return std.fmt.allocPrint(gpa, "{s}/{s}", .{ base, sub_path });
+    return paths.join(gpa, base, sub_path);
 }
 
 pub fn languageOf(name: []const u8) ?language.Name {

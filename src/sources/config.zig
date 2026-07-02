@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const fs = @import("../fs.zig");
 const lint = @import("../lint.zig");
 const loader = @import("loader.zig");
 
@@ -8,7 +9,7 @@ const metric = lint.metric;
 const project_rule = lint.project_rule;
 const rule = lint.rule;
 
-pub const max_config_bytes: usize = 64 * 1024;
+pub const max_config_bytes = fs.config.max_config_bytes;
 
 pub const ScopedId = rule.ScopedId;
 
@@ -350,11 +351,7 @@ pub fn resolveConfigBase(
     arena: std.mem.Allocator,
     environ: *const std.process.Environ.Map,
 ) !?[]const u8 {
-    if (environ.get("XDG_CONFIG_HOME")) |xdg|
-        return try std.fmt.allocPrint(arena, "{s}/kata", .{xdg});
-    if (environ.get("HOME")) |home|
-        return try std.fmt.allocPrint(arena, "{s}/.config/kata", .{home});
-    return null;
+    return fs.config.resolveBase(arena, environ);
 }
 
 pub fn loadFromDisk(
@@ -368,16 +365,9 @@ pub fn loadFromDisk(
     const scratch = arena_state.allocator();
 
     const base = (try resolveConfigBase(scratch, environ)) orelse return null;
-    const path = try std.fmt.allocPrint(scratch, "{s}/rules.yaml", .{base});
-    const source = (try tryReadFile(scratch, io, path)) orelse return null;
+    const path = try fs.config.rulesPath(scratch, base);
+    const source = (try fs.config.readRulesYaml(io, scratch, path)) orelse return null;
     return try parse(gpa, source, diag);
-}
-
-fn tryReadFile(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !?[]u8 {
-    return std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_config_bytes)) catch |err| switch (err) {
-        error.FileNotFound => return null,
-        else => return err,
-    };
 }
 
 pub fn filterDisabled(set: *loader.RuleSet, cfg: Config) void {

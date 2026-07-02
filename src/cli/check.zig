@@ -1,12 +1,12 @@
 const std = @import("std");
 
+const fs = @import("../fs.zig");
 const lint = @import("../lint.zig");
-const walk = @import("../sources.zig").walk;
 
 const Engine = lint.Engine;
 const language = lint.language;
 
-pub const max_file_bytes = walk.max_file_bytes;
+pub const max_file_bytes = fs.source.max_file_bytes;
 
 pub const Outcome = enum { clean, violations };
 
@@ -30,7 +30,7 @@ pub fn run(
     project_rules: []const lint.project_rule.ProjectRule,
     stdout: *std.Io.Writer,
 ) !Outcome {
-    const stat = try std.Io.Dir.cwd().statFile(io, target, .{});
+    const stat = try fs.source.statTarget(io, target);
 
     var index = lint.ProjectIndex.init(gpa);
     defer index.deinit();
@@ -57,9 +57,9 @@ fn checkFile(
     index: ?*lint.ProjectIndex,
     stdout: *std.Io.Writer,
 ) !Counts {
-    const lang = walk.languageOf(target) orelse return error.UnsupportedTarget;
+    const lang = fs.source.languageOf(target) orelse return error.UnsupportedTarget;
 
-    const source = try std.Io.Dir.cwd().readFileAlloc(io, target, gpa, .limited(max_file_bytes));
+    const source = try fs.source.read(io, gpa, target);
     defer gpa.free(source);
 
     return reportFile(gpa, engine, lang, source, target, index, stdout);
@@ -90,7 +90,7 @@ fn checkDir(
         .counts = &counts,
     };
 
-    _ = try walk.walkSourceFiles(io, gpa, target, visit, visitFile);
+    _ = try fs.source.walkFiles(io, gpa, target, visit, visitFile);
     return counts;
 }
 

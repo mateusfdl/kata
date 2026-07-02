@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const diagnostic = @import("diagnostic.zig");
+const fs_path = @import("../fs/path.zig");
 const facts = @import("facts.zig");
 const glob = @import("glob.zig");
 const language = @import("language.zig");
@@ -172,7 +173,7 @@ fn resolveRelative(
     var segments: std.ArrayList([]const u8) = .empty;
     defer segments.deinit(allocator);
 
-    const dir = std.fs.path.dirname(importer_path) orelse "";
+    const dir = fs_path.parentDir(importer_path);
     var dir_it = std.mem.tokenizeScalar(u8, dir, '/');
     while (dir_it.next()) |segment| try segments.append(allocator, segment);
 

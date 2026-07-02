@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const walk = @import("walk.zig");
+const source = @import("source.zig");
 
 test "walk: appendIgnoredDirs keeps folder entries and skips globs, negation, comments, nested paths" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
@@ -18,7 +18,7 @@ test "walk: appendIgnoredDirs keeps folder entries and skips globs, negation, co
         "src/generated\n" ++
         "\n";
 
-    try walk.appendIgnoredDirs(arena.allocator(), gitignore, &out);
+    try source.appendIgnoredDirs(arena.allocator(), gitignore, &out);
 
     const expected = [_][]const u8{ "node_modules", "dist", "build", "coverage" };
     try std.testing.expectEqual(expected.len, out.items.len);
@@ -29,21 +29,21 @@ test "walk: appendIgnoredDirs keeps folder entries and skips globs, negation, co
 
 test "walk: indexPath drops dot target so paths are root relative" {
     const gpa = std.testing.allocator;
-    const path = try walk.indexPath(gpa, ".", "src/domain/user.ts");
+    const path = try source.indexPath(gpa, ".", "src/domain/user.ts");
     defer gpa.free(path);
     try std.testing.expectEqualStrings("src/domain/user.ts", path);
 }
 
 test "walk: indexPath strips leading dot-slash from target" {
     const gpa = std.testing.allocator;
-    const path = try walk.indexPath(gpa, "./src", "domain/user.ts");
+    const path = try source.indexPath(gpa, "./src", "domain/user.ts");
     defer gpa.free(path);
     try std.testing.expectEqualStrings("src/domain/user.ts", path);
 }
 
 test "walk: indexPath joins targets with trailing slash trimmed" {
     const gpa = std.testing.allocator;
-    const path = try walk.indexPath(gpa, "src/", "domain/user.ts");
+    const path = try source.indexPath(gpa, "src/", "domain/user.ts");
     defer gpa.free(path);
     try std.testing.expectEqualStrings("src/domain/user.ts", path);
 }
@@ -53,6 +53,6 @@ test "walk: appendIgnoredDirs on empty input adds nothing" {
     defer arena.deinit();
 
     var out: std.ArrayList([]const u8) = .empty;
-    try walk.appendIgnoredDirs(arena.allocator(), "", &out);
+    try source.appendIgnoredDirs(arena.allocator(), "", &out);
     try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }

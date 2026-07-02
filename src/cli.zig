@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const fs = @import("fs.zig");
 const lint = @import("lint.zig");
 const server = @import("server.zig");
 const sources = @import("sources.zig");
@@ -83,11 +84,14 @@ fn parseQueryArgs(args: []const [:0]const u8) query.Options {
             .missing => continue,
             .absent => {},
         }
+
         if (args_mod.isFlag(a)) {
             if (q.invalid_arg == null) q.invalid_arg = a;
             continue;
         }
+
         positionals += 1;
+
         switch (positionals) {
             1 => q.text = a,
             2 => q.target = a,
@@ -96,6 +100,7 @@ fn parseQueryArgs(args: []const [:0]const u8) query.Options {
             },
         }
     }
+
     return q;
 }
 
@@ -343,7 +348,7 @@ fn die(stderr: *std.Io.Writer, context: []const u8, err: anyerror) u8 {
 
 fn resolveUserRulesDir(arena: std.mem.Allocator, environ: *const std.process.Environ.Map) !?[]const u8 {
     const base = (try config.resolveConfigBase(arena, environ)) orelse return null;
-    return try std.fmt.allocPrint(arena, "{s}/rules", .{base});
+    return try fs.config.userRulesPath(arena, base);
 }
 
 fn drainWarnings(stderr: *std.Io.Writer, rule_set: *const loader_mod.RuleSet) void {

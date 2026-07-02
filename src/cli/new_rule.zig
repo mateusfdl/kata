@@ -2,6 +2,7 @@ const std = @import("std");
 
 const exit = @import("exit.zig");
 const output = @import("output.zig");
+const fs = @import("../fs.zig");
 const lint = @import("../lint.zig");
 
 const language = lint.language;
@@ -44,17 +45,10 @@ pub fn run(
     const file_path = try std.fmt.allocPrint(arena, "{s}/{s}.scm", .{ lang_dir, id });
     const body = try renderTemplate(arena, lang, id);
 
-    std.Io.Dir.cwd().createDirPath(io, lang_dir) catch |err|
-        return output.format(opts.stderr, "create directory {s}: {s}\n", .{ lang_dir, @errorName(err) }, exit_internal_error);
-
-    var file = std.Io.Dir.cwd().createFile(io, file_path, .{ .exclusive = true }) catch |err| switch (err) {
+    fs.rules.createNew(io, lang_dir, file_path, body) catch |err| switch (err) {
         error.PathAlreadyExists => return output.format(opts.stderr, "path already exists: {s}\n", .{file_path}, exit_usage),
-        else => return output.format(opts.stderr, "create file {s}: {s}\n", .{ file_path, @errorName(err) }, exit_internal_error),
+        else => return output.format(opts.stderr, "write rule {s}: {s}\n", .{ file_path, @errorName(err) }, exit_internal_error),
     };
-    defer file.close(io);
-
-    file.writeStreamingAll(io, body) catch |err|
-        return output.format(opts.stderr, "write {s}: {s}\n", .{ file_path, @errorName(err) }, exit_internal_error);
 
     return output.format(opts.stdout, "{s}\n", .{file_path}, exit_clean);
 }

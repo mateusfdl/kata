@@ -1,13 +1,12 @@
 const std = @import("std");
 
+const fs = @import("../fs.zig");
 const lint = @import("../lint.zig");
 const sources = @import("../sources.zig");
 
 const Engine = lint.Engine;
 const language = lint.language;
 const loader = sources.loader;
-const walk = sources.walk;
-
 const expect_marker = "// kata-expect:";
 
 pub const Outcome = enum { pass, failures, invalid };
@@ -44,52 +43,19 @@ pub fn run(
     if (!try engine.prewarmOrReport("kata test", stderr)) return .invalid;
 
     var totals: Totals = .{};
-    var root = std.Io.Dir.cwd().openDir(io, rules_dir, .{ .iterate = true }) catch |err| {
+    const fixtures = fs.rules.collectFixtureFiles(io, arena, rules_dir) catch |err| {
         try stderr.print("kata test: cannot open \"{s}\": {s}\n", .{ rules_dir, @errorName(err) });
         try stderr.flush();
         return .invalid;
     };
-    defer root.close(io);
-
-    var it = root.iterate();
-    while (try it.next(io)) |entry| {
-        if (entry.kind != .directory) continue;
-        try runLangFixtures(io, arena, &engine, &root, rules_dir, entry.name, stdout, &totals);
+    for (fixtures) |fixture| {
+        totals.fixtures += 1;
+        totals.failures += try checkFixture(arena, &engine, fixture.lang, fixture.source, fixture.path, stdout);
     }
 
     try stdout.print("tested {d} fixtures, {d} failures\n", .{ totals.fixtures, totals.failures });
     try stdout.flush();
     return if (totals.failures > 0) .failures else .pass;
-}
-
-fn runLangFixtures(
-    io: std.Io,
-    arena: std.mem.Allocator,
-    engine: *Engine,
-    root: *std.Io.Dir,
-    rules_dir: []const u8,
-    lang_subdir: []const u8,
-    stdout: *std.Io.Writer,
-    totals: *Totals,
-) !void {
-    var lang_dir = try root.openDir(io, lang_subdir, .{});
-    defer lang_dir.close(io);
-
-    var tests_dir = lang_dir.openDir(io, "tests", .{ .iterate = true }) catch |err| switch (err) {
-        error.FileNotFound => return,
-        else => return err,
-    };
-    defer tests_dir.close(io);
-
-    var it = tests_dir.iterate();
-    while (try it.next(io)) |entry| {
-        if (entry.kind != .file) continue;
-        const lang = walk.languageOf(entry.name) orelse continue;
-        const source = try tests_dir.readFileAlloc(io, entry.name, arena, .limited(walk.max_file_bytes));
-        const path = try std.fmt.allocPrint(arena, "{s}/{s}/tests/{s}", .{ rules_dir, lang_subdir, entry.name });
-        totals.fixtures += 1;
-        totals.failures += try checkFixture(arena, engine, lang, source, path, stdout);
-    }
 }
 
 fn checkFixture(

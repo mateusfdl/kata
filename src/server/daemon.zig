@@ -1,8 +1,8 @@
 const std = @import("std");
 
+const fs = @import("../fs.zig");
 const lint = @import("../lint.zig");
 const protocol = @import("protocol.zig");
-const walk = @import("../sources.zig").walk;
 
 const diagnostic = lint.diagnostic;
 const language = lint.language;
@@ -43,7 +43,7 @@ pub fn buildIndex(
     state: *ProjectState,
 ) !usize {
     const visit: IndexVisit = .{ .engine = engine, .index = &state.index };
-    return walk.walkSourceFiles(io, gpa, root, visit, visitForIndex);
+    return fs.source.walkFiles(io, gpa, root, visit, visitForIndex);
 }
 
 fn visitForIndex(visit: IndexVisit, lang: language.Name, source: []const u8, path: []const u8) anyerror!void {
@@ -51,33 +51,7 @@ fn visitForIndex(visit: IndexVisit, lang: language.Name, source: []const u8, pat
 }
 
 pub fn binaryMtime(io: std.Io) !i64 {
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const n = try std.process.executablePath(io, &buf);
-    const stat = try std.Io.Dir.cwd().statFile(io, buf[0..n], .{});
-    return stat.mtime.toMilliseconds();
-}
-
-var teardown_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-var teardown_path_len: usize = 0;
-
-fn handleTeardownSignal(_: std.posix.SIG) callconv(.c) void {
-    _ = std.os.linux.unlink(teardown_path_buf[0..teardown_path_len :0]);
-    std.os.linux.exit_group(0);
-}
-
-fn installTeardown(socket_path: []const u8) void {
-    if (socket_path.len >= teardown_path_buf.len) return;
-    @memcpy(teardown_path_buf[0..socket_path.len], socket_path);
-    teardown_path_buf[socket_path.len] = 0;
-    teardown_path_len = socket_path.len;
-
-    const act: std.posix.Sigaction = .{
-        .handler = .{ .handler = handleTeardownSignal },
-        .mask = std.posix.sigemptyset(),
-        .flags = 0,
-    };
-    std.posix.sigaction(.INT, &act, null);
-    std.posix.sigaction(.TERM, &act, null);
+    return fs.file.executableMtime(io);
 }
 
 pub fn serve(
@@ -89,8 +63,8 @@ pub fn serve(
     const address = try std.Io.net.UnixAddress.init(socket_path);
     var server = try bind(io, address, socket_path);
     defer server.deinit(io);
-    defer std.Io.Dir.deleteFileAbsolute(io, socket_path) catch {};
-    installTeardown(socket_path);
+    defer fs.socket.deleteAbsolute(io, socket_path);
+    fs.socket.installTeardown(socket_path);
 
     while (true) {
         const stream = server.accept(io) catch |err| switch (err) {
@@ -119,7 +93,7 @@ fn bind(
                 live.close(io);
                 return error.AlreadyRunning;
             } else |_| {}
-            std.Io.Dir.deleteFileAbsolute(io, socket_path) catch {};
+            fs.socket.deleteAbsolute(io, socket_path);
             return address.listen(io, .{});
         },
         else => err,
@@ -199,7 +173,7 @@ fn applyRatchet(
     const path = filename orelse return;
     if (!diagnostic.hasErrors(diagnostics)) return;
 
-    const baseline_source = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(walk.max_file_bytes)) catch |err| switch (err) {
+    const baseline_source = fs.source.read(io, arena, path) catch |err| switch (err) {
         error.FileNotFound, error.StreamTooLong => return,
         else => return err,
     };

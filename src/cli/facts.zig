@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const check = @import("check.zig");
 const exit = @import("exit.zig");
+const fs = @import("../fs.zig");
 const output = @import("output.zig");
 const lint = @import("../lint.zig");
 
@@ -21,7 +21,7 @@ pub fn run(
         else => return output.format(stderr, "cannot infer language from \"{s}\"\n", .{target}, exit.usage),
     };
 
-    const source = std.Io.Dir.cwd().readFileAlloc(io, target, gpa, .limited(check.max_file_bytes)) catch |err|
+    const source = fs.source.read(io, gpa, target) catch |err|
         return output.internal(stderr, "read file", err, exit.internal_error);
     defer gpa.free(source);
 
