@@ -23,6 +23,7 @@ pub const Error = tokenizer.Error || error{
     ExpectedMessage,
     UnknownClause,
     DuplicateClause,
+    EmptyWhere,
     MissingEmit,
     MissingMatch,
     MissingLanguage,
@@ -105,12 +106,13 @@ pub const Parser = struct {
         var severity: ast.Severity = .@"error";
         var exclude_paths: []const []const u8 = &.{};
         var match_clause: ?ast.Match = null;
-        var predicates: std.ArrayList(ast.Predicate) = .empty;
+        var predicates: []const ast.Predicate = &.{};
         var emit: ?ast.Emit = null;
         var seen_kind = false;
         var seen_lang = false;
         var seen_severity = false;
         var seen_exclude = false;
+        var seen_where = false;
 
         while (self.current.kind != .right_brace) {
             if (self.current.kind == .eof) {
@@ -147,7 +149,10 @@ pub const Parser = struct {
                     }
                     match_clause = try self.parseMatch();
                 },
-                .where => try predicates.append(self.allocator, try self.parseWhere()),
+                .where => {
+                    try self.rejectDuplicate(clause, &seen_where);
+                    predicates = try self.parseWhere();
+                },
                 .emit => {
                     if (emit != null) {
                         self.failAt(clause);
@@ -185,7 +190,7 @@ pub const Parser = struct {
             .severity = severity,
             .exclude_paths = exclude_paths,
             .match = match_clause,
-            .where = try predicates.toOwnedSlice(self.allocator),
+            .where = predicates,
             .emit = emit.?,
             .range = .{ .start = start.range.start, .end = end.range.end },
         };
@@ -322,14 +327,26 @@ pub const Parser = struct {
         };
     }
 
-    fn parseWhere(self: *Parser) Error!ast.Predicate {
+    fn parseWhere(self: *Parser) Error![]const ast.Predicate {
         const start = try self.expect(.left_brace, error.ExpectedLeftBrace);
-        const expression = try self.parseExpression();
-        const end = try self.expect(.right_brace, error.ExpectedRightBrace);
-        return .{
-            .expression = expression,
-            .range = .{ .start = start.range.start, .end = end.range.end },
-        };
+        var predicates: std.ArrayList(ast.Predicate) = .empty;
+        while (self.current.kind != .right_brace) {
+            if (self.current.kind == .eof) {
+                self.failAt(self.current);
+                return error.ExpectedRightBrace;
+            }
+            const expression = try self.parseExpression();
+            try predicates.append(self.allocator, .{
+                .expression = expression,
+                .range = .{ .start = expressionStart(expression), .end = expressionEnd(expression) },
+            });
+        }
+        try self.advance();
+        if (predicates.items.len == 0) {
+            self.failAt(start);
+            return error.EmptyWhere;
+        }
+        return predicates.toOwnedSlice(self.allocator);
     }
 
     fn parseEmit(self: *Parser, start: Token) Error!ast.Emit {

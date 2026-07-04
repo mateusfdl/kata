@@ -414,7 +414,7 @@ test "parser: rejects malformed alternation matchers" {
     , &close_diag));
 }
 
-test "parser: parses repeated where clauses" {
+test "parser: parses multiple predicates in one where block" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
@@ -423,8 +423,10 @@ test "parser: parses repeated where clauses" {
         \\rule predicates {
         \\  lang ts
         \\  match identifier @id
-        \\  where { text(@id) != "allowed" }
-        \\  where { length(@id) >= 3 }
+        \\  where {
+        \\    text(@id) != "allowed"
+        \\    length(@id) >= 3
+        \\  }
         \\  emit @id { message "predicate failed" }
         \\}
     , &diag);
@@ -432,6 +434,41 @@ test "parser: parses repeated where clauses" {
     try std.testing.expectEqual(@as(usize, 2), file.rules[0].where.len);
     try std.testing.expectEqual(ast.CompareOp.ne, file.rules[0].where[0].expression.compare.op);
     try std.testing.expectEqual(ast.CompareOp.ge, file.rules[0].where[1].expression.compare.op);
+}
+
+test "parser: rejects duplicate where clauses" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.DuplicateClause, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where { text(@id) != "allowed" }
+        \\  where { length(@id) >= 3 }
+        \\  emit @id { message "bad" }
+        \\}
+    , &diag));
+    try std.testing.expectEqual(@as(u32, 5), diag.line);
+    try std.testing.expectEqual(@as(u32, 3), diag.column);
+}
+
+test "parser: rejects empty where blocks" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.EmptyWhere, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where { }
+        \\  emit @id { message "bad" }
+        \\}
+    , &diag));
+    try std.testing.expectEqual(@as(u32, 4), diag.line);
+    try std.testing.expectEqual(@as(u32, 9), diag.column);
 }
 
 test "parser: parses logical precedence and negation" {
