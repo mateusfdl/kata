@@ -106,7 +106,12 @@ pub const Resolver = struct {
 pub const Cache = struct {
     gpa: std.mem.Allocator,
     resolver: *Resolver,
-    entries: std.StringHashMapUnmanaged(*Context),
+    entries: std.StringHashMapUnmanaged(Entry),
+
+    const Entry = struct {
+        ctx: *Context,
+        fingerprint: u64,
+    };
 
     pub fn init(gpa: std.mem.Allocator, resolver: *Resolver) Cache {
         return .{ .gpa = gpa, .resolver = resolver, .entries = .empty };
@@ -116,7 +121,7 @@ pub const Cache = struct {
         var it = self.entries.iterator();
         while (it.next()) |entry| {
             self.gpa.free(entry.key_ptr.*);
-            entry.value_ptr.*.deinit();
+            entry.value_ptr.ctx.deinit();
         }
         self.entries.deinit(self.gpa);
     }
@@ -124,13 +129,71 @@ pub const Cache = struct {
     pub fn acquire(self: *Cache, scratch: std.mem.Allocator, anchor: ?[]const u8) !?*Context {
         const a = anchor orelse return null;
         const root = (try fs.discover.findProjectRoot(self.resolver.io, scratch, a)) orelse return null;
-        if (self.entries.get(root)) |ctx| return ctx;
+        const current = try projectFingerprint(self.resolver.io, scratch, root);
+
+        if (self.entries.getPtr(root)) |entry| {
+            if (entry.fingerprint == current) return entry.ctx;
+            entry.ctx.deinit();
+            entry.ctx = self.resolver.resolveAtRoot(root) catch |err| {
+                const removed = self.entries.fetchRemove(root).?;
+                self.gpa.free(removed.key);
+                return err;
+            };
+            entry.fingerprint = current;
+            return entry.ctx;
+        }
 
         const ctx = try self.resolver.resolveAtRoot(root);
         errdefer ctx.deinit();
         const key = try self.gpa.dupe(u8, root);
         errdefer self.gpa.free(key);
-        try self.entries.put(self.gpa, key, ctx);
+        try self.entries.put(self.gpa, key, .{ .ctx = ctx, .fingerprint = current });
         return ctx;
     }
 };
+
+fn projectFingerprint(io: std.Io, scratch: std.mem.Allocator, root: []const u8) !u64 {
+    var acc: u64 = 0;
+    const kata_dir = try fs.path.join(scratch, root, fs.discover.project_dir_name);
+
+    const yaml_path = try fs.config.rulesPath(scratch, kata_dir);
+    if (statOptional(io, yaml_path)) |st| acc ^= entryHash("", "rules.yaml", st);
+
+    const rules_path = try fs.path.join(scratch, kata_dir, rules_dir_name);
+    var rules_dir = std.Io.Dir.cwd().openDir(io, rules_path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return acc,
+        else => return err,
+    };
+    defer rules_dir.close(io);
+
+    var dirs = rules_dir.iterate();
+    while (try dirs.next(io)) |entry| {
+        if (entry.kind != .directory) continue;
+        var lang_dir = try rules_dir.openDir(io, entry.name, .{ .iterate = true });
+        defer lang_dir.close(io);
+
+        var files = lang_dir.iterate();
+        while (try files.next(io)) |fentry| {
+            if (fentry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, fentry.name, fs.rules.scm_suffix)) continue;
+            const st = try lang_dir.statFile(io, fentry.name, .{});
+            acc ^= entryHash(entry.name, fentry.name, st);
+        }
+    }
+    return acc;
+}
+
+fn statOptional(io: std.Io, path: []const u8) ?std.Io.File.Stat {
+    return fs.file.stat(io, path) catch return null;
+}
+
+fn entryHash(dir_name: []const u8, file_name: []const u8, st: std.Io.File.Stat) u64 {
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(dir_name);
+    hasher.update("/");
+    hasher.update(file_name);
+    hasher.update(std.mem.asBytes(&st.size));
+    const mtime = st.mtime.toMilliseconds();
+    hasher.update(std.mem.asBytes(&mtime));
+    return hasher.final();
+}

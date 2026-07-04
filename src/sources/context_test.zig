@@ -249,3 +249,87 @@ test "cache: distinct projects get their own contexts" {
     try std.testing.expectEqual(@as(?[]const u8, null), ruleSource(&one.rule_set, .ts, "rule-two"));
     try std.testing.expectEqualStrings("((two) @match)", ruleSource(&two.rule_set, .ts, "rule-two").?);
 }
+
+test "cache: unchanged project keeps serving the cached context" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.scm", .data = "((identifier) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const a = 1;\n" });
+
+    var r = s.resolver(null, null);
+    var cache = context.Cache.init(std.testing.allocator, &r);
+    defer cache.deinit();
+
+    const first = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
+    const second = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
+    try std.testing.expectEqual(first, second);
+}
+
+test "cache: edited rule file rebuilds the project context" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.scm", .data = "((old_body) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const a = 1;\n" });
+
+    var r = s.resolver(null, null);
+    var cache = context.Cache.init(std.testing.allocator, &r);
+    defer cache.deinit();
+
+    const first = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
+    try std.testing.expectEqualStrings("((old_body) @match)", ruleSource(&first.rule_set, .ts, "local").?);
+
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.scm", .data = "((new_body_longer) @match)" });
+
+    const second = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
+    try std.testing.expectEqualStrings("((new_body_longer) @match)", ruleSource(&second.rule_set, .ts, "local").?);
+}
+
+test "cache: added rule file rebuilds the project context" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/one.scm", .data = "((one) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const a = 1;\n" });
+
+    var r = s.resolver(null, null);
+    var cache = context.Cache.init(std.testing.allocator, &r);
+    defer cache.deinit();
+
+    const first = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
+    try std.testing.expectEqual(@as(?[]const u8, null), ruleSource(&first.rule_set, .ts, "two"));
+
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/two.scm", .data = "((two) @match)" });
+
+    const second = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
+    try std.testing.expectEqualStrings("((two) @match)", ruleSource(&second.rule_set, .ts, "two").?);
+}
+
+test "cache: deleted rules yaml rebuilds and drops project config" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "proj/.kata");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const a = 1;\n" });
+
+    var r = s.resolver(null, null);
+    var cache = context.Cache.init(std.testing.allocator, &r);
+    defer cache.deinit();
+
+    const first = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
+    try std.testing.expectEqual(true, first.resolved.ratchet);
+
+    try s.tmp.dir.deleteFile(io, "proj/.kata/rules.yaml");
+
+    const second = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
+    try std.testing.expectEqual(false, second.resolved.ratchet);
+}
