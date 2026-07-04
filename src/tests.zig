@@ -25,6 +25,7 @@ comptime {
     _ = @import("sources/config_test.zig");
     _ = @import("sources/loader_test.zig");
     _ = @import("fs/source_test.zig");
+    _ = @import("fs/discover_test.zig");
     _ = @import("cli/new_rule_test.zig");
     _ = @import("cli/harness_test.zig");
 }

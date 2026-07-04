@@ -1,4 +1,5 @@
 pub const config = @import("fs/config.zig");
+pub const discover = @import("fs/discover.zig");
 pub const file = @import("fs/file.zig");
 pub const path = @import("fs/path.zig");
 pub const rules = @import("fs/rules.zig");
