@@ -27,12 +27,12 @@
         {
           default = pkgs.stdenv.mkDerivation (finalAttrs: {
             pname = "kata";
-            version = "1.0.0";
+            version = "1.1.0";
             src = self;
 
             zigDeps = zig.fetchDeps {
               inherit (finalAttrs) pname version src;
-              hash = "sha256-Wq08hofostCE3Eo5zGv7DXYAWg/NsMdkMYttdMM9eAk=";
+              hash = "sha256-CgyvBABSygnMmKFeUCNM9FFPkdBNNWWJ6Hxs55ozdUw=";
             };
 
             nativeBuildInputs = [ zig.hook ];
