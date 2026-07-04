@@ -47,7 +47,22 @@ pub const Resolver = struct {
         errdefer arena_ptr.deinit();
         const arena = arena_ptr.allocator();
 
-        const root = if (anchor) |a| try fs.discover.findProjectRoot(self.io, arena, a) else null;
+        return self.build(ctx, arena_ptr, if (anchor) |a| try fs.discover.findProjectRoot(self.io, arena, a) else null);
+    }
+
+    pub fn resolveAtRoot(self: *Resolver, root: []const u8) !*Context {
+        const ctx = try self.gpa.create(Context);
+        errdefer self.gpa.destroy(ctx);
+        const arena_ptr = try self.gpa.create(std.heap.ArenaAllocator);
+        errdefer self.gpa.destroy(arena_ptr);
+        arena_ptr.* = .init(self.gpa);
+        errdefer arena_ptr.deinit();
+
+        return self.build(ctx, arena_ptr, try arena_ptr.allocator().dupe(u8, root));
+    }
+
+    fn build(self: *Resolver, ctx: *Context, arena_ptr: *std.heap.ArenaAllocator, root: ?[]const u8) !*Context {
+        const arena = arena_ptr.allocator();
 
         var project_config: ?config.Config = null;
         errdefer if (project_config) |*c| c.deinit();
@@ -84,6 +99,38 @@ pub const Resolver = struct {
         ctx.engine = Engine.init(self.gpa, self.registry, &ctx.rule_set);
         ctx.engine.metrics = resolved.metrics;
         ctx.engine.warnings = resolved.warnings;
+        return ctx;
+    }
+};
+
+pub const Cache = struct {
+    gpa: std.mem.Allocator,
+    resolver: *Resolver,
+    entries: std.StringHashMapUnmanaged(*Context),
+
+    pub fn init(gpa: std.mem.Allocator, resolver: *Resolver) Cache {
+        return .{ .gpa = gpa, .resolver = resolver, .entries = .empty };
+    }
+
+    pub fn deinit(self: *Cache) void {
+        var it = self.entries.iterator();
+        while (it.next()) |entry| {
+            self.gpa.free(entry.key_ptr.*);
+            entry.value_ptr.*.deinit();
+        }
+        self.entries.deinit(self.gpa);
+    }
+
+    pub fn acquire(self: *Cache, scratch: std.mem.Allocator, anchor: ?[]const u8) !?*Context {
+        const a = anchor orelse return null;
+        const root = (try fs.discover.findProjectRoot(self.resolver.io, scratch, a)) orelse return null;
+        if (self.entries.get(root)) |ctx| return ctx;
+
+        const ctx = try self.resolver.resolveAtRoot(root);
+        errdefer ctx.deinit();
+        const key = try self.gpa.dupe(u8, root);
+        errdefer self.gpa.free(key);
+        try self.entries.put(self.gpa, key, ctx);
         return ctx;
     }
 };

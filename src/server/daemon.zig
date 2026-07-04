@@ -2,6 +2,7 @@ const std = @import("std");
 
 const fs = @import("../fs.zig");
 const lint = @import("../lint.zig");
+const sources = @import("../sources.zig");
 const protocol = @import("protocol.zig");
 
 const diagnostic = lint.diagnostic;
@@ -15,6 +16,7 @@ pub const Context = struct {
     io: std.Io,
     project: ?*ProjectState = null,
     ratchet: bool = false,
+    cache: ?*sources.context.Cache = null,
 };
 
 pub const ProjectState = struct {
@@ -145,13 +147,24 @@ pub fn handle(
     const source = req.source orelse
         return reply(ctx, .fail, null, "missing source");
 
-    const diagnostics = ctx.engine.lint(arena, source, lang, req.filename) catch
+    var engine = ctx.engine;
+    var ratchet = ctx.ratchet;
+    if (ctx.cache) |cache| {
+        const per_project = cache.acquire(arena, req.filename) catch
+            return reply(ctx, .fail, null, "project context failed");
+        if (per_project) |p| {
+            engine = &p.engine;
+            ratchet = p.resolved.ratchet;
+        }
+    }
+
+    const diagnostics = engine.lint(arena, source, lang, req.filename) catch
         return reply(ctx, .fail, null, "lint failed");
 
-    applyRatchet(ctx, arena, lang, req.filename, diagnostics) catch
+    applyRatchet(ctx, engine, ratchet, arena, lang, req.filename, diagnostics) catch
         return reply(ctx, .fail, null, "ratchet baseline failed");
 
-    const all = appendProjectDiagnostics(ctx, arena, source, lang, req.filename, diagnostics) catch
+    const all = appendProjectDiagnostics(ctx, engine, arena, source, lang, req.filename, diagnostics) catch
         return reply(ctx, .fail, null, "project analysis failed");
 
     return reply(ctx, .ok, .{
@@ -163,12 +176,14 @@ pub fn handle(
 
 fn applyRatchet(
     ctx: Context,
+    engine: *Engine,
+    ratchet: bool,
     arena: std.mem.Allocator,
     lang: language.Name,
     filename: ?[]const u8,
     diagnostics: []diagnostic.Diagnostic,
 ) !void {
-    if (!ctx.ratchet) return;
+    if (!ratchet) return;
     const io = ctx.io;
     const path = filename orelse return;
     if (!diagnostic.hasErrors(diagnostics)) return;
@@ -177,7 +192,7 @@ fn applyRatchet(
         error.FileNotFound, error.StreamTooLong => return,
         else => return err,
     };
-    const baseline = try ctx.engine.lint(arena, baseline_source, lang, path);
+    const baseline = try engine.lint(arena, baseline_source, lang, path);
 
     var demote: std.ArrayList(usize) = .empty;
     for (diagnostics, 0..) |d, i| {
@@ -199,6 +214,7 @@ fn countErrors(diagnostics: []const diagnostic.Diagnostic, rule_id: []const u8) 
 
 fn appendProjectDiagnostics(
     ctx: Context,
+    engine: *Engine,
     arena: std.mem.Allocator,
     source: []const u8,
     lang: language.Name,
@@ -208,9 +224,9 @@ fn appendProjectDiagnostics(
     const project = ctx.project orelse return diagnostics;
     const path = filename orelse return diagnostics;
 
-    try project.index.put(try ctx.engine.extractFacts(project.index.allocator, source, lang, path));
+    try project.index.put(try engine.extractFacts(project.index.allocator, source, lang, path));
 
-    const violations = try project_rule.evaluate(arena, project.rules, ctx.engine.warnings, &project.index);
+    const violations = try project_rule.evaluate(arena, project.rules, engine.warnings, &project.index);
     var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
     try out.appendSlice(arena, diagnostics);
     for (violations) |v| {

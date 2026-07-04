@@ -249,12 +249,16 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
             return internalError(c.stderr, "index project", err);
     }
 
+    var cache = context_mod.Cache.init(c.gpa, c.resolver);
+    defer cache.deinit();
+
     daemon.serve(c.gpa, .{
         .engine = &ctx.engine,
         .binary_mtime = binary_mtime,
         .io = c.io,
         .project = if (project_state) |*p| p else null,
         .ratchet = ctx.resolved.ratchet,
+        .cache = &cache,
     }, socket_path) catch |err| switch (err) {
         error.AlreadyRunning => return printAndExit(c.stderr, "kata daemon already running\n", exit_clean),
         else => return internalError(c.stderr, "serve", err),

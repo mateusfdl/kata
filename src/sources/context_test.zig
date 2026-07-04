@@ -178,3 +178,74 @@ test "context: malformed project rules.yaml surfaces the parse error" {
     try std.testing.expectError(error.UnknownTopLevelKey, got);
     try std.testing.expectEqual(@as(u32, 1), r.diag.line);
 }
+
+test "cache: no anchor yields no project context" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    var r = s.resolver(null, null);
+    var cache = context.Cache.init(std.testing.allocator, &r);
+    defer cache.deinit();
+
+    try std.testing.expectEqual(@as(?*context.Context, null), try cache.acquire(s.arena.allocator(), null));
+}
+
+test "cache: anchor outside any project yields no project context" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    var r = s.resolver(null, null);
+    var cache = context.Cache.init(std.testing.allocator, &r);
+    defer cache.deinit();
+
+    try std.testing.expectEqual(@as(?*context.Context, null), try cache.acquire(s.arena.allocator(), "/kata-context-test-absent/pkg/main.go"));
+}
+
+test "cache: same project resolves once and is reused" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.createDirPath(io, "proj/src");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.scm", .data = "((identifier) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/a.ts", .data = "const a = 1;\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/b.ts", .data = "const b = 2;\n" });
+
+    var r = s.resolver(null, null);
+    var cache = context.Cache.init(std.testing.allocator, &r);
+    defer cache.deinit();
+
+    const first = (try cache.acquire(s.arena.allocator(), try s.path("proj/src/a.ts"))).?;
+    const second = (try cache.acquire(s.arena.allocator(), try s.path("proj/src/b.ts"))).?;
+
+    try std.testing.expectEqual(first, second);
+    try std.testing.expectEqualStrings("((identifier) @match)", ruleSource(&first.rule_set, .ts, "local").?);
+}
+
+test "cache: distinct projects get their own contexts" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "one/.kata/rules/ts");
+    try s.tmp.dir.createDirPath(io, "two/.kata/rules/ts");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "one/.kata/rules/ts/rule-one.scm", .data = "((one) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "two/.kata/rules/ts/rule-two.scm", .data = "((two) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "one/a.ts", .data = "const a = 1;\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "two/b.ts", .data = "const b = 2;\n" });
+
+    var r = s.resolver(null, null);
+    var cache = context.Cache.init(std.testing.allocator, &r);
+    defer cache.deinit();
+
+    const one = (try cache.acquire(s.arena.allocator(), try s.path("one/a.ts"))).?;
+    const two = (try cache.acquire(s.arena.allocator(), try s.path("two/b.ts"))).?;
+
+    try std.testing.expect(one != two);
+    try std.testing.expectEqualStrings("((one) @match)", ruleSource(&one.rule_set, .ts, "rule-one").?);
+    try std.testing.expectEqual(@as(?[]const u8, null), ruleSource(&one.rule_set, .ts, "rule-two"));
+    try std.testing.expectEqualStrings("((two) @match)", ruleSource(&two.rule_set, .ts, "rule-two").?);
+}

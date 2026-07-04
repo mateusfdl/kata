@@ -594,3 +594,167 @@ test "daemon: ratchet without filename leaves severity untouched" {
     try std.testing.expect(!resp.report.?.clean);
     try std.testing.expectEqual(lint.diagnostic.Severity.@"error", resp.report.?.diagnostics[0].severity);
 }
+
+const sources = @import("../sources.zig");
+
+const ProjectHarness = struct {
+    tmp: std.testing.TmpDir,
+    arena: std.heap.ArenaAllocator,
+    registry: lint.language.Registry,
+    resolver: sources.context.Resolver,
+    cache: sources.context.Cache,
+
+    fn init() !*ProjectHarness {
+        const gpa = std.testing.allocator;
+        const self = try gpa.create(ProjectHarness);
+        self.* = .{
+            .tmp = std.testing.tmpDir(.{}),
+            .arena = .init(gpa),
+            .registry = .init(),
+            .resolver = undefined,
+            .cache = undefined,
+        };
+        self.resolver = .{
+            .gpa = gpa,
+            .io = std.testing.io,
+            .registry = &self.registry,
+        };
+        self.cache = sources.context.Cache.init(gpa, &self.resolver);
+        return self;
+    }
+
+    fn deinit(self: *ProjectHarness) void {
+        const gpa = std.testing.allocator;
+        self.cache.deinit();
+        self.tmp.cleanup();
+        self.arena.deinit();
+        gpa.destroy(self);
+    }
+
+    fn path(self: *ProjectHarness, sub: []const u8) ![]const u8 {
+        var rel_buf: [256]u8 = undefined;
+        const rel = try test_fixture.relativeTmpPath(&rel_buf, &self.tmp.sub_path);
+        return std.fmt.allocPrint(self.arena.allocator(), "{s}/{s}", .{ rel, sub });
+    }
+};
+
+const flag_zzz_rule =
+    \\((identifier) @match
+    \\ (#eq? @match "zzz")
+    \\ (#set! message "zzz is banned here"))
+    \\
+;
+
+test "daemon: cached project context lints with the project rules" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+    var h = try ProjectHarness.init();
+    defer h.deinit();
+
+    try h.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.scm", .data = flag_zzz_rule });
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/main.ts", .data = "const ok = 1;\n" });
+
+    var ctx = context(f);
+    ctx.cache = &h.cache;
+
+    const resp = daemon.handle(ctx, arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = try h.path("proj/main.ts"),
+        .source = "const zzz = 1;",
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expect(!report.clean);
+    try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+    try std.testing.expectEqualStrings("flag-zzz", report.diagnostics[0].rule_id);
+    try std.testing.expectEqualStrings("zzz is banned here", report.diagnostics[0].message);
+}
+
+test "daemon: file outside any project falls back to the daemon engine" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+    var h = try ProjectHarness.init();
+    defer h.deinit();
+
+    var ctx = context(f);
+    ctx.cache = &h.cache;
+
+    const resp = daemon.handle(ctx, arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = "/kata-daemon-test-absent/main.ts",
+        .source = "const x = (foo[0] as any).bar;",
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+    try std.testing.expectEqualStrings("no-as-any", report.diagnostics[0].rule_id);
+    try std.testing.expectEqualStrings("as any is not allowed", report.diagnostics[0].message);
+}
+
+test "daemon: project ratchet demotes unchanged counts while the daemon default stays absolute" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+    var h = try ProjectHarness.init();
+    defer h.deinit();
+
+    try h.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\n" });
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.scm", .data = flag_zzz_rule });
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const zzz = 1;\n" });
+
+    var ctx = context(f);
+    ctx.cache = &h.cache;
+
+    const resp = daemon.handle(ctx, arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = try h.path("proj/a.ts"),
+        .source = "const zzz = 2;\n",
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expect(report.clean);
+    try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+    try std.testing.expectEqual(lint.diagnostic.Severity.warn, report.diagnostics[0].severity);
+}
+
+test "daemon: broken project rules yaml fails the request" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+    var h = try ProjectHarness.init();
+    defer h.deinit();
+
+    try h.tmp.dir.createDirPath(io, "proj/.kata");
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "nonsense: true\n" });
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const ok = 1;\n" });
+
+    var ctx = context(f);
+    ctx.cache = &h.cache;
+
+    const resp = daemon.handle(ctx, arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = try h.path("proj/a.ts"),
+        .source = "const ok = 1;",
+    });
+
+    try std.testing.expectEqual(protocol.Status.fail, resp.status);
+    try std.testing.expectEqualStrings("project context failed", resp.message.?);
+}
