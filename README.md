@@ -6,7 +6,9 @@ relying on the model.
 
 Rules live under `rules/<lang>/<id>.scm` (embedded at build time) and may be
 extended with user rules under `$XDG_CONFIG_HOME/kata/rules/` and per-project
-rules under `<project>/.kata/rules/`. Supported languages: `ts`, `tsx`, `go`.
+rules under `<project>/.kata/rules/`. A rule file makes a rule available; it
+only runs once declared under `enabled:` in `rules.yaml`. Supported languages:
+`ts`, `tsx`, `go`.
 
 ## Build
 
@@ -102,22 +104,31 @@ autostarts the daemon if absent, and restarts it on a `stale` reply.
 
 ## Configuration
 
-Builtin rules are all active by default. To disable specific rules, create
-`$XDG_CONFIG_HOME/kata/rules.yaml` (or `$HOME/.config/kata/rules.yaml`):
+No rule runs by default. Activation is opt-in: declare rules under `enabled:`
+in `$XDG_CONFIG_HOME/kata/rules.yaml` (or `$HOME/.config/kata/rules.yaml`).
+Without a config, `kata check` is a clean no-op.
 
 ```yaml
-disabled:
-  - ts/no-console
-  - tsx/no-any
+enabled:
+  - go/no-panic
   - no-comments
+disabled:
+  - tsx/no-comments
 ```
+
+The active set is `enabled` minus `disabled`. `disabled` exists for pruning:
+a project that inherits the global `enabled` list can subtract single rules
+without redeclaring everything.
 
 Schema:
 
-- Top-level keys: `disabled`, `warnings`, `metrics`, `project-rules`, `ratchet`.
-- `disabled:` takes a list of rule ids.
-- Scoped form `lang/id` disables that rule in one language.
-- Bare form `id` disables every rule with that id across all languages.
+- Top-level keys: `enabled`, `disabled`, `warnings`, `metrics`,
+  `project-rules`, `ratchet`.
+- `enabled:` and `disabled:` take lists of rule ids.
+- Scoped form `lang/id` targets that rule in one language.
+- Bare form `id` targets every rule with that id across all languages.
+- Entries matching no available rule are ignored.
+- `warnings:` demotes active rules to warnings; it does not activate them.
 - `#` starts a comment to end of line. Blank lines are ignored.
 - Indentation is exactly two spaces. Tabs are rejected.
 - Unknown top-level keys are rejected to prevent silent typos.
@@ -125,7 +136,7 @@ Schema:
 Errors are reported with a line number and abort startup:
 
 ```
-kata: rules.yaml: line 1: unknown top-level key (expected 'disabled')
+kata: rules.yaml: line 1: unknown top-level key (expected 'enabled', 'disabled', 'warnings', 'metrics', 'project-rules', or 'ratchet')
 ```
 
 The daemon reads the global `rules.yaml` once at startup. Edit the file then
@@ -152,8 +163,11 @@ Precedence:
   (`.kata/rules/`). A later tier silently shadows an earlier one by rule id.
 - Config keys resolve per key: a key defined in the project `rules.yaml`
   replaces the global value wholesale; omitted keys fall through to the global
-  file. An empty `disabled:` in the project therefore re-enables everything the
-  global config disabled, and `ratchet` can be turned on for a single project.
+  file. A project `enabled:` therefore replaces the global active set entirely,
+  an empty one deactivates every rule for that project, and `ratchet` can be
+  turned on for a single project.
+- Activation is opt-in at every tier: a `.scm` file under `.kata/rules/` does
+  nothing until an `enabled:` entry (project or inherited global) names it.
 
 The daemon resolves the project per request from the file path, so one daemon
 serves every project. Edits under `.kata/` (rule files added, changed, or
@@ -164,7 +178,9 @@ project's context on the fly.
 
 Drop `.scm` files under `$XDG_CONFIG_HOME/kata/rules/<lang>/` (or
 `$HOME/.config/kata/rules/<lang>/`) to add your own rules. The basename of the
-file is the rule id; the layout mirrors the embedded `rules/` tree.
+file is the rule id; the layout mirrors the embedded `rules/` tree. Like every
+rule, a custom rule stays inactive until listed under `enabled:` in
+`rules.yaml`.
 
 A user or project rule that shares an id with an earlier tier shadows it
 silently. Two rule files with the same id in the same tier (for example
@@ -182,7 +198,8 @@ kata new-rule ts no-throw-literal
 ```
 
 It creates the parent directory if needed, refuses to overwrite an existing
-file, and prints the path of the new `.scm` file ready for editing.
+file, and prints the path of the new `.scm` file ready for editing, plus a
+reminder to add the rule to `enabled:`.
 
 ### Rule syntax
 
