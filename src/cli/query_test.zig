@@ -59,7 +59,7 @@ test "query: inline rule matches in a file target" {
     const target = try std.fmt.allocPrint(gpa, "{s}/a.ts", .{rel});
     defer gpa.free(target);
 
-    const r = try runQuery(gpa, .{ .text = as_any_query, .target = target, .lang = "ts" });
+    const r = try runQuery(gpa, .{ .text = as_any_query, .target = target, .lang = "ts", .format = .text });
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(query.Outcome.matches, r.outcome);
@@ -92,7 +92,7 @@ test "query: where predicate and interpolation across a directory" {
     var path_buf: [256]u8 = undefined;
     const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
 
-    const r = try runQuery(gpa, .{ .text = complexity_query, .target = rel, .lang = "ts" });
+    const r = try runQuery(gpa, .{ .text = complexity_query, .target = rel, .lang = "ts", .format = .text });
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(query.Outcome.matches, r.outcome);
@@ -114,7 +114,7 @@ test "query: clean when nothing matches" {
     const target = try std.fmt.allocPrint(gpa, "{s}/a.ts", .{rel});
     defer gpa.free(target);
 
-    const r = try runQuery(gpa, .{ .text = as_any_query, .target = target, .lang = "ts" });
+    const r = try runQuery(gpa, .{ .text = as_any_query, .target = target, .lang = "ts", .format = .text });
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(query.Outcome.clean, r.outcome);
@@ -133,7 +133,7 @@ test "query: comma-separated languages apply to each" {
     var path_buf: [256]u8 = undefined;
     const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
 
-    const r = try runQuery(gpa, .{ .text = as_any_query, .target = rel, .lang = "ts,tsx" });
+    const r = try runQuery(gpa, .{ .text = as_any_query, .target = rel, .lang = "ts,tsx", .format = .text });
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(query.Outcome.matches, r.outcome);
@@ -153,7 +153,7 @@ test "query: duplicate languages are deduplicated" {
     var path_buf: [256]u8 = undefined;
     const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
 
-    const r = try runQuery(gpa, .{ .text = as_any_query, .target = rel, .lang = "ts,ts" });
+    const r = try runQuery(gpa, .{ .text = as_any_query, .target = rel, .lang = "ts,ts", .format = .text });
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(query.Outcome.matches, r.outcome);

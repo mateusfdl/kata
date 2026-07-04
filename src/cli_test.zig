@@ -179,13 +179,13 @@ test "parseSubcommand: 'daemon --root=<dir>' captures the root" {
 test "parseSubcommand: 'check' with no target defaults to '.'" {
     const sub = cli.parseSubcommand(&.{"check"});
     try std.testing.expectEqualStrings(".", sub.check.target);
-    try std.testing.expectEqual(reports.Format.text, sub.check.format);
+    try std.testing.expectEqual(reports.Format.pretty, sub.check.format);
 }
 
 test "parseSubcommand: 'check' with an explicit target" {
     const sub = cli.parseSubcommand(&.{ "check", "src/" });
     try std.testing.expectEqualStrings("src/", sub.check.target);
-    try std.testing.expectEqual(reports.Format.text, sub.check.format);
+    try std.testing.expectEqual(reports.Format.pretty, sub.check.format);
 }
 
 test "parseSubcommand: 'check --json' selects the json format" {

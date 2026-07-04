@@ -38,6 +38,7 @@ pub const Command = struct {
     environ: *std.process.Environ.Map,
     args: []const [:0]const u8,
     user_rules_dir: ?[]const u8 = null,
+    color: bool = false,
     stdin: *std.Io.Reader,
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
@@ -45,7 +46,7 @@ pub const Command = struct {
 
 pub const CheckOptions = struct {
     target: []const u8,
-    format: reports.Format = .text,
+    format: reports.Format = .pretty,
 };
 
 pub const Subcommand = union(enum) {
@@ -79,7 +80,7 @@ pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
 }
 
 fn formatOf(args: []const [:0]const u8) reports.Format {
-    var format: reports.Format = .text;
+    var format: reports.Format = .pretty;
     for (args) |a| {
         if (formatFlag(a)) |f| format = f;
     }
@@ -176,6 +177,7 @@ pub fn main(init: std.process.Init) u8 {
         .environ = init.environ_map,
         .args = user_args,
         .user_rules_dir = user_dir,
+        .color = std.Io.File.stdout().supportsAnsiEscapeCodes(io) catch false,
         .stdin = &stdin_reader.interface,
         .stdout = &stdout_writer.interface,
         .stderr = stderr,
@@ -300,7 +302,7 @@ fn runCheck(c: Command, opts: CheckOptions) !u8 {
     defer ctx.deinit();
     if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
 
-    var reporter = reports.reporter(opts.format, c.stdout);
+    var reporter = reports.reporter(opts.format, c.stdout, c.color);
     const outcome = check.run(c.io, c.gpa, &ctx.engine, opts.target, ctx.resolved.project_rules, &reporter) catch |err| switch (err) {
         error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{opts.target}, exit_usage),
         else => return internalError(c.stderr, "check", err),
@@ -319,7 +321,9 @@ fn runFacts(c: Command, target: []const u8) !u8 {
 }
 
 fn runQuery(c: Command, q: query.Options) !u8 {
-    return switch (try query.run(c.io, c.gpa, c.resolver.registry, q, c.stdout, c.stderr)) {
+    var opts = q;
+    opts.color = c.color;
+    return switch (try query.run(c.io, c.gpa, c.resolver.registry, opts, c.stdout, c.stderr)) {
         .clean => exit_clean,
         .matches => exit_violations,
         .usage => exit_usage,

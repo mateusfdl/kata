@@ -3,12 +3,14 @@ const std = @import("std");
 const lint = @import("lint.zig");
 
 pub const Json = @import("reports/json.zig").Json;
+pub const Pretty = @import("reports/pretty.zig").Pretty;
 pub const Text = @import("reports/text.zig").Text;
 
-pub const Format = enum { text, json };
+pub const Format = enum { pretty, text, json };
 
-pub fn reporter(format: Format, writer: *std.Io.Writer) Reporter {
+pub fn reporter(format: Format, writer: *std.Io.Writer, color: bool) Reporter {
     return switch (format) {
+        .pretty => .{ .pretty = .{ .writer = writer, .color = color } },
         .text => .{ .text = .{ .writer = writer } },
         .json => .{ .json = .{ .writer = writer } },
     };
@@ -27,6 +29,7 @@ pub const Counts = struct {
 };
 
 pub const Reporter = union(enum) {
+    pretty: Pretty,
     text: Text,
     json: Json,
 

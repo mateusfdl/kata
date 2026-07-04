@@ -13,7 +13,8 @@ pub const Options = struct {
     text: []const u8 = "",
     target: []const u8 = ".",
     lang: []const u8 = "",
-    format: reports.Format = .text,
+    format: reports.Format = .pretty,
+    color: bool = false,
     invalid_arg: ?[]const u8 = null,
 };
 
@@ -57,7 +58,7 @@ pub fn run(
 
     if (!try engine.prewarmOrReport("kata", stderr)) return .usage;
 
-    var reporter = reports.reporter(opts.format, stdout);
+    var reporter = reports.reporter(opts.format, stdout, opts.color);
     return switch (try check.run(io, gpa, &engine, opts.target, &.{}, &reporter)) {
         .clean => .clean,
         .violations => .matches,
