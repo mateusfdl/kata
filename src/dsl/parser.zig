@@ -431,12 +431,15 @@ pub const Parser = struct {
             self.failAt(name);
             return error.InvalidExpression;
         }
+        return self.parseCall(name);
+    }
 
+    fn parseCall(self: *Parser, name: Token) Error!ast.Expression {
         var args: std.ArrayList(ast.Expression) = .empty;
         if (self.current.kind != .right_paren) {
-            try args.append(self.allocator, try self.parseExpression());
+            try args.append(self.allocator, try self.parseArgument());
             while (try self.consume(.comma)) {
-                try args.append(self.allocator, try self.parseExpression());
+                try args.append(self.allocator, try self.parseArgument());
             }
         }
         const end = try self.expect(.right_paren, error.ExpectedRightParen);
@@ -445,6 +448,13 @@ pub const Parser = struct {
             .args = try args.toOwnedSlice(self.allocator),
             .range = .{ .start = name.range.start, .end = end.range.end },
         } };
+    }
+
+    fn parseArgument(self: *Parser) Error!ast.Expression {
+        if (self.current.kind != .symbol) return self.parseExpression();
+        const name = try self.expectSymbol(error.ExpectedSymbol);
+        if (try self.consume(.left_paren)) return self.parseCall(name);
+        return .{ .symbol = .{ .name = name.lexeme, .range = name.range } };
     }
 
     fn parseOptionalCapture(self: *Parser) Error!?ast.Capture {
@@ -607,6 +617,7 @@ fn expressionRange(left: ast.Expression, right: ast.Expression) tokenizer.Range 
 fn expressionStart(expression: ast.Expression) tokenizer.Position {
     return switch (expression) {
         .capture => |value| value.range.start,
+        .symbol => |value| value.range.start,
         .string => |value| value.range.start,
         .number => |value| value.range.start,
         .call => |value| value.range.start,
@@ -619,6 +630,7 @@ fn expressionStart(expression: ast.Expression) tokenizer.Position {
 fn expressionEnd(expression: ast.Expression) tokenizer.Position {
     return switch (expression) {
         .capture => |value| value.range.end,
+        .symbol => |value| value.range.end,
         .string => |value| value.range.end,
         .number => |value| value.range.end,
         .call => |value| value.range.end,

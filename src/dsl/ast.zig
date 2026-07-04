@@ -69,12 +69,18 @@ pub const Predicate = struct {
 
 pub const Expression = union(enum) {
     capture: Capture,
+    symbol: SymbolLiteral,
     string: StringLiteral,
     number: NumberLiteral,
     call: Call,
     compare: Compare,
     logical: Logical,
     negate: Negate,
+};
+
+pub const SymbolLiteral = struct {
+    name: []const u8,
+    range: tokenizer.Range,
 };
 
 pub const StringLiteral = struct {

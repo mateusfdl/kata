@@ -711,6 +711,29 @@ test "parser: rejects unclosed blocks and expressions" {
     , &paren_diag));
 }
 
+test "parser: parses bare symbol call arguments" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule repository-isolation {
+        \\  kind project
+        \\  where { endsWith(field(@call, receiver), "Repository") }
+        \\  emit @call { message "repositories can only be called by repositories" }
+        \\}
+    , &diag);
+
+    const call = file.rules[0].where[0].expression.call;
+    try std.testing.expectEqualStrings("endsWith", call.name);
+    try std.testing.expectEqual(@as(usize, 2), call.args.len);
+    const field = call.args[0].call;
+    try std.testing.expectEqualStrings("field", field.name);
+    try std.testing.expectEqualStrings("call", field.args[0].capture.name);
+    try std.testing.expectEqualStrings("receiver", field.args[1].symbol.name);
+    try std.testing.expectEqualStrings("Repository", call.args[1].string.value);
+}
+
 test "parser: rejects invalid expressions" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
