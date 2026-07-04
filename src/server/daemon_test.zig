@@ -656,6 +656,7 @@ test "daemon: cached project context lints with the project rules" {
     defer h.deinit();
 
     try h.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "enabled:\n  - flag-zzz\n" });
     try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.scm", .data = flag_zzz_rule });
     try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/main.ts", .data = "const ok = 1;\n" });
 
@@ -712,7 +713,7 @@ test "daemon: project ratchet demotes unchanged counts while the daemon default 
     defer h.deinit();
 
     try h.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
-    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\n" });
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\nenabled:\n  - flag-zzz\n" });
     try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.scm", .data = flag_zzz_rule });
     try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const zzz = 1;\n" });
 

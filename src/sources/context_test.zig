@@ -52,6 +52,11 @@ const Setup = struct {
     }
 };
 
+fn parseGlobal(yaml: []const u8) !config.Config {
+    var diag: config.Diagnostic = .{};
+    return try config.parse(std.testing.allocator, yaml, &diag);
+}
+
 fn ruleSource(set: anytype, lang: language.Name, id: []const u8) ?[]const u8 {
     for (set.get(lang)) |r| {
         if (std.mem.eql(u8, r.id, id)) return r.source;
@@ -67,7 +72,10 @@ test "context: no anchor resolves the global context" {
     try s.tmp.dir.createDirPath(io, "user/ts");
     try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/my-user-rule.scm", .data = "((identifier) @match)" });
 
-    var r = s.resolver(try s.path("user"), null);
+    var global = try parseGlobal("enabled:\n  - my-user-rule\n");
+    defer global.deinit();
+
+    var r = s.resolver(try s.path("user"), &global);
     const ctx = try r.resolve(null);
     defer ctx.deinit();
 
@@ -89,7 +97,10 @@ test "context: anchored file loads project rules on top of user rules" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/project-only.scm", .data = "((call_expression) @match)" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
-    var r = s.resolver(try s.path("user"), null);
+    var global = try parseGlobal("enabled:\n  - shared-rule\n  - project-only\n");
+    defer global.deinit();
+
+    var r = s.resolver(try s.path("user"), &global);
     const ctx = try r.resolve(try s.path("proj/src/main.ts"));
     defer ctx.deinit();
 
@@ -112,8 +123,7 @@ test "context: project rules.yaml overrides global config per key" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\ndisabled:\n  - ts/drop-me\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
-    var diag: config.Diagnostic = .{};
-    var global = try config.parse(std.testing.allocator, "metrics:\n  complexity: 10\n", &diag);
+    var global = try parseGlobal("metrics:\n  complexity: 10\nenabled:\n  - drop-me\n");
     defer global.deinit();
 
     var r = s.resolver(try s.path("user"), &global);
@@ -125,6 +135,44 @@ test "context: project rules.yaml overrides global config per key" {
     try std.testing.expectEqual(@as(?[]const u8, null), ruleSource(&ctx.rule_set, .ts, "drop-me"));
 }
 
+test "context: undeclared rules stay inactive" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.createDirPath(io, "proj/src");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/undeclared.scm", .data = "((identifier) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
+
+    var r = s.resolver(null, null);
+    const ctx = try r.resolve(try s.path("proj/src/main.ts"));
+    defer ctx.deinit();
+
+    try std.testing.expectEqual(@as(?[]const u8, null), ruleSource(&ctx.rule_set, .ts, "undeclared"));
+    try std.testing.expectEqual(@as(usize, 0), ctx.rule_set.get(.ts).len);
+    try std.testing.expectEqual(@as(usize, 0), ctx.rule_set.get(.tsx).len);
+    try std.testing.expectEqual(@as(usize, 0), ctx.rule_set.get(.go).len);
+}
+
+test "context: project rules.yaml enables its own rules" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.createDirPath(io, "proj/src");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "enabled:\n  - ts/local\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.scm", .data = "((identifier) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
+
+    var r = s.resolver(null, null);
+    const ctx = try r.resolve(try s.path("proj/src/main.ts"));
+    defer ctx.deinit();
+
+    try std.testing.expectEqualStrings("((identifier) @match)", ruleSource(&ctx.rule_set, .ts, "local").?);
+}
+
 test "context: project without rules dir or rules.yaml keeps global behavior" {
     const io = std.testing.io;
     var s = try Setup.init(io);
@@ -134,8 +182,7 @@ test "context: project without rules dir or rules.yaml keeps global behavior" {
     try s.tmp.dir.createDirPath(io, "proj/src");
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
-    var diag: config.Diagnostic = .{};
-    var global = try config.parse(std.testing.allocator, "ratchet: true\n", &diag);
+    var global = try parseGlobal("ratchet: true\n");
     defer global.deinit();
 
     var r = s.resolver(null, &global);
@@ -151,8 +198,7 @@ test "context: anchor outside any project falls back to global config" {
     var s = try Setup.init(io);
     defer s.deinit();
 
-    var diag: config.Diagnostic = .{};
-    var global = try config.parse(std.testing.allocator, "ratchet: true\n", &diag);
+    var global = try parseGlobal("ratchet: true\n");
     defer global.deinit();
 
     var r = s.resolver(null, &global);
@@ -214,7 +260,10 @@ test "cache: same project resolves once and is reused" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/a.ts", .data = "const a = 1;\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/b.ts", .data = "const b = 2;\n" });
 
-    var r = s.resolver(null, null);
+    var global = try parseGlobal("enabled:\n  - local\n");
+    defer global.deinit();
+
+    var r = s.resolver(null, &global);
     var cache = context.Cache.init(std.testing.allocator, &r);
     defer cache.deinit();
 
@@ -237,7 +286,10 @@ test "cache: distinct projects get their own contexts" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "one/a.ts", .data = "const a = 1;\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "two/b.ts", .data = "const b = 2;\n" });
 
-    var r = s.resolver(null, null);
+    var global = try parseGlobal("enabled:\n  - rule-one\n  - rule-two\n");
+    defer global.deinit();
+
+    var r = s.resolver(null, &global);
     var cache = context.Cache.init(std.testing.allocator, &r);
     defer cache.deinit();
 
@@ -277,7 +329,10 @@ test "cache: edited rule file rebuilds the project context" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.scm", .data = "((old_body) @match)" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const a = 1;\n" });
 
-    var r = s.resolver(null, null);
+    var global = try parseGlobal("enabled:\n  - local\n");
+    defer global.deinit();
+
+    var r = s.resolver(null, &global);
     var cache = context.Cache.init(std.testing.allocator, &r);
     defer cache.deinit();
 
@@ -299,7 +354,10 @@ test "cache: added rule file rebuilds the project context" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/one.scm", .data = "((one) @match)" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const a = 1;\n" });
 
-    var r = s.resolver(null, null);
+    var global = try parseGlobal("enabled:\n  - one\n  - two\n");
+    defer global.deinit();
+
+    var r = s.resolver(null, &global);
     var cache = context.Cache.init(std.testing.allocator, &r);
     defer cache.deinit();
 

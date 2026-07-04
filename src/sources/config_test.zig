@@ -254,71 +254,113 @@ fn hasId(rules: []const lint.rule.RawRule, id: []const u8) bool {
     return false;
 }
 
-test "filter: scoped disable removes exactly one rule" {
+test "selection: no configs removes every rule" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
 
-    var cfg = try expectParseOk("disabled:\n  - ts/no-console\n");
+    config.applySelection(&fx.set, config.resolve(null, null));
+
+    try std.testing.expectEqual(@as(usize, 0), fx.countTs());
+    try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
+    try std.testing.expectEqual(@as(usize, 0), fx.countGo());
+}
+
+test "selection: config without enabled key removes every rule" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    try fx.build();
+
+    var cfg = try expectParseOk("disabled:\n  - ts/no-console\nratchet: true\n");
     defer cfg.deinit();
-    config.filterDisabled(&fx.set, config.resolve(&cfg, null));
+    config.applySelection(&fx.set, config.resolve(&cfg, null));
+
+    try std.testing.expectEqual(@as(usize, 0), fx.countTs());
+    try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
+    try std.testing.expectEqual(@as(usize, 0), fx.countGo());
+}
+
+test "selection: scoped enable keeps exactly one rule" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    try fx.build();
+
+    var cfg = try expectParseOk("enabled:\n  - ts/no-console\n");
+    defer cfg.deinit();
+    config.applySelection(&fx.set, config.resolve(&cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
-    try std.testing.expectEqual(@as(usize, 2), fx.countTsx());
-    try std.testing.expectEqual(@as(usize, 1), fx.countGo());
-    try std.testing.expect(!hasId(fx.set.get(.ts), "no-console"));
-    try std.testing.expect(hasId(fx.set.get(.tsx), "no-console"));
+    try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
+    try std.testing.expectEqual(@as(usize, 0), fx.countGo());
+    try std.testing.expect(hasId(fx.set.get(.ts), "no-console"));
 }
 
-test "filter: bare disable removes across all languages" {
+test "selection: bare enable keeps the rule across languages" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
 
-    var cfg = try expectParseOk("disabled:\n  - no-console\n");
+    var cfg = try expectParseOk("enabled:\n  - no-console\n");
     defer cfg.deinit();
-    config.filterDisabled(&fx.set, config.resolve(&cfg, null));
-
-    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
-    try std.testing.expectEqual(@as(usize, 1), fx.countTsx());
-    try std.testing.expectEqual(@as(usize, 1), fx.countGo());
-    try std.testing.expect(!hasId(fx.set.get(.ts), "no-console"));
-    try std.testing.expect(!hasId(fx.set.get(.tsx), "no-console"));
-}
-
-test "filter: nonexistent id is a no-op" {
-    var fx = RuleFixture.init();
-    defer fx.deinit();
-    try fx.build();
-
-    var cfg = try expectParseOk("disabled:\n  - ts/no-such-rule\n  - made-up\n");
-    defer cfg.deinit();
-    config.filterDisabled(&fx.set, config.resolve(&cfg, null));
-
-    try std.testing.expectEqual(@as(usize, 2), fx.countTs());
-    try std.testing.expectEqual(@as(usize, 2), fx.countTsx());
-    try std.testing.expectEqual(@as(usize, 1), fx.countGo());
-}
-
-test "filter: combines scoped and bare across multiple langs" {
-    var fx = RuleFixture.init();
-    defer fx.deinit();
-    try fx.build();
-
-    var cfg = try expectParseOk(
-        \\disabled:
-        \\  - no-any
-        \\  - go/no-swallowed-errors
-        \\
-    );
-    defer cfg.deinit();
-    config.filterDisabled(&fx.set, config.resolve(&cfg, null));
+    config.applySelection(&fx.set, config.resolve(&cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 1), fx.countTsx());
     try std.testing.expectEqual(@as(usize, 0), fx.countGo());
     try std.testing.expect(hasId(fx.set.get(.ts), "no-console"));
     try std.testing.expect(hasId(fx.set.get(.tsx), "no-console"));
+}
+
+test "selection: disabled prunes an enabled rule" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    try fx.build();
+
+    var cfg = try expectParseOk(
+        \\enabled:
+        \\  - no-console
+        \\  - no-any
+        \\disabled:
+        \\  - ts/no-console
+        \\
+    );
+    defer cfg.deinit();
+    config.applySelection(&fx.set, config.resolve(&cfg, null));
+
+    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
+    try std.testing.expectEqual(@as(usize, 2), fx.countTsx());
+    try std.testing.expectEqual(@as(usize, 0), fx.countGo());
+    try std.testing.expect(!hasId(fx.set.get(.ts), "no-console"));
+    try std.testing.expect(hasId(fx.set.get(.ts), "no-any"));
+    try std.testing.expect(hasId(fx.set.get(.tsx), "no-console"));
+}
+
+test "selection: enabled entry matching nothing is ignored" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    try fx.build();
+
+    var cfg = try expectParseOk("enabled:\n  - no-console\n  - made-up\n  - ts/no-such-rule\n");
+    defer cfg.deinit();
+    config.applySelection(&fx.set, config.resolve(&cfg, null));
+
+    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
+    try std.testing.expectEqual(@as(usize, 1), fx.countTsx());
+    try std.testing.expectEqual(@as(usize, 0), fx.countGo());
+}
+
+test "selection: warnings entry does not enable a rule" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    try fx.build();
+
+    var cfg = try expectParseOk("warnings:\n  - no-console\n");
+    defer cfg.deinit();
+    config.applySelection(&fx.set, config.resolve(&cfg, null));
+
+    try std.testing.expectEqual(@as(usize, 0), fx.countTs());
+    try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
+    try std.testing.expectEqual(@as(usize, 0), fx.countGo());
 }
 
 test "config: parses an import-boundary project rule" {

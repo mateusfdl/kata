@@ -85,7 +85,7 @@ pub const Resolver = struct {
         errdefer rule_set.deinit();
 
         const resolved = config.resolve(self.global_config, if (project_config) |*c| c else null);
-        config.filterDisabled(&rule_set, resolved);
+        config.applySelection(&rule_set, resolved);
 
         ctx.* = .{
             .gpa = self.gpa,

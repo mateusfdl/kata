@@ -426,23 +426,27 @@ pub fn loadFromDisk(
     return try parse(gpa, source, diag);
 }
 
-pub fn filterDisabled(set: *loader.RuleSet, resolved: Resolved) void {
+pub fn applySelection(set: *loader.RuleSet, resolved: Resolved) void {
     for (std.enums.values(language.Name)) |lang| {
         const list = set.by_lang.getPtr(lang);
         var i: usize = 0;
         while (i < list.items.len) {
-            if (isDisabled(lang, list.items[i].id, resolved)) {
-                _ = list.swapRemove(i);
-            } else {
+            if (isActive(lang, list.items[i].id, resolved)) {
                 i += 1;
+            } else {
+                _ = list.swapRemove(i);
             }
         }
     }
 }
 
-fn isDisabled(lang: language.Name, id: []const u8, resolved: Resolved) bool {
-    for (resolved.disabled) |d| {
-        if (d.matches(lang, id)) return true;
+fn isActive(lang: language.Name, id: []const u8, resolved: Resolved) bool {
+    return matchesAny(resolved.enabled, lang, id) and !matchesAny(resolved.disabled, lang, id);
+}
+
+fn matchesAny(ids: []const ScopedId, lang: language.Name, id: []const u8) bool {
+    for (ids) |scoped| {
+        if (scoped.matches(lang, id)) return true;
     }
     return false;
 }
