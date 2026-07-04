@@ -4,6 +4,8 @@ const lint = @import("../lint.zig");
 const reports = @import("../reports.zig");
 const text = @import("text.zig");
 
+const utils = @import("utils.zig");
+
 const context_lines = 2;
 const reset = "\x1b[0m";
 
@@ -22,11 +24,13 @@ pub const Pretty = struct {
 
     pub fn project(self: *Pretty, violations: []const lint.project_rule.Violation) std.Io.Writer.Error!void {
         var fallback = text.Text{ .writer = self.writer };
+
         try fallback.project(violations);
     }
 
     pub fn finish(self: *Pretty, counts: reports.Counts) std.Io.Writer.Error!void {
         var fallback = text.Text{ .writer = self.writer };
+
         try fallback.finish(counts);
     }
 
@@ -53,7 +57,7 @@ pub const Pretty = struct {
         var window: [2 * context_lines + 1][]const u8 = undefined;
         var count: usize = 0;
         var idx: usize = 0;
-        var iter = std.mem.splitScalar(u8, trimTrailingNewline(source), '\n');
+        var iter = std.mem.splitScalar(u8, utils.trimTrailingNewline(source), '\n');
         while (iter.next()) |line| : (idx += 1) {
             if (idx > target + context_lines) break;
             if (idx < first) continue;
@@ -62,7 +66,7 @@ pub const Pretty = struct {
         }
         if (count == 0) return;
 
-        const width = digits(first + count);
+        const width = utils.digits(first + count);
         for (window[0..count], 0..) |line, i| {
             const line_idx = first + i;
             if (line_idx == target) {
@@ -121,14 +125,3 @@ pub const Pretty = struct {
         while (i < n) : (i += 1) try self.writer.writeByte(byte);
     }
 };
-
-fn trimTrailingNewline(source: []const u8) []const u8 {
-    return if (std.mem.endsWith(u8, source, "\n")) source[0 .. source.len - 1] else source;
-}
-
-fn digits(value: usize) usize {
-    var n: usize = 1;
-    var v = value;
-    while (v >= 10) : (v /= 10) n += 1;
-    return n;
-}

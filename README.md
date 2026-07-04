@@ -24,6 +24,7 @@ make test             # unit tests
 | --- | --- |
 | `kata` | Start the daemon (foreground). Socket path from `KATA_SOCKET` (see Daemon). |
 | `kata check <path>` | Lint a file or, recursively, a directory. `kata check .` for the whole tree. |
+| `kata check --text\|--json <path>` | Select the report format (see Reports). |
 | `kata query '<scm>' [path] --lang=<lang>` | Evaluate an inline rule against a file or directory (default `.`). Ignores configured rules. |
 | `kata stop` | Tell a running daemon to shut down. |
 | `kata new-rule <lang> <id>` | Scaffold a `.scm` template under `$XDG_CONFIG_HOME/kata/rules/<lang>/<id>.scm`. Refuses to overwrite. |
@@ -33,6 +34,21 @@ When checking a directory, `kata` skips `.git` and any folder named in the targe
 `.gitignore` (plain directory entries only; globs, negations, and nested paths are ignored).
 
 Exit codes: `0` clean, `2` violations, `64` usage, `70` internal error.
+
+## Reports
+
+`kata check` and `kata query` render diagnostics in one of three formats,
+selected by flag (the last format flag wins):
+
+- default: code frames with the offending span underlined, two context lines
+  on each side, and ANSI colors when stdout is a terminal. Cross-file project
+  rule violations render as plain one-liners.
+- `--text`: one line per diagnostic
+  (`path:line:col [rule-id] message`), followed by a summary line.
+- `--json`: a single JSON object,
+  `{"files":[{"path":...,"diagnostics":[...]},...],"summary":{"files":N,"violations":N,"warnings":N}}`.
+  Only files with diagnostics appear under `files`; the diagnostic shape
+  matches the one-shot report.
 
 ```
 make daemon           # kata

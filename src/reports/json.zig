@@ -35,14 +35,19 @@ pub const Json = struct {
 
     fn begin(self: *Json) std.Io.Writer.Error!void {
         if (self.started) return;
+
         self.started = true;
+
         try self.writer.writeAll("{\"files\":[");
     }
 
     fn entry(self: *Json, path: []const u8, diagnostics: []const lint.diagnostic.Diagnostic) std.Io.Writer.Error!void {
         try self.begin();
+
         if (self.wrote_entry) try self.writer.writeAll(",");
+
         self.wrote_entry = true;
+
         try self.writer.writeAll("{\"path\":");
         try std.json.Stringify.value(path, .{}, self.writer);
         try self.writer.writeAll(",\"diagnostics\":");

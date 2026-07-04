@@ -26,6 +26,7 @@ pub const Text = struct {
             counts.violations,
             counts.warnings,
         });
+
         try self.writer.flush();
     }
 
@@ -34,6 +35,7 @@ pub const Text = struct {
             .@"error" => "",
             .warn => "warn ",
         };
+
         try self.writer.print("{s}:{d}:{d} {s}[{s}] {s}\n", .{
             path,
             d.range.start.line + 1,
