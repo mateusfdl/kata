@@ -2,6 +2,7 @@ const std = @import("std");
 
 const fs = @import("fs.zig");
 const lint = @import("lint.zig");
+const reports = @import("reports.zig");
 const server = @import("server.zig");
 const sources = @import("sources.zig");
 const args_mod = @import("cli/args.zig");
@@ -272,7 +273,8 @@ fn runCheck(c: Command, target: []const u8) !u8 {
     defer ctx.deinit();
     if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
 
-    const outcome = check.run(c.io, c.gpa, &ctx.engine, target, ctx.resolved.project_rules, c.stdout) catch |err| switch (err) {
+    var reporter: reports.Reporter = .{ .text = .{ .writer = c.stdout } };
+    const outcome = check.run(c.io, c.gpa, &ctx.engine, target, ctx.resolved.project_rules, &reporter) catch |err| switch (err) {
         error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{target}, exit_usage),
         else => return internalError(c.stderr, "check", err),
     };

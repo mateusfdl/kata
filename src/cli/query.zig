@@ -2,6 +2,7 @@ const std = @import("std");
 
 const check = @import("check.zig");
 const lint = @import("../lint.zig");
+const reports = @import("../reports.zig");
 
 const Engine = lint.Engine;
 const language = lint.language;
@@ -55,7 +56,8 @@ pub fn run(
 
     if (!try engine.prewarmOrReport("kata", stderr)) return .usage;
 
-    return switch (try check.run(io, gpa, &engine, opts.target, &.{}, stdout)) {
+    var reporter: reports.Reporter = .{ .text = .{ .writer = stdout } };
+    return switch (try check.run(io, gpa, &engine, opts.target, &.{}, &reporter)) {
         .clean => .clean,
         .violations => .matches,
     };

@@ -18,6 +18,7 @@ comptime {
     _ = @import("dsl/parser_test.zig");
     _ = @import("dsl/tokenizer_test.zig");
     _ = @import("cli/check_test.zig");
+    _ = @import("reports/text_test.zig");
     _ = @import("cli/query_test.zig");
     _ = @import("cli_test.zig");
     _ = @import("server/protocol_test.zig");

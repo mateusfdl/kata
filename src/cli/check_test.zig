@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const check = @import("check.zig");
+const reports = @import("../reports.zig");
 const lint = @import("../lint.zig");
 const test_fixture = @import("../test_fixture.zig");
 
@@ -28,7 +29,8 @@ test "check: run skips .git and gitignored folders" {
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
 
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &out.writer);
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -62,7 +64,8 @@ test "check: warn severity counts separately and exits clean" {
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
 
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &out.writer);
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &reporter);
 
     try std.testing.expectEqual(check.Outcome.clean, outcome);
     const expected = try std.fmt.allocPrint(
@@ -109,7 +112,8 @@ test "check: project rules report cross-file violations" {
             .caller_suffix = "Repository",
         } },
     }};
-    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &out.writer);
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -146,7 +150,8 @@ test "check: warnings demote project violations and exit clean" {
             .deny = "**/infra/**",
         } },
     }};
-    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &out.writer);
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &reporter);
 
     try std.testing.expectEqual(check.Outcome.clean, outcome);
     const written = out.written();
@@ -182,7 +187,8 @@ test "check: import-boundary project rules report violations" {
             .deny = "**/infra/**",
         } },
     }};
-    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &out.writer);
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
