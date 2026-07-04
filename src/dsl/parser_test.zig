@@ -513,6 +513,22 @@ test "parser: parses parenthesized expressions and number literals" {
     try std.testing.expectEqual(@as(u32, 2), expression.right.*.compare.right.*.number.value);
 }
 
+test "parser: parses rule ids with underscores" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule no_console {
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id { message "underscored" }
+        \\}
+    , &diag);
+
+    try std.testing.expectEqualStrings("no_console", file.rules[0].id);
+}
+
 test "parser: rejects invalid rule ids" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

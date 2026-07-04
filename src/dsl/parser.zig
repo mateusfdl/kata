@@ -579,15 +579,8 @@ fn keywordFromToken(token: Token) ?Keyword {
 }
 
 fn isRuleId(id: []const u8) bool {
-    if (id.len == 0) return false;
     if (bytes.isLexemeByte(id[0], .dash)) return false;
-    if (bytes.isLexemeByte(id[id.len - 1], .dash)) return false;
-    for (id) |c| {
-        if (std.ascii.isAlphanumeric(c)) continue;
-        if (bytes.isLexemeByte(c, .dash)) continue;
-        return false;
-    }
-    return true;
+    return !bytes.isLexemeByte(id[id.len - 1], .dash);
 }
 
 fn compareOp(kind: TokenKind) ?ast.CompareOp {
