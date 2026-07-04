@@ -19,6 +19,7 @@ const language = lint.language;
 const daemon = server.daemon;
 const protocol = server.protocol;
 const config = sources.config;
+const context_mod = sources.context;
 const loader_mod = sources.loader;
 
 const io_buffer_size: usize = 8192;
@@ -32,12 +33,10 @@ pub const Command = struct {
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     io: std.Io,
-    engine: *Engine,
+    resolver: *context_mod.Resolver,
     environ: *std.process.Environ.Map,
     args: []const [:0]const u8,
-    project_rules: []const lint.project_rule.ProjectRule = &.{},
     user_rules_dir: ?[]const u8 = null,
-    ratchet: bool = false,
     stdin: *std.Io.Reader,
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
@@ -128,35 +127,27 @@ pub fn main(init: std.process.Init) u8 {
     }
 
     var registry = language.Registry.init();
-    var rule_set = loader_mod.load(arena, io, .{
-        .external_dir = init.environ_map.get(args_mod.env_rules_dir),
-        .user_dir = user_dir,
-    }) catch |err| return die(stderr, "load rules", err);
-    defer rule_set.deinit();
-
-    drainWarnings(stderr, &rule_set);
 
     var diag: config.Diagnostic = .{};
     var cfg_opt = config.loadFromDisk(gpa, io, init.environ_map, &diag) catch |err| return dieConfig(stderr, diag, err);
     defer if (cfg_opt) |*cfg| cfg.deinit();
-    const resolved = config.resolve(if (cfg_opt) |*cfg| cfg else null, null);
-    config.filterDisabled(&rule_set, resolved);
 
-    var engine = Engine.init(gpa, &registry, &rule_set);
-    defer engine.deinit();
-    engine.metrics = resolved.metrics;
-    engine.warnings = resolved.warnings;
+    var resolver: context_mod.Resolver = .{
+        .gpa = gpa,
+        .io = io,
+        .registry = &registry,
+        .user_rules_dir = user_dir,
+        .global_config = if (cfg_opt) |*cfg| cfg else null,
+    };
 
     return dispatchSubcommand(.{
         .gpa = gpa,
         .arena = arena,
         .io = io,
-        .engine = &engine,
+        .resolver = &resolver,
         .environ = init.environ_map,
         .args = user_args,
-        .project_rules = resolved.project_rules,
         .user_rules_dir = user_dir,
-        .ratchet = resolved.ratchet,
         .stdin = &stdin_reader.interface,
         .stdout = &stdout_writer.interface,
         .stderr = stderr,
@@ -175,10 +166,6 @@ fn rootFlag(args: []const [:0]const u8) ?[]const u8 {
     return null;
 }
 
-pub fn dispatch(c: Command) !u8 {
-    return dispatchSubcommand(c, parseSubcommand(c.args));
-}
-
 fn dispatchSubcommand(c: Command, subcommand: Subcommand) !u8 {
     return switch (subcommand) {
         .daemon => |root| runDaemon(c, root),
@@ -188,14 +175,34 @@ fn dispatchSubcommand(c: Command, subcommand: Subcommand) !u8 {
         .query => |q| runQuery(c, q),
         .stop => runStop(c),
         .new_rule => runNewRule(c.arena, c.io, c.args, c.user_rules_dir, c.stdout, c.stderr),
-        .one_shot => one_shot.run(c.gpa, c.engine, .{
-            .args = c.args,
-            .stdin = c.stdin,
-            .stdout = c.stdout,
-            .stderr = c.stderr,
-        }),
+        .one_shot => runOneShot(c),
         .unknown => |cmd| runUnknown(c, cmd),
     };
+}
+
+fn resolveContext(c: Command, anchor: ?[]const u8) !?*context_mod.Context {
+    const ctx = c.resolver.resolve(anchor) catch |err| {
+        if (c.resolver.diag.line > 0) {
+            try c.stderr.print("kata: .kata/rules.yaml: line {d}: {s}\n", .{ c.resolver.diag.line, config.errorMessage(err) });
+            try c.stderr.flush();
+            return null;
+        }
+        _ = try internalError(c.stderr, "resolve context", err);
+        return null;
+    };
+    drainWarnings(c.stderr, &ctx.rule_set);
+    return ctx;
+}
+
+fn runOneShot(c: Command) !u8 {
+    const ctx = (try resolveContext(c, one_shot.anchorOf(c.args))) orelse return exit_internal_error;
+    defer ctx.deinit();
+    return one_shot.run(c.gpa, &ctx.engine, .{
+        .args = c.args,
+        .stdin = c.stdin,
+        .stdout = c.stdout,
+        .stderr = c.stderr,
+    });
 }
 
 fn runNewRule(
@@ -222,7 +229,9 @@ fn runUnknown(c: Command, cmd: []const u8) !u8 {
 }
 
 fn runDaemon(c: Command, root: ?[]const u8) !u8 {
-    if (!try c.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
+    const ctx = (try resolveContext(c, null)) orelse return exit_internal_error;
+    defer ctx.deinit();
+    if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
 
     const socket_path = resolveSocketPath(c.arena, c.environ) catch |err|
         return internalError(c.stderr, "resolve socket path", err);
@@ -233,19 +242,19 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
     var project_state: ?daemon.ProjectState = null;
     defer if (project_state) |*p| p.deinit();
     if (root) |r| {
-        if (c.project_rules.len == 0)
+        if (ctx.resolved.project_rules.len == 0)
             return printAndExit(c.stderr, "kata daemon --root requires project-rules in rules.yaml\n", exit_usage);
-        project_state = daemon.ProjectState.init(c.gpa, c.project_rules);
-        _ = daemon.buildIndex(c.io, c.gpa, c.engine, r, &project_state.?) catch |err|
+        project_state = daemon.ProjectState.init(c.gpa, ctx.resolved.project_rules);
+        _ = daemon.buildIndex(c.io, c.gpa, &ctx.engine, r, &project_state.?) catch |err|
             return internalError(c.stderr, "index project", err);
     }
 
     daemon.serve(c.gpa, .{
-        .engine = c.engine,
+        .engine = &ctx.engine,
         .binary_mtime = binary_mtime,
         .io = c.io,
         .project = if (project_state) |*p| p else null,
-        .ratchet = c.ratchet,
+        .ratchet = ctx.resolved.ratchet,
     }, socket_path) catch |err| switch (err) {
         error.AlreadyRunning => return printAndExit(c.stderr, "kata daemon already running\n", exit_clean),
         else => return internalError(c.stderr, "serve", err),
@@ -255,9 +264,11 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
 }
 
 fn runCheck(c: Command, target: []const u8) !u8 {
-    if (!try c.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
+    const ctx = (try resolveContext(c, target)) orelse return exit_internal_error;
+    defer ctx.deinit();
+    if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
 
-    const outcome = check.run(c.io, c.gpa, c.engine, target, c.project_rules, c.stdout) catch |err| switch (err) {
+    const outcome = check.run(c.io, c.gpa, &ctx.engine, target, ctx.resolved.project_rules, c.stdout) catch |err| switch (err) {
         error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{target}, exit_usage),
         else => return internalError(c.stderr, "check", err),
     };
@@ -269,11 +280,13 @@ fn runCheck(c: Command, target: []const u8) !u8 {
 
 fn runFacts(c: Command, target: []const u8) !u8 {
     if (target.len == 0) return printAndExit(c.stderr, "usage: kata facts <file>\n", exit_usage);
-    return facts.run(c.io, c.gpa, c.engine, target, c.stdout, c.stderr);
+    const ctx = (try resolveContext(c, target)) orelse return exit_internal_error;
+    defer ctx.deinit();
+    return facts.run(c.io, c.gpa, &ctx.engine, target, c.stdout, c.stderr);
 }
 
 fn runQuery(c: Command, q: query.Options) !u8 {
-    return switch (try query.run(c.io, c.gpa, c.engine.registry, q, c.stdout, c.stderr)) {
+    return switch (try query.run(c.io, c.gpa, c.resolver.registry, q, c.stdout, c.stderr)) {
         .clean => exit_clean,
         .matches => exit_violations,
         .usage => exit_usage,

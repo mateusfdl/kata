@@ -29,7 +29,7 @@ fn absolutize(io: std.Io, arena: std.mem.Allocator, anchor: []const u8) ![]const
     return std.fs.path.resolve(arena, &.{ cwd, anchor });
 }
 
-fn isDirectory(io: std.Io, path: []const u8) !bool {
+pub fn isDirectory(io: std.Io, path: []const u8) !bool {
     var dir = std.Io.Dir.cwd().openDir(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound, error.NotDir, error.AccessDenied => return false,
         else => return err,

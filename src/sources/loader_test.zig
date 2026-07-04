@@ -19,16 +19,16 @@ test "upsert: first insertion appends without warning" {
     try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
 }
 
-test "upsert: collision replaces in place and emits one warning" {
+test "upsert: same-tier collision replaces in place and emits one warning" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     var set: loader.RuleSet = .{ .allocator = arena.allocator() };
 
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "((builtin) @match)" }, .embedded);
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "((user) @match)" }, .user);
+    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "((first) @match)" }, .user);
+    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "((second) @match)" }, .user);
 
     try std.testing.expectEqual(@as(usize, 1), set.get(.ts).len);
-    try std.testing.expectEqualStrings("((user) @match)", set.get(.ts)[0].source);
+    try std.testing.expectEqualStrings("((second) @match)", set.get(.ts)[0].source);
 
     try std.testing.expectEqual(@as(usize, 1), set.warnings.items.len);
     const w = set.warnings.items[0];
@@ -37,20 +37,18 @@ test "upsert: collision replaces in place and emits one warning" {
     try std.testing.expectEqualStrings("no-any", w.id);
 }
 
-test "upsert: external overrides embedded, then user overrides external" {
+test "upsert: user overrides embedded, then project overrides user, silently" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     var set: loader.RuleSet = .{ .allocator = arena.allocator() };
 
     try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "1" }, .embedded);
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "2" }, .external);
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "3" }, .user);
+    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "2" }, .user);
+    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "3" }, .project);
 
     try std.testing.expectEqual(@as(usize, 1), set.get(.ts).len);
     try std.testing.expectEqualStrings("3", set.get(.ts)[0].source);
-    try std.testing.expectEqual(@as(usize, 2), set.warnings.items.len);
-    try std.testing.expectEqual(loader.Source.external, set.warnings.items[0].source);
-    try std.testing.expectEqual(loader.Source.user, set.warnings.items[1].source);
+    try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
 }
 
 test "upsert: different ids in same language coexist" {
@@ -109,18 +107,18 @@ test "load: missing user_dir is silently empty" {
     try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
 }
 
-test "load: missing external_dir errors" {
+test "load: missing project_dir errors" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
     const got = loader.load(arena.allocator(), std.testing.io, .{
         .skip_embedded = true,
-        .external_dir = ".zig-cache/tmp/does-not-exist-XYZ",
+        .project_dir = ".zig-cache/tmp/does-not-exist-XYZ",
     });
     try std.testing.expectError(error.RulesDirMissing, got);
 }
 
-test "load: user_dir overrides embedded with a recorded warning" {
+test "load: user_dir overrides embedded without a warning" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -148,12 +146,41 @@ test "load: user_dir overrides embedded with a recorded warning" {
     }
     try std.testing.expectEqual(@as(usize, 1), found_ts_no_console);
     try std.testing.expectEqualStrings("((my_override) @match)", override_source.?);
+    try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
+}
 
-    var saw_user_warning_for_no_console = false;
-    for (set.warnings.items) |w| {
-        if (w.source == .user and w.lang == .ts and std.mem.eql(u8, w.id, "no-console")) {
-            saw_user_warning_for_no_console = true;
-        }
-    }
-    try std.testing.expect(saw_user_warning_for_no_console);
+test "load: project_dir overrides user_dir silently" {
+    var user_tmp = std.testing.tmpDir(.{});
+    defer user_tmp.cleanup();
+    var project_tmp = std.testing.tmpDir(.{});
+    defer project_tmp.cleanup();
+
+    try user_tmp.dir.createDirPath(std.testing.io, "go");
+    try user_tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "go/no-panic.scm",
+        .data = "((user_version) @match)",
+    });
+    try project_tmp.dir.createDirPath(std.testing.io, "go");
+    try project_tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "go/no-panic.scm",
+        .data = "((project_version) @match)",
+    });
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var user_buf: [256]u8 = undefined;
+    var project_buf: [256]u8 = undefined;
+    const user_rel = try relativeTmpPath(&user_buf, &user_tmp.sub_path);
+    const project_rel = try relativeTmpPath(&project_buf, &project_tmp.sub_path);
+
+    var set = try loader.load(arena.allocator(), std.testing.io, .{
+        .skip_embedded = true,
+        .user_dir = user_rel,
+        .project_dir = project_rel,
+    });
+    defer set.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), set.get(.go).len);
+    try std.testing.expectEqualStrings("((project_version) @match)", set.get(.go)[0].source);
+    try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
 }

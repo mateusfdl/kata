@@ -28,14 +28,14 @@ pub fn createNew(io: std.Io, lang_dir: []const u8, file_path: []const u8, body: 
     try out.writeStreamingAll(io, body);
 }
 
-pub fn collectExternalFiles(
+pub fn collectProjectFiles(
     allocator: std.mem.Allocator,
     io: std.Io,
     dir_path: []const u8,
 ) ![]const RuleFile {
     var root = try openRoot(io, dir_path);
     defer root.close(io);
-    return collectRuleFiles(allocator, io, &root, .external);
+    return collectRuleFiles(allocator, io, &root, .project);
 }
 
 pub fn collectUserFiles(

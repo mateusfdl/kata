@@ -68,6 +68,11 @@ fn writeReport(
     try stdout.flush();
 }
 
+pub fn anchorOf(args: []const [:0]const u8) ?[]const u8 {
+    const parsed = parseFlags(args) catch return null;
+    return if (parsed.filename.len > 0) parsed.filename else null;
+}
+
 const ParsedFlags = struct {
     lang_flag: []const u8 = "",
     filename: []const u8 = "",

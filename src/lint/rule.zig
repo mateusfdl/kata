@@ -13,10 +13,13 @@ pub const severity_property = "severity";
 
 pub const invalid_capture_id: u32 = std.math.maxInt(u32);
 
+pub const Source = enum { embedded, user, project };
+
 pub const RawRule = struct {
     id: []const u8,
     language: language.Name,
     source: []const u8,
+    origin: Source = .embedded,
 };
 
 pub const ScopedId = struct {

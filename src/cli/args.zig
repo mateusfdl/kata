@@ -1,6 +1,5 @@
 const std = @import("std");
 
-pub const env_rules_dir = "KATA_RULES_DIR";
 pub const env_socket = "KATA_SOCKET";
 pub const env_runtime_dir = "XDG_RUNTIME_DIR";
 pub const fallback_socket_path = "/tmp/kata.sock";

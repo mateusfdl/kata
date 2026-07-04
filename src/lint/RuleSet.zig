@@ -3,7 +3,7 @@ const std = @import("std");
 const language = @import("language.zig");
 const rule = @import("rule.zig");
 
-pub const Source = enum { embedded, external, user };
+pub const Source = rule.Source;
 
 pub const Warning = struct {
     source: Source,
@@ -33,18 +33,22 @@ pub const RuleSet = struct {
     }
 
     pub fn upsert(self: *RuleSet, name: language.Name, r: rule.RawRule, source: Source) !void {
+        var entry = r;
+        entry.origin = source;
         const list = self.by_lang.getPtr(name);
         for (list.items, 0..) |existing, idx| {
-            if (std.mem.eql(u8, existing.id, r.id)) {
-                list.items[idx] = r;
-                try self.warnings.append(self.allocator, .{
-                    .source = source,
-                    .lang = name,
-                    .id = r.id,
-                });
+            if (std.mem.eql(u8, existing.id, entry.id)) {
+                if (existing.origin == source) {
+                    try self.warnings.append(self.allocator, .{
+                        .source = source,
+                        .lang = name,
+                        .id = entry.id,
+                    });
+                }
+                list.items[idx] = entry;
                 return;
             }
         }
-        try list.append(self.allocator, r);
+        try list.append(self.allocator, entry);
     }
 };

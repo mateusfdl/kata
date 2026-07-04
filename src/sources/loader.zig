@@ -11,8 +11,8 @@ pub const Source = lint.Source;
 pub const Warning = lint.Warning;
 
 pub const Sources = struct {
-    external_dir: ?[]const u8 = null,
     user_dir: ?[]const u8 = null,
+    project_dir: ?[]const u8 = null,
     skip_embedded: bool = false,
 };
 
@@ -25,8 +25,8 @@ pub fn load(
     errdefer set.deinit();
 
     if (!sources.skip_embedded) try addEmbedded(&set);
-    if (sources.external_dir) |dir_path| try addRuleFiles(&set, try fs.rules.collectExternalFiles(allocator, io, dir_path));
     if (sources.user_dir) |dir_path| try addRuleFiles(&set, try fs.rules.collectUserFiles(allocator, io, dir_path));
+    if (sources.project_dir) |dir_path| try addRuleFiles(&set, try fs.rules.collectProjectFiles(allocator, io, dir_path));
 
     return set;
 }

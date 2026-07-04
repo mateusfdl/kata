@@ -31,7 +31,7 @@ pub fn run(
     stderr: *std.Io.Writer,
 ) !Outcome {
     var registry = language.Registry.init();
-    var rule_set = loader.load(arena, io, .{ .external_dir = rules_dir, .skip_embedded = true }) catch |err| {
+    var rule_set = loader.load(arena, io, .{ .project_dir = rules_dir, .skip_embedded = true }) catch |err| {
         try stderr.print("kata test: cannot load rules from \"{s}\": {s}\n", .{ rules_dir, @errorName(err) });
         try stderr.flush();
         return .invalid;
