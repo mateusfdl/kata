@@ -176,7 +176,7 @@ fn matchesWarning(warnings: []const rule.ScopedId, lang: language.Name, rule_id:
     return false;
 }
 
-fn runRule(
+pub fn runRule(
     allocator: std.mem.Allocator,
     r: *const rule.CompiledRule,
     cursor: *ts.QueryCursor,

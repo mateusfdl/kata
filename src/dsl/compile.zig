@@ -1,0 +1,499 @@
+const std = @import("std");
+const mvzr = @import("mvzr");
+const ts = @import("tree_sitter");
+
+const ast = @import("ast.zig");
+const diagnostic = @import("../lint/diagnostic.zig");
+const expr = @import("../lint/expr.zig");
+const language = @import("../lint/language.zig");
+const rule = @import("../lint/rule.zig");
+
+pub const Error = error{
+    OutOfMemory,
+    QueryCompileFailed,
+    UnknownLanguage,
+    UnsupportedMatch,
+    UnsupportedPredicate,
+    UnsupportedPlaceholder,
+    UnknownCapture,
+    UnknownMeasure,
+    EmitCaptureConflict,
+    InvalidRegex,
+    InvalidStringComparison,
+};
+
+const Cardinality = enum { one, many };
+
+const Compiler = struct {
+    arena: std.mem.Allocator,
+    lang: language.Name,
+    diag: *rule.Diagnostic,
+    rule_id: []const u8 = "",
+    query: *ts.Query = undefined,
+
+    fn fail(self: *Compiler, detail: []const u8) void {
+        self.diag.* = .{ .lang = self.lang, .rule_id = self.rule_id, .detail = detail };
+    }
+};
+
+pub fn compile(
+    allocator: std.mem.Allocator,
+    registry: *language.Registry,
+    lang: language.Name,
+    file: ast.File,
+    diag: *rule.Diagnostic,
+) Error!rule.CompiledRule {
+    const arena_ptr = try allocator.create(std.heap.ArenaAllocator);
+    errdefer allocator.destroy(arena_ptr);
+    arena_ptr.* = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena_ptr.deinit();
+    const arena = arena_ptr.allocator();
+
+    var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag };
+
+    var selected: std.ArrayList(*const ast.Rule) = .empty;
+    var starts: std.ArrayList(u32) = .empty;
+    var query_source: std.ArrayList(u8) = .empty;
+
+    for (file.rules) |*r| {
+        ctx.rule_id = r.id;
+        try validateLanguages(&ctx, r.*);
+        if (r.kind == .project) continue;
+        if (!includesLanguage(r.*, lang)) continue;
+        try starts.append(arena, @intCast(query_source.items.len));
+        try selected.append(arena, r);
+        try renderPattern(&ctx, &query_source, r.*);
+        try query_source.append(arena, '\n');
+    }
+
+    var error_offset: u32 = 0;
+    const query = ts.Query.create(registry.get(lang), query_source.items, &error_offset) catch {
+        ctx.rule_id = owningRuleId(starts.items, selected.items, error_offset);
+        ctx.fail("node kind or field is invalid for the grammar");
+        return error.QueryCompileFailed;
+    };
+    errdefer query.destroy();
+
+    if (query.patternCount() != selected.items.len) {
+        ctx.fail("match compiled to an unexpected pattern count");
+        return error.QueryCompileFailed;
+    }
+    ctx.query = query;
+
+    const patterns = try arena.alloc(rule.PatternMeta, selected.items.len);
+    for (selected.items, patterns) |r, *meta| {
+        ctx.rule_id = r.id;
+        meta.* = try compilePattern(&ctx, r.*);
+    }
+
+    return .{
+        .language = lang,
+        .query = query,
+        .patterns = patterns,
+        .match_capture_id = rule.captureIdForName(query, rule.match_capture),
+        .needs_measures = needsMeasures(patterns),
+        .arena = arena_ptr,
+        .allocator = allocator,
+    };
+}
+
+fn validateLanguages(ctx: *Compiler, r: ast.Rule) Error!void {
+    for (r.languages) |name| {
+        if (language.Name.fromString(name) == null) {
+            ctx.fail("unknown language");
+            return error.UnknownLanguage;
+        }
+    }
+}
+
+fn includesLanguage(r: ast.Rule, lang: language.Name) bool {
+    for (r.languages) |name| {
+        if (language.Name.fromString(name)) |resolved| {
+            if (resolved == lang) return true;
+        }
+    }
+    return false;
+}
+
+fn owningRuleId(starts: []const u32, rules: []const *const ast.Rule, offset: u32) []const u8 {
+    if (rules.len == 0) return "";
+    var i: usize = starts.len;
+    while (i > 0) {
+        i -= 1;
+        if (starts[i] <= offset) return rules[i].id;
+    }
+    return rules[0].id;
+}
+
+fn renderPattern(ctx: *Compiler, out: *std.ArrayList(u8), r: ast.Rule) Error!void {
+    const pattern = switch (r.match.?) {
+        .node => |node| node,
+        .kind => {
+            ctx.fail("match kind is not supported yet");
+            return error.UnsupportedMatch;
+        },
+    };
+    const emit_name = r.emit.capture.name;
+    if (!captureExists(pattern, emit_name)) {
+        ctx.fail("emit capture not found in match");
+        return error.UnknownCapture;
+    }
+    if (!std.mem.eql(u8, emit_name, rule.match_capture) and captureExists(pattern, rule.match_capture)) {
+        ctx.fail("rule emits another capture but also binds @match");
+        return error.EmitCaptureConflict;
+    }
+    try renderNode(ctx, out, pattern, emit_name, .one);
+}
+
+fn captureExists(pattern: ast.NodePattern, name: []const u8) bool {
+    if (pattern.capture) |capture| {
+        if (std.mem.eql(u8, capture.name, name)) return true;
+    }
+    for (pattern.fields) |field| {
+        if (captureExists(field.pattern, name)) return true;
+    }
+    return false;
+}
+
+fn renderNode(
+    ctx: *Compiler,
+    out: *std.ArrayList(u8),
+    pattern: ast.NodePattern,
+    emit_name: []const u8,
+    cardinality: Cardinality,
+) Error!void {
+    switch (pattern.node_kind) {
+        .symbol => |kind| {
+            try out.append(ctx.arena, '(');
+            try out.appendSlice(ctx.arena, kind);
+            for (pattern.fields) |field| {
+                try out.append(ctx.arena, ' ');
+                switch (field.relation) {
+                    .field => |name| {
+                        try out.appendSlice(ctx.arena, name);
+                        try out.appendSlice(ctx.arena, ": ");
+                    },
+                    .child, .children => {},
+                }
+                const child_cardinality: Cardinality = if (field.relation == .children) .many else .one;
+                try renderNode(ctx, out, field.pattern, emit_name, child_cardinality);
+            }
+            try out.append(ctx.arena, ')');
+        },
+        .anonymous => |token| {
+            if (pattern.fields.len != 0) {
+                ctx.fail("anonymous tokens cannot have child patterns");
+                return error.UnsupportedMatch;
+            }
+            try out.append(ctx.arena, '"');
+            for (token) |c| {
+                if (c == '"' or c == '\\') try out.append(ctx.arena, '\\');
+                try out.append(ctx.arena, c);
+            }
+            try out.append(ctx.arena, '"');
+        },
+        .alternation => |kinds| {
+            if (pattern.fields.len != 0) {
+                ctx.fail("alternations cannot have child patterns");
+                return error.UnsupportedMatch;
+            }
+            try out.append(ctx.arena, '[');
+            for (kinds, 0..) |kind, i| {
+                if (i > 0) try out.append(ctx.arena, ' ');
+                try out.append(ctx.arena, '(');
+                try out.appendSlice(ctx.arena, kind);
+                try out.append(ctx.arena, ')');
+            }
+            try out.append(ctx.arena, ']');
+        },
+    }
+    if (cardinality == .many) try out.append(ctx.arena, '*');
+    if (pattern.capture) |capture| {
+        try out.appendSlice(ctx.arena, " @");
+        try out.appendSlice(ctx.arena, capture.name);
+        if (std.mem.eql(u8, capture.name, emit_name) and !std.mem.eql(u8, emit_name, rule.match_capture)) {
+            try out.appendSlice(ctx.arena, " @");
+            try out.appendSlice(ctx.arena, rule.match_capture);
+        }
+    }
+}
+
+fn compilePattern(ctx: *Compiler, r: ast.Rule) Error!rule.PatternMeta {
+    var predicates: std.ArrayList(rule.Predicate) = .empty;
+    for (r.where) |predicate| {
+        try translatePredicate(ctx, predicate.expression, &predicates);
+    }
+    return .{
+        .predicates = try predicates.toOwnedSlice(ctx.arena),
+        .message = try compileMessage(ctx, r.emit.message),
+        .rule_id = try ctx.arena.dupe(u8, r.id),
+        .exclude_paths = try dupeAll(ctx.arena, r.exclude_paths),
+        .severity = switch (r.severity) {
+            .@"error" => .@"error",
+            .warn => .warn,
+        },
+    };
+}
+
+fn needsMeasures(patterns: []const rule.PatternMeta) bool {
+    for (patterns) |pattern| {
+        for (pattern.predicates) |pred| {
+            if (pred.op == .where) return true;
+        }
+        if (pattern.message) |message| {
+            if (message == .segments) return true;
+        }
+    }
+    return false;
+}
+
+fn dupeAll(arena: std.mem.Allocator, items: []const []const u8) Error![]const []const u8 {
+    const out = try arena.alloc([]const u8, items.len);
+    for (items, out) |item, *slot| slot.* = try arena.dupe(u8, item);
+    return out;
+}
+
+fn translatePredicate(
+    ctx: *Compiler,
+    expression: ast.Expression,
+    out: *std.ArrayList(rule.Predicate),
+) Error!void {
+    if (expression == .logical and expression.logical.op == .@"and") {
+        try translatePredicate(ctx, expression.logical.left.*, out);
+        try translatePredicate(ctx, expression.logical.right.*, out);
+        return;
+    }
+    if (try stringPredicate(ctx, expression, false)) |pred| {
+        try out.append(ctx.arena, pred);
+        return;
+    }
+    if (try numericExpression(ctx, expression)) |value| {
+        const pointer = try ctx.arena.create(expr.Expr);
+        pointer.* = value;
+        try out.append(ctx.arena, .{
+            .op = .where,
+            .args = try ctx.arena.alloc(rule.PredicateOperand, 0),
+            .where = pointer,
+        });
+        return;
+    }
+    ctx.fail("unsupported where expression");
+    return error.UnsupportedPredicate;
+}
+
+fn stringPredicate(ctx: *Compiler, expression: ast.Expression, negated: bool) Error!?rule.Predicate {
+    return switch (expression) {
+        .negate => |negate| stringPredicate(ctx, negate.expression.*, !negated),
+        .call => |call| matchesPredicate(ctx, call, negated),
+        .compare => |c| comparePredicate(ctx, c, negated),
+        else => null,
+    };
+}
+
+fn matchesPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
+    if (!std.mem.eql(u8, call.name, "matches")) return null;
+    if (call.args.len != 2) {
+        ctx.fail("matches expects (value, regex)");
+        return error.UnsupportedPredicate;
+    }
+    const subject = (try textOperand(ctx, call.args[0])) orelse {
+        ctx.fail("matches expects a text value");
+        return error.UnsupportedPredicate;
+    };
+    const pattern = switch (call.args[1]) {
+        .string => |s| try ctx.arena.dupe(u8, s.value),
+        else => {
+            ctx.fail("matches expects a string regex");
+            return error.UnsupportedPredicate;
+        },
+    };
+    const regex = mvzr.compile(pattern) orelse {
+        ctx.fail("invalid regex");
+        return error.InvalidRegex;
+    };
+    const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
+    args[0] = subject;
+    args[1] = .{ .string = pattern };
+    return .{
+        .op = if (negated) .not_match else .match,
+        .args = args,
+        .regex = regex,
+    };
+}
+
+fn comparePredicate(ctx: *Compiler, c: ast.Compare, negated: bool) Error!?rule.Predicate {
+    const left = try textOperand(ctx, c.left.*);
+    const right = try textOperand(ctx, c.right.*);
+    if (c.op == .eq or c.op == .ne) {
+        const resolved_left = left orelse return null;
+        const resolved_right = right orelse return null;
+        const wants_eq = (c.op == .eq) != negated;
+        const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
+        args[0] = resolved_left;
+        args[1] = resolved_right;
+        return .{ .op = if (wants_eq) .eq else .not_eq, .args = args };
+    }
+    if (left != null or right != null) {
+        ctx.fail("strings compare with == and != only");
+        return error.InvalidStringComparison;
+    }
+    return null;
+}
+
+fn textOperand(ctx: *Compiler, expression: ast.Expression) Error!?rule.PredicateOperand {
+    switch (expression) {
+        .string => |s| return .{ .string = try ctx.arena.dupe(u8, s.value) },
+        .call => |call| {
+            if (!std.mem.eql(u8, call.name, "text")) return null;
+            if (call.args.len != 1 or call.args[0] != .capture) {
+                ctx.fail("text expects one capture argument");
+                return error.UnsupportedPredicate;
+            }
+            return .{ .capture = try resolveCapture(ctx, call.args[0].capture.name) };
+        },
+        else => return null,
+    }
+}
+
+fn numericExpression(ctx: *Compiler, expression: ast.Expression) Error!?expr.Expr {
+    switch (expression) {
+        .compare => |c| {
+            const left = (try numericTerm(ctx, c.left.*)) orelse return null;
+            const right = (try numericTerm(ctx, c.right.*)) orelse return null;
+            return .{ .compare = .{ .op = compareOp(c.op), .left = left, .right = right } };
+        },
+        .logical => |logical| {
+            const left = (try numericExpression(ctx, logical.left.*)) orelse return null;
+            const right = (try numericExpression(ctx, logical.right.*)) orelse return null;
+            const items = try ctx.arena.alloc(expr.Expr, 2);
+            items[0] = left;
+            items[1] = right;
+            return switch (logical.op) {
+                .@"and" => .{ .all = items },
+                .@"or" => .{ .any = items },
+            };
+        },
+        .negate => |negate| {
+            const inner = (try numericExpression(ctx, negate.expression.*)) orelse return null;
+            const pointer = try ctx.arena.create(expr.Expr);
+            pointer.* = inner;
+            return .{ .negate = pointer };
+        },
+        else => return null,
+    }
+}
+
+fn numericTerm(ctx: *Compiler, expression: ast.Expression) Error!?expr.Term {
+    switch (expression) {
+        .number => |n| return .{ .number = n.value },
+        .call => |call| {
+            const measure = numericMeasure(call.name) orelse {
+                if (deferredPredicate(call.name)) return null;
+                ctx.fail("unknown measure");
+                return error.UnknownMeasure;
+            };
+            if (call.args.len != 1 or call.args[0] != .capture) {
+                ctx.fail("measures expect one capture argument");
+                return error.UnsupportedPredicate;
+            }
+            return .{ .measure = .{
+                .measure = measure,
+                .capture_id = try resolveCapture(ctx, call.args[0].capture.name),
+            } };
+        },
+        else => return null,
+    }
+}
+
+fn numericMeasure(name: []const u8) ?expr.Measure {
+    const measure = expr.Measure.fromString(name) orelse return null;
+    return if (measure == .text) null else measure;
+}
+
+fn deferredPredicate(name: []const u8) bool {
+    const names = [_][]const u8{ "text", "matches", "startsWith", "endsWith", "contains", "capture" };
+    for (names) |candidate| {
+        if (std.mem.eql(u8, candidate, name)) return true;
+    }
+    return false;
+}
+
+fn compareOp(op: ast.CompareOp) expr.Compare {
+    return switch (op) {
+        .eq => .eq,
+        .ne => .ne,
+        .gt => .gt,
+        .ge => .ge,
+        .lt => .lt,
+        .le => .le,
+    };
+}
+
+fn resolveCapture(ctx: *Compiler, name: []const u8) Error!u32 {
+    const id = rule.captureIdForName(ctx.query, name);
+    if (id == rule.invalid_capture_id) {
+        ctx.fail("unknown capture");
+        return error.UnknownCapture;
+    }
+    return id;
+}
+
+fn compileMessage(ctx: *Compiler, message: []const u8) Error!rule.Message {
+    const segments = (try messageSegments(ctx, message)) orelse
+        return .{ .plain = try ctx.arena.dupe(u8, message) };
+    if (segments.len == 1 and segments[0] == .literal) return .{ .plain = segments[0].literal };
+    return .{ .segments = segments };
+}
+
+fn messageSegments(ctx: *Compiler, message: []const u8) Error!?[]const rule.MessageSegment {
+    if (std.mem.indexOfAny(u8, message, "{}") == null) return null;
+
+    var segments: std.ArrayList(rule.MessageSegment) = .empty;
+    var literal: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < message.len) {
+        const c = message[i];
+        if (c == '{') {
+            if (i + 1 < message.len and message[i + 1] == '{') {
+                try literal.append(ctx.arena, '{');
+                i += 2;
+                continue;
+            }
+            const close = std.mem.indexOfScalarPos(u8, message, i + 1, '}') orelse
+                return failPlaceholder(ctx);
+            if (literal.items.len > 0)
+                try segments.append(ctx.arena, .{ .literal = try literal.toOwnedSlice(ctx.arena) });
+            try segments.append(ctx.arena, .{ .placeholder = try parsePlaceholder(ctx, message[i + 1 .. close]) });
+            i = close + 1;
+            continue;
+        }
+        if (c == '}') {
+            if (i + 1 < message.len and message[i + 1] == '}') {
+                try literal.append(ctx.arena, '}');
+                i += 2;
+                continue;
+            }
+            return failPlaceholder(ctx);
+        }
+        try literal.append(ctx.arena, c);
+        i += 1;
+    }
+    if (literal.items.len > 0)
+        try segments.append(ctx.arena, .{ .literal = try literal.toOwnedSlice(ctx.arena) });
+    return try segments.toOwnedSlice(ctx.arena);
+}
+
+fn parsePlaceholder(ctx: *Compiler, inner: []const u8) Error!rule.Placeholder {
+    const open = std.mem.indexOfScalar(u8, inner, '(') orelse return failPlaceholder(ctx);
+    if (inner.len == 0 or inner[inner.len - 1] != ')') return failPlaceholder(ctx);
+    const name = inner[0..open];
+    const arg = inner[open + 1 .. inner.len - 1];
+    if (arg.len < 2 or arg[0] != '@') return failPlaceholder(ctx);
+    const measure = expr.Measure.fromString(name) orelse return failPlaceholder(ctx);
+    return .{ .measure = measure, .capture_id = try resolveCapture(ctx, arg[1..]) };
+}
+
+fn failPlaceholder(ctx: *Compiler) Error {
+    ctx.fail("message placeholder must be {<measure>(@capture)}");
+    return error.UnsupportedPlaceholder;
+}

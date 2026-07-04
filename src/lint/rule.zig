@@ -204,7 +204,7 @@ fn ownerIndexForPattern(rule_starts: []const u32, pattern_start: u32) usize {
     return 0;
 }
 
-fn captureIdForName(query: *ts.Query, name: []const u8) u32 {
+pub fn captureIdForName(query: *ts.Query, name: []const u8) u32 {
     const count = query.captureCount();
     var i: u32 = 0;
     while (i < count) : (i += 1) {
