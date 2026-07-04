@@ -1,10 +1,10 @@
 const std = @import("std");
 
-fn trimTrailingNewline(source: []const u8) []const u8 {
+pub fn trimTrailingNewline(source: []const u8) []const u8 {
     return if (std.mem.endsWith(u8, source, "\n")) source[0 .. source.len - 1] else source;
 }
 
-fn digits(value: usize) usize {
+pub fn digits(value: usize) usize {
     var n: usize = 1;
     var v = value;
 
@@ -12,4 +12,3 @@ fn digits(value: usize) usize {
 
     return n;
 }
-
