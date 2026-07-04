@@ -139,14 +139,13 @@ pub fn main(init: std.process.Init) u8 {
     var diag: config.Diagnostic = .{};
     var cfg_opt = config.loadFromDisk(gpa, io, init.environ_map, &diag) catch |err| return dieConfig(stderr, diag, err);
     defer if (cfg_opt) |*cfg| cfg.deinit();
-    if (cfg_opt) |cfg| config.filterDisabled(&rule_set, cfg);
+    const resolved = config.resolve(if (cfg_opt) |*cfg| cfg else null, null);
+    config.filterDisabled(&rule_set, resolved);
 
     var engine = Engine.init(gpa, &registry, &rule_set);
     defer engine.deinit();
-    if (cfg_opt) |cfg| {
-        engine.metrics = cfg.metrics;
-        engine.warnings = cfg.warnings;
-    }
+    engine.metrics = resolved.metrics;
+    engine.warnings = resolved.warnings;
 
     return dispatchSubcommand(.{
         .gpa = gpa,
@@ -155,9 +154,9 @@ pub fn main(init: std.process.Init) u8 {
         .engine = &engine,
         .environ = init.environ_map,
         .args = user_args,
-        .project_rules = if (cfg_opt) |cfg| cfg.project_rules else &.{},
+        .project_rules = resolved.project_rules,
         .user_rules_dir = user_dir,
-        .ratchet = if (cfg_opt) |cfg| cfg.ratchet else false,
+        .ratchet = resolved.ratchet,
         .stdin = &stdin_reader.interface,
         .stdout = &stdout_writer.interface,
         .stderr = stderr,

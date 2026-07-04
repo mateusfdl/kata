@@ -13,12 +13,21 @@ pub const max_config_bytes = fs.config.max_config_bytes;
 
 pub const ScopedId = rule.ScopedId;
 
+pub const Presence = struct {
+    disabled: bool = false,
+    warnings: bool = false,
+    metrics: bool = false,
+    project_rules: bool = false,
+    ratchet: bool = false,
+};
+
 pub const Config = struct {
     disabled: []const ScopedId,
     warnings: []const ScopedId,
     metrics: metric.Set,
     project_rules: []const project_rule.ProjectRule,
     ratchet: bool,
+    present: Presence,
     arena: *std.heap.ArenaAllocator,
 
     pub fn deinit(self: *Config) void {
@@ -27,6 +36,30 @@ pub const Config = struct {
         child.destroy(self.arena);
     }
 };
+
+pub const Resolved = struct {
+    disabled: []const ScopedId = &.{},
+    warnings: []const ScopedId = &.{},
+    metrics: metric.Set = metric.empty,
+    project_rules: []const project_rule.ProjectRule = &.{},
+    ratchet: bool = false,
+};
+
+pub fn resolve(global: ?*const Config, project: ?*const Config) Resolved {
+    var out: Resolved = .{};
+    applyPresent(&out, global);
+    applyPresent(&out, project);
+    return out;
+}
+
+fn applyPresent(out: *Resolved, cfg_opt: ?*const Config) void {
+    const cfg = cfg_opt orelse return;
+    if (cfg.present.disabled) out.disabled = cfg.disabled;
+    if (cfg.present.warnings) out.warnings = cfg.warnings;
+    if (cfg.present.metrics) out.metrics = cfg.metrics;
+    if (cfg.present.project_rules) out.project_rules = cfg.project_rules;
+    if (cfg.present.ratchet) out.ratchet = cfg.ratchet;
+}
 
 pub const ParseError = error{
     UnknownTopLevelKey,
@@ -103,6 +136,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     var metrics: metric.Set = metric.empty;
     var project_rules: std.ArrayList(project_rule.ProjectRule) = .empty;
     var ratchet = false;
+    var present: Presence = .{};
     var pending: ?PendingProjectRule = null;
 
     var line_no: u32 = 0;
@@ -128,10 +162,12 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
             try finalizePending(arena, &pending, &project_rules, diag);
             if (std.mem.startsWith(u8, content, "ratchet:")) {
                 ratchet = try parseRatchetValue(content["ratchet:".len..]);
+                present.ratchet = true;
                 state = .top;
                 continue;
             }
             state = try parseTopLevelKey(content);
+            markPresent(&present, state);
             continue;
         }
 
@@ -171,8 +207,19 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
         .metrics = metrics,
         .project_rules = try project_rules.toOwnedSlice(arena),
         .ratchet = ratchet,
+        .present = present,
         .arena = arena_ptr,
     };
+}
+
+fn markPresent(present: *Presence, state: State) void {
+    switch (state) {
+        .top => {},
+        .in_disabled => present.disabled = true,
+        .in_warnings => present.warnings = true,
+        .in_metrics => present.metrics = true,
+        .in_project_rules => present.project_rules = true,
+    }
 }
 
 fn parseRatchetValue(raw: []const u8) ParseError!bool {
@@ -370,12 +417,12 @@ pub fn loadFromDisk(
     return try parse(gpa, source, diag);
 }
 
-pub fn filterDisabled(set: *loader.RuleSet, cfg: Config) void {
+pub fn filterDisabled(set: *loader.RuleSet, resolved: Resolved) void {
     for (std.enums.values(language.Name)) |lang| {
         const list = set.by_lang.getPtr(lang);
         var i: usize = 0;
         while (i < list.items.len) {
-            if (isDisabled(lang, list.items[i].id, cfg)) {
+            if (isDisabled(lang, list.items[i].id, resolved)) {
                 _ = list.swapRemove(i);
             } else {
                 i += 1;
@@ -384,8 +431,8 @@ pub fn filterDisabled(set: *loader.RuleSet, cfg: Config) void {
     }
 }
 
-fn isDisabled(lang: language.Name, id: []const u8, cfg: Config) bool {
-    for (cfg.disabled) |d| {
+fn isDisabled(lang: language.Name, id: []const u8, resolved: Resolved) bool {
+    for (resolved.disabled) |d| {
         if (d.matches(lang, id)) return true;
     }
     return false;

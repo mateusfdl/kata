@@ -231,7 +231,7 @@ test "filter: scoped disable removes exactly one rule" {
 
     var cfg = try expectParseOk("disabled:\n  - ts/no-console\n");
     defer cfg.deinit();
-    config.filterDisabled(&fx.set, cfg);
+    config.filterDisabled(&fx.set, config.resolve(&cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 2), fx.countTsx());
@@ -247,7 +247,7 @@ test "filter: bare disable removes across all languages" {
 
     var cfg = try expectParseOk("disabled:\n  - no-console\n");
     defer cfg.deinit();
-    config.filterDisabled(&fx.set, cfg);
+    config.filterDisabled(&fx.set, config.resolve(&cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 1), fx.countTsx());
@@ -263,7 +263,7 @@ test "filter: nonexistent id is a no-op" {
 
     var cfg = try expectParseOk("disabled:\n  - ts/no-such-rule\n  - made-up\n");
     defer cfg.deinit();
-    config.filterDisabled(&fx.set, cfg);
+    config.filterDisabled(&fx.set, config.resolve(&cfg, null));
 
     try std.testing.expectEqual(@as(usize, 2), fx.countTs());
     try std.testing.expectEqual(@as(usize, 2), fx.countTsx());
@@ -282,7 +282,7 @@ test "filter: combines scoped and bare across multiple langs" {
         \\
     );
     defer cfg.deinit();
-    config.filterDisabled(&fx.set, cfg);
+    config.filterDisabled(&fx.set, config.resolve(&cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 1), fx.countTsx());
@@ -511,4 +511,142 @@ test "config: four-space indent outside project rules is rejected" {
 
 test "config: project rule entry without colon is rejected" {
     try expectParseErr("project-rules:\n  repository-isolation\n", error.MalformedProjectRuleEntry, 2);
+}
+
+test "config: top-level keys record presence" {
+    var cfg = try expectParseOk("disabled:\nwarnings:\nmetrics:\nproject-rules:\nratchet: false\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(true, cfg.present.disabled);
+    try std.testing.expectEqual(true, cfg.present.warnings);
+    try std.testing.expectEqual(true, cfg.present.metrics);
+    try std.testing.expectEqual(true, cfg.present.project_rules);
+    try std.testing.expectEqual(true, cfg.present.ratchet);
+}
+
+test "config: empty source records no presence" {
+    var cfg = try expectParseOk("");
+    defer cfg.deinit();
+    try std.testing.expectEqual(false, cfg.present.disabled);
+    try std.testing.expectEqual(false, cfg.present.warnings);
+    try std.testing.expectEqual(false, cfg.present.metrics);
+    try std.testing.expectEqual(false, cfg.present.project_rules);
+    try std.testing.expectEqual(false, cfg.present.ratchet);
+}
+
+test "resolve: no configs yields defaults" {
+    const r = config.resolve(null, null);
+    try std.testing.expectEqual(@as(usize, 0), r.disabled.len);
+    try std.testing.expectEqual(@as(usize, 0), r.warnings.len);
+    try std.testing.expectEqual(@as(usize, 0), r.project_rules.len);
+    try std.testing.expectEqual(false, r.ratchet);
+    try std.testing.expectEqual(@as(?u32, null), r.metrics.get(.complexity));
+    try std.testing.expectEqual(@as(?u32, null), r.metrics.get(.nesting_depth));
+    try std.testing.expectEqual(@as(?u32, null), r.metrics.get(.function_length));
+}
+
+test "resolve: global only passes through every key" {
+    const src =
+        \\disabled:
+        \\  - ts/no-console
+        \\warnings:
+        \\  - max-complexity
+        \\metrics:
+        \\  complexity: 10
+        \\ratchet: true
+        \\
+    ;
+    var g = try expectParseOk(src);
+    defer g.deinit();
+
+    const r = config.resolve(&g, null);
+    try std.testing.expectEqual(@as(usize, 1), r.disabled.len);
+    try std.testing.expectEqualStrings("no-console", r.disabled[0].id);
+    try std.testing.expectEqual(@as(usize, 1), r.warnings.len);
+    try std.testing.expectEqualStrings("max-complexity", r.warnings[0].id);
+    try std.testing.expectEqual(@as(?u32, 10), r.metrics.get(.complexity));
+    try std.testing.expectEqual(true, r.ratchet);
+}
+
+test "resolve: project disabled list replaces global wholesale" {
+    var g = try expectParseOk("disabled:\n  - ts/no-console\n  - no-any\n");
+    defer g.deinit();
+    var p = try expectParseOk("disabled:\n  - go/no-panic\n");
+    defer p.deinit();
+
+    const r = config.resolve(&g, &p);
+    try std.testing.expectEqual(@as(usize, 1), r.disabled.len);
+    try std.testing.expectEqual(@as(?language.Name, .go), r.disabled[0].lang);
+    try std.testing.expectEqualStrings("no-panic", r.disabled[0].id);
+}
+
+test "resolve: project empty disabled list clears global disables" {
+    var g = try expectParseOk("disabled:\n  - ts/no-console\n");
+    defer g.deinit();
+    var p = try expectParseOk("disabled:\n");
+    defer p.deinit();
+
+    const r = config.resolve(&g, &p);
+    try std.testing.expectEqual(@as(usize, 0), r.disabled.len);
+}
+
+test "resolve: omitted project keys fall through to global" {
+    var g = try expectParseOk("disabled:\n  - ts/no-console\nmetrics:\n  complexity: 10\n");
+    defer g.deinit();
+    var p = try expectParseOk("ratchet: true\n");
+    defer p.deinit();
+
+    const r = config.resolve(&g, &p);
+    try std.testing.expectEqual(@as(usize, 1), r.disabled.len);
+    try std.testing.expectEqualStrings("no-console", r.disabled[0].id);
+    try std.testing.expectEqual(@as(?u32, 10), r.metrics.get(.complexity));
+    try std.testing.expectEqual(true, r.ratchet);
+}
+
+test "resolve: project metrics replace the global set" {
+    var g = try expectParseOk("metrics:\n  complexity: 10\n  function-length: 50\n");
+    defer g.deinit();
+    var p = try expectParseOk("metrics:\n  nesting-depth: 3\n");
+    defer p.deinit();
+
+    const r = config.resolve(&g, &p);
+    try std.testing.expectEqual(@as(?u32, null), r.metrics.get(.complexity));
+    try std.testing.expectEqual(@as(?u32, null), r.metrics.get(.function_length));
+    try std.testing.expectEqual(@as(?u32, 3), r.metrics.get(.nesting_depth));
+}
+
+test "resolve: explicit project ratchet false overrides global true" {
+    var g = try expectParseOk("ratchet: true\n");
+    defer g.deinit();
+    var p = try expectParseOk("ratchet: false\n");
+    defer p.deinit();
+
+    const r = config.resolve(&g, &p);
+    try std.testing.expectEqual(false, r.ratchet);
+}
+
+test "resolve: project rules replace global project rules" {
+    const global_src =
+        \\project-rules:
+        \\  repo-only-through-service:
+        \\    kind: restricted-callers
+        \\    callee-suffix: Repository
+        \\    caller-suffix: Service
+        \\
+    ;
+    const project_src =
+        \\project-rules:
+        \\  no-domain-to-infra:
+        \\    kind: import-boundary
+        \\    from: src/domain
+        \\    deny: src/infra
+        \\
+    ;
+    var g = try expectParseOk(global_src);
+    defer g.deinit();
+    var p = try expectParseOk(project_src);
+    defer p.deinit();
+
+    const r = config.resolve(&g, &p);
+    try std.testing.expectEqual(@as(usize, 1), r.project_rules.len);
+    try std.testing.expectEqualStrings("no-domain-to-infra", r.project_rules[0].id);
 }
