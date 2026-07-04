@@ -2,7 +2,17 @@ const std = @import("std");
 
 const lint = @import("lint.zig");
 
+pub const Json = @import("reports/json.zig").Json;
 pub const Text = @import("reports/text.zig").Text;
+
+pub const Format = enum { text, json };
+
+pub fn reporter(format: Format, writer: *std.Io.Writer) Reporter {
+    return switch (format) {
+        .text => .{ .text = .{ .writer = writer } },
+        .json => .{ .json = .{ .writer = writer } },
+    };
+}
 
 pub const Counts = struct {
     files: usize = 0,
@@ -18,6 +28,7 @@ pub const Counts = struct {
 
 pub const Reporter = union(enum) {
     text: Text,
+    json: Json,
 
     pub fn file(
         self: *Reporter,

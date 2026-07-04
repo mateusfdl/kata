@@ -1,5 +1,6 @@
 const std = @import("std");
 const cli = @import("cli.zig");
+const reports = @import("reports.zig");
 const test_fixture = @import("test_fixture.zig");
 
 const Engine = @import("lint.zig").Engine;
@@ -177,12 +178,36 @@ test "parseSubcommand: 'daemon --root=<dir>' captures the root" {
 
 test "parseSubcommand: 'check' with no target defaults to '.'" {
     const sub = cli.parseSubcommand(&.{"check"});
-    try std.testing.expectEqualStrings(".", sub.check);
+    try std.testing.expectEqualStrings(".", sub.check.target);
+    try std.testing.expectEqual(reports.Format.text, sub.check.format);
 }
 
 test "parseSubcommand: 'check' with an explicit target" {
     const sub = cli.parseSubcommand(&.{ "check", "src/" });
-    try std.testing.expectEqualStrings("src/", sub.check);
+    try std.testing.expectEqualStrings("src/", sub.check.target);
+    try std.testing.expectEqual(reports.Format.text, sub.check.format);
+}
+
+test "parseSubcommand: 'check --json' selects the json format" {
+    const sub = cli.parseSubcommand(&.{ "check", "--json", "src/" });
+    try std.testing.expectEqualStrings("src/", sub.check.target);
+    try std.testing.expectEqual(reports.Format.json, sub.check.format);
+}
+
+test "parseSubcommand: 'check --text' selects the text format" {
+    const sub = cli.parseSubcommand(&.{ "check", "src/", "--text" });
+    try std.testing.expectEqual(reports.Format.text, sub.check.format);
+}
+
+test "parseSubcommand: the last format flag wins" {
+    const sub = cli.parseSubcommand(&.{ "check", "--json", "--text", "src/" });
+    try std.testing.expectEqual(reports.Format.text, sub.check.format);
+}
+
+test "parseSubcommand: 'query --json' selects the json format" {
+    const sub = cli.parseSubcommand(&.{ "query", "(comment) @match", "--json", "--lang=ts" });
+    try std.testing.expectEqual(reports.Format.json, sub.query.format);
+    try std.testing.expectEqual(@as(?[]const u8, null), sub.query.invalid_arg);
 }
 
 test "parseSubcommand: 'facts' with an explicit target" {
@@ -232,8 +257,8 @@ test "parseSubcommand: 'query' flags an extra positional" {
 }
 
 test "parseSubcommand: 'query' flags an unknown flag" {
-    const sub = cli.parseSubcommand(&.{ "query", "(comment) @match", "--json" });
-    try std.testing.expectEqualStrings("--json", sub.query.invalid_arg.?);
+    const sub = cli.parseSubcommand(&.{ "query", "(comment) @match", "--verbose" });
+    try std.testing.expectEqualStrings("--verbose", sub.query.invalid_arg.?);
 }
 
 test "parseSubcommand: 'stop' is recognised" {

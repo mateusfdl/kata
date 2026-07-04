@@ -43,9 +43,14 @@ pub const Command = struct {
     stderr: *std.Io.Writer,
 };
 
+pub const CheckOptions = struct {
+    target: []const u8,
+    format: reports.Format = .text,
+};
+
 pub const Subcommand = union(enum) {
     daemon: ?[]const u8,
-    check: []const u8,
+    check: CheckOptions,
     facts: []const u8,
     rule_test: []const u8,
     query: query.Options,
@@ -61,13 +66,30 @@ pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
     if (args_mod.isFlag(cmd)) return .one_shot;
     return switch (args_mod.CommandName.parse(cmd) orelse return .{ .unknown = cmd }) {
         .daemon => .{ .daemon = rootFlag(args[1..]) },
-        .check => .{ .check = args_mod.firstPositional(args[1..]) orelse "." },
+        .check => .{ .check = .{
+            .target = args_mod.firstPositional(args[1..]) orelse ".",
+            .format = formatOf(args[1..]),
+        } },
         .facts => .{ .facts = args_mod.firstPositional(args[1..]) orelse "" },
         .@"test" => .{ .rule_test = args_mod.firstPositional(args[1..]) orelse "" },
         .query => .{ .query = parseQueryArgs(args[1..]) },
         .stop => .stop,
         .@"new-rule" => .new_rule,
     };
+}
+
+fn formatOf(args: []const [:0]const u8) reports.Format {
+    var format: reports.Format = .text;
+    for (args) |a| {
+        if (formatFlag(a)) |f| format = f;
+    }
+    return format;
+}
+
+fn formatFlag(arg: []const u8) ?reports.Format {
+    if (std.mem.eql(u8, arg, "--json")) return .json;
+    if (std.mem.eql(u8, arg, "--text")) return .text;
+    return null;
 }
 
 fn parseQueryArgs(args: []const [:0]const u8) query.Options {
@@ -83,6 +105,11 @@ fn parseQueryArgs(args: []const [:0]const u8) query.Options {
             },
             .missing => continue,
             .absent => {},
+        }
+
+        if (formatFlag(a)) |f| {
+            q.format = f;
+            continue;
         }
 
         if (args_mod.isFlag(a)) {
@@ -170,7 +197,7 @@ fn rootFlag(args: []const [:0]const u8) ?[]const u8 {
 fn dispatchSubcommand(c: Command, subcommand: Subcommand) !u8 {
     return switch (subcommand) {
         .daemon => |root| runDaemon(c, root),
-        .check => |target| runCheck(c, target),
+        .check => |opts| runCheck(c, opts),
         .facts => |target| runFacts(c, target),
         .rule_test => |dir| runRuleTest(c, dir),
         .query => |q| runQuery(c, q),
@@ -268,14 +295,14 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
     return exit_clean;
 }
 
-fn runCheck(c: Command, target: []const u8) !u8 {
-    const ctx = (try resolveContext(c, target)) orelse return exit_internal_error;
+fn runCheck(c: Command, opts: CheckOptions) !u8 {
+    const ctx = (try resolveContext(c, opts.target)) orelse return exit_internal_error;
     defer ctx.deinit();
     if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
 
-    var reporter: reports.Reporter = .{ .text = .{ .writer = c.stdout } };
-    const outcome = check.run(c.io, c.gpa, &ctx.engine, target, ctx.resolved.project_rules, &reporter) catch |err| switch (err) {
-        error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{target}, exit_usage),
+    var reporter = reports.reporter(opts.format, c.stdout);
+    const outcome = check.run(c.io, c.gpa, &ctx.engine, opts.target, ctx.resolved.project_rules, &reporter) catch |err| switch (err) {
+        error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{opts.target}, exit_usage),
         else => return internalError(c.stderr, "check", err),
     };
     return switch (outcome) {
