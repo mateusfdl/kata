@@ -49,7 +49,8 @@
             );
 
           rulesYaml =
-            renderIds "disabled" cfg.settings.disabled
+            renderIds "enabled" cfg.settings.enabled
+            + renderIds "disabled" cfg.settings.disabled
             + renderIds "warnings" cfg.settings.warnings
             + renderMetrics cfg.settings.metrics
             + renderProjectRules cfg.settings.projectRules
@@ -67,6 +68,16 @@
             };
 
             settings = {
+              enabled = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                example = [
+                  "go/no-panic"
+                  "no-comments"
+                ];
+                description = "Rule ids to activate, optionally scoped by language. Rules not listed stay inactive.";
+              };
+
               disabled = lib.mkOption {
                 type = lib.types.listOf lib.types.str;
                 default = [ ];
