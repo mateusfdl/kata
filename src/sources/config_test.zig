@@ -107,6 +107,36 @@ test "config: warnings list rejects invalid rule id" {
     try expectParseErr("warnings:\n  - ts/no.console\n", error.InvalidRuleId, 2);
 }
 
+test "config: enabled defaults to empty" {
+    var cfg = try expectParseOk("disabled:\n  - ts/no-console\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 0), cfg.enabled.len);
+}
+
+test "config: parses enabled list with scoped and bare entries" {
+    const src =
+        \\enabled:
+        \\  - go/no-panic
+        \\  - no-comments
+        \\
+    ;
+    var cfg = try expectParseOk(src);
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 2), cfg.enabled.len);
+    try std.testing.expectEqual(@as(?language.Name, .go), cfg.enabled[0].lang);
+    try std.testing.expectEqualStrings("no-panic", cfg.enabled[0].id);
+    try std.testing.expectEqual(@as(?language.Name, null), cfg.enabled[1].lang);
+    try std.testing.expectEqualStrings("no-comments", cfg.enabled[1].id);
+}
+
+test "config: enabled list rejects invalid rule id" {
+    try expectParseErr("enabled:\n  - ts/no.console\n", error.InvalidRuleId, 2);
+}
+
+test "config: enabled list rejects unknown language" {
+    try expectParseErr("enabled:\n  - rust/no-unsafe\n", error.UnknownLanguage, 2);
+}
+
 test "config: ratchet defaults to false" {
     var cfg = try expectParseOk("");
     defer cfg.deinit();
@@ -363,7 +393,7 @@ test "errorMessage: returns descriptive text for known errors" {
         config.errorMessage(error.TabInIndent),
     );
     try std.testing.expectEqualStrings(
-        "unknown top-level key (expected 'disabled', 'warnings', 'metrics', 'project-rules', or 'ratchet')",
+        "unknown top-level key (expected 'enabled', 'disabled', 'warnings', 'metrics', 'project-rules', or 'ratchet')",
         config.errorMessage(error.UnknownTopLevelKey),
     );
 }
@@ -514,8 +544,9 @@ test "config: project rule entry without colon is rejected" {
 }
 
 test "config: top-level keys record presence" {
-    var cfg = try expectParseOk("disabled:\nwarnings:\nmetrics:\nproject-rules:\nratchet: false\n");
+    var cfg = try expectParseOk("enabled:\ndisabled:\nwarnings:\nmetrics:\nproject-rules:\nratchet: false\n");
     defer cfg.deinit();
+    try std.testing.expectEqual(true, cfg.present.enabled);
     try std.testing.expectEqual(true, cfg.present.disabled);
     try std.testing.expectEqual(true, cfg.present.warnings);
     try std.testing.expectEqual(true, cfg.present.metrics);
@@ -526,6 +557,7 @@ test "config: top-level keys record presence" {
 test "config: empty source records no presence" {
     var cfg = try expectParseOk("");
     defer cfg.deinit();
+    try std.testing.expectEqual(false, cfg.present.enabled);
     try std.testing.expectEqual(false, cfg.present.disabled);
     try std.testing.expectEqual(false, cfg.present.warnings);
     try std.testing.expectEqual(false, cfg.present.metrics);
@@ -535,6 +567,7 @@ test "config: empty source records no presence" {
 
 test "resolve: no configs yields defaults" {
     const r = config.resolve(null, null);
+    try std.testing.expectEqual(@as(usize, 0), r.enabled.len);
     try std.testing.expectEqual(@as(usize, 0), r.disabled.len);
     try std.testing.expectEqual(@as(usize, 0), r.warnings.len);
     try std.testing.expectEqual(@as(usize, 0), r.project_rules.len);
@@ -546,6 +579,8 @@ test "resolve: no configs yields defaults" {
 
 test "resolve: global only passes through every key" {
     const src =
+        \\enabled:
+        \\  - go/no-panic
         \\disabled:
         \\  - ts/no-console
         \\warnings:
@@ -559,12 +594,47 @@ test "resolve: global only passes through every key" {
     defer g.deinit();
 
     const r = config.resolve(&g, null);
+    try std.testing.expectEqual(@as(usize, 1), r.enabled.len);
+    try std.testing.expectEqualStrings("no-panic", r.enabled[0].id);
     try std.testing.expectEqual(@as(usize, 1), r.disabled.len);
     try std.testing.expectEqualStrings("no-console", r.disabled[0].id);
     try std.testing.expectEqual(@as(usize, 1), r.warnings.len);
     try std.testing.expectEqualStrings("max-complexity", r.warnings[0].id);
     try std.testing.expectEqual(@as(?u32, 10), r.metrics.get(.complexity));
     try std.testing.expectEqual(true, r.ratchet);
+}
+
+test "resolve: project enabled list replaces global wholesale" {
+    var g = try expectParseOk("enabled:\n  - ts/no-console\n  - no-any\n");
+    defer g.deinit();
+    var p = try expectParseOk("enabled:\n  - go/no-panic\n");
+    defer p.deinit();
+
+    const r = config.resolve(&g, &p);
+    try std.testing.expectEqual(@as(usize, 1), r.enabled.len);
+    try std.testing.expectEqual(@as(?language.Name, .go), r.enabled[0].lang);
+    try std.testing.expectEqualStrings("no-panic", r.enabled[0].id);
+}
+
+test "resolve: project empty enabled list disables everything" {
+    var g = try expectParseOk("enabled:\n  - ts/no-console\n");
+    defer g.deinit();
+    var p = try expectParseOk("enabled:\n");
+    defer p.deinit();
+
+    const r = config.resolve(&g, &p);
+    try std.testing.expectEqual(@as(usize, 0), r.enabled.len);
+}
+
+test "resolve: omitted project enabled falls through to global" {
+    var g = try expectParseOk("enabled:\n  - ts/no-console\n");
+    defer g.deinit();
+    var p = try expectParseOk("ratchet: true\n");
+    defer p.deinit();
+
+    const r = config.resolve(&g, &p);
+    try std.testing.expectEqual(@as(usize, 1), r.enabled.len);
+    try std.testing.expectEqualStrings("no-console", r.enabled[0].id);
 }
 
 test "resolve: project disabled list replaces global wholesale" {

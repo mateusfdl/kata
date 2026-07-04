@@ -14,6 +14,7 @@ pub const max_config_bytes = fs.config.max_config_bytes;
 pub const ScopedId = rule.ScopedId;
 
 pub const Presence = struct {
+    enabled: bool = false,
     disabled: bool = false,
     warnings: bool = false,
     metrics: bool = false,
@@ -22,6 +23,7 @@ pub const Presence = struct {
 };
 
 pub const Config = struct {
+    enabled: []const ScopedId,
     disabled: []const ScopedId,
     warnings: []const ScopedId,
     metrics: metric.Set,
@@ -38,6 +40,7 @@ pub const Config = struct {
 };
 
 pub const Resolved = struct {
+    enabled: []const ScopedId = &.{},
     disabled: []const ScopedId = &.{},
     warnings: []const ScopedId = &.{},
     metrics: metric.Set = metric.empty,
@@ -54,6 +57,7 @@ pub fn resolve(global: ?*const Config, project: ?*const Config) Resolved {
 
 fn applyPresent(out: *Resolved, cfg_opt: ?*const Config) void {
     const cfg = cfg_opt orelse return;
+    if (cfg.present.enabled) out.enabled = cfg.enabled;
     if (cfg.present.disabled) out.disabled = cfg.disabled;
     if (cfg.present.warnings) out.warnings = cfg.warnings;
     if (cfg.present.metrics) out.metrics = cfg.metrics;
@@ -89,7 +93,7 @@ pub const Diagnostic = struct {
 
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
-        error.UnknownTopLevelKey => "unknown top-level key (expected 'disabled', 'warnings', 'metrics', 'project-rules', or 'ratchet')",
+        error.UnknownTopLevelKey => "unknown top-level key (expected 'enabled', 'disabled', 'warnings', 'metrics', 'project-rules', or 'ratchet')",
         error.TabInIndent => "tabs are not allowed in indentation",
         error.BadIndent => "indent must be 0 or 2 spaces",
         error.MalformedListItem => "list item must be '  - <rule-id>'",
@@ -112,7 +116,7 @@ pub fn errorMessage(err: anyerror) []const u8 {
     };
 }
 
-const State = enum { top, in_disabled, in_warnings, in_metrics, in_project_rules };
+const State = enum { top, in_enabled, in_disabled, in_warnings, in_metrics, in_project_rules };
 
 const PendingProjectRule = struct {
     id: []const u8,
@@ -131,6 +135,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     errdefer arena_ptr.deinit();
     const arena = arena_ptr.allocator();
 
+    var enabled: std.ArrayList(ScopedId) = .empty;
     var disabled: std.ArrayList(ScopedId) = .empty;
     var warnings: std.ArrayList(ScopedId) = .empty;
     var metrics: metric.Set = metric.empty;
@@ -174,6 +179,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
         if (indent == 2) {
             switch (state) {
                 .top => return error.UnexpectedListItem,
+                .in_enabled => try appendListItem(arena, &enabled, content),
                 .in_disabled => try appendListItem(arena, &disabled, content),
                 .in_warnings => try appendListItem(arena, &warnings, content),
                 .in_metrics => try setMetricEntry(&metrics, content),
@@ -202,6 +208,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
 
     diag.line = 0;
     return .{
+        .enabled = try enabled.toOwnedSlice(arena),
         .disabled = try disabled.toOwnedSlice(arena),
         .warnings = try warnings.toOwnedSlice(arena),
         .metrics = metrics,
@@ -215,6 +222,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
 fn markPresent(present: *Presence, state: State) void {
     switch (state) {
         .top => {},
+        .in_enabled => present.enabled = true,
         .in_disabled => present.disabled = true,
         .in_warnings => present.warnings = true,
         .in_metrics => present.metrics = true,
@@ -341,6 +349,7 @@ fn parseTopLevelKey(content: []const u8) ParseError!State {
 }
 
 fn sectionState(key: []const u8) ?State {
+    if (std.mem.eql(u8, key, "enabled")) return .in_enabled;
     if (std.mem.eql(u8, key, "disabled")) return .in_disabled;
     if (std.mem.eql(u8, key, "warnings")) return .in_warnings;
     if (std.mem.eql(u8, key, "metrics")) return .in_metrics;
