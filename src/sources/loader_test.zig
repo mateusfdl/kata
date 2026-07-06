@@ -272,3 +272,116 @@ test "load: project_dir overrides user_dir silently" {
     try std.testing.expectEqualStrings("((project_version) @match)", set.get(.go)[0].source);
     try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
 }
+
+test "upsertProject: same-tier collision warns with the project scope" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var set: loader.RuleSet = .{ .allocator = arena.allocator() };
+
+    try set.upsertProject(.{ .id = "isolation", .source = "1", .format = .kata }, .user);
+    try set.upsertProject(.{ .id = "isolation", .source = "2", .format = .kata }, .user);
+
+    try std.testing.expectEqual(@as(usize, 1), set.projectRaws().len);
+    try std.testing.expectEqualStrings("2", set.projectRaws()[0].source);
+    try std.testing.expectEqual(@as(usize, 1), set.warnings.items.len);
+    try std.testing.expectEqual(@as(?language.Name, null), set.warnings.items[0].lang);
+    try std.testing.expectEqualStrings("isolation", set.warnings.items[0].id);
+}
+
+test "upsertProject: project tier overrides user tier silently" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var set: loader.RuleSet = .{ .allocator = arena.allocator() };
+
+    try set.upsertProject(.{ .id = "isolation", .source = "1", .format = .kata }, .user);
+    try set.upsertProject(.{ .id = "isolation", .source = "2", .format = .kata }, .project);
+
+    try std.testing.expectEqual(@as(usize, 1), set.projectRaws().len);
+    try std.testing.expectEqualStrings("2", set.projectRaws()[0].source);
+    try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
+}
+
+test "load: project dir reads kata files into the project slot" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "project");
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "project/isolation.kata",
+        .data = "rule isolation {}",
+    });
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var path_buf: [256]u8 = undefined;
+    const rel = try relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    var set = try loader.load(arena.allocator(), std.testing.io, .{
+        .skip_embedded = true,
+        .project_dir = rel,
+    });
+    defer set.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), set.projectRaws().len);
+    try std.testing.expectEqualStrings("isolation", set.projectRaws()[0].id);
+    try std.testing.expectEqualStrings("rule isolation {}", set.projectRaws()[0].source);
+    try std.testing.expectEqual(rule.Format.kata, set.projectRaws()[0].format);
+    try std.testing.expectEqual(loader.Source.project, set.projectRaws()[0].origin);
+}
+
+test "load: scm files in the project dir error" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "project");
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "project/isolation.scm",
+        .data = "((identifier) @match)",
+    });
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var path_buf: [256]u8 = undefined;
+    const rel = try relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    try std.testing.expectError(error.ProjectRuleMustBeKata, loader.load(arena.allocator(), std.testing.io, .{
+        .skip_embedded = true,
+        .project_dir = rel,
+    }));
+}
+
+test "load: project tier project rule overrides the user tier" {
+    var user_tmp = std.testing.tmpDir(.{});
+    defer user_tmp.cleanup();
+    var project_tmp = std.testing.tmpDir(.{});
+    defer project_tmp.cleanup();
+
+    try user_tmp.dir.createDirPath(std.testing.io, "project");
+    try user_tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "project/isolation.kata",
+        .data = "rule isolation { severity warn }",
+    });
+    try project_tmp.dir.createDirPath(std.testing.io, "project");
+    try project_tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "project/isolation.kata",
+        .data = "rule isolation {}",
+    });
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var user_buf: [256]u8 = undefined;
+    var project_buf: [256]u8 = undefined;
+    const user_rel = try relativeTmpPath(&user_buf, &user_tmp.sub_path);
+    const project_rel = try relativeTmpPath(&project_buf, &project_tmp.sub_path);
+
+    var set = try loader.load(arena.allocator(), std.testing.io, .{
+        .skip_embedded = true,
+        .user_dir = user_rel,
+        .project_dir = project_rel,
+    });
+    defer set.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), set.projectRaws().len);
+    try std.testing.expectEqualStrings("rule isolation {}", set.projectRaws()[0].source);
+    try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
+}

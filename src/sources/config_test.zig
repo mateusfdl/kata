@@ -762,3 +762,57 @@ test "resolve: project rules replace global project rules" {
     try std.testing.expectEqual(@as(usize, 1), r.project_rules.len);
     try std.testing.expectEqualStrings("no-domain-to-infra", r.project_rules[0].id);
 }
+
+test "config: enabled accepts project scoped ids" {
+    var cfg = try expectParseOk("enabled:\n  - project/repository-isolation\n  - ts/no-console\n");
+    defer cfg.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), cfg.enabled.len);
+    try std.testing.expectEqual(@as(?language.Name, null), cfg.enabled[0].lang);
+    try std.testing.expectEqual(true, cfg.enabled[0].project);
+    try std.testing.expectEqualStrings("repository-isolation", cfg.enabled[0].id);
+    try std.testing.expectEqual(@as(?language.Name, .ts), cfg.enabled[1].lang);
+    try std.testing.expectEqual(false, cfg.enabled[1].project);
+}
+
+test "selection: project raws need a project scoped enable" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    try fx.build();
+    try fx.set.upsertProject(.{ .id = "isolation", .source = "1", .format = .kata }, .project);
+    try fx.set.upsertProject(.{ .id = "boundaries", .source = "2", .format = .kata }, .project);
+
+    var cfg = try expectParseOk("enabled:\n  - project/isolation\n");
+    defer cfg.deinit();
+    config.applySelection(&fx.set, config.resolve(&cfg, null));
+
+    try std.testing.expectEqual(@as(usize, 1), fx.set.projectRaws().len);
+    try std.testing.expectEqualStrings("isolation", fx.set.projectRaws()[0].id);
+}
+
+test "selection: project scoped ids never enable language rules" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    try fx.build();
+
+    var cfg = try expectParseOk("enabled:\n  - project/no-console\n");
+    defer cfg.deinit();
+    config.applySelection(&fx.set, config.resolve(&cfg, null));
+
+    try std.testing.expectEqual(@as(usize, 0), fx.countTs());
+}
+
+test "selection: bare ids enable project raws and disabled wins" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    try fx.build();
+    try fx.set.upsertProject(.{ .id = "isolation", .source = "1", .format = .kata }, .project);
+    try fx.set.upsertProject(.{ .id = "boundaries", .source = "2", .format = .kata }, .project);
+
+    var cfg = try expectParseOk("enabled:\n  - isolation\n  - boundaries\ndisabled:\n  - project/boundaries\n");
+    defer cfg.deinit();
+    config.applySelection(&fx.set, config.resolve(&cfg, null));
+
+    try std.testing.expectEqual(@as(usize, 1), fx.set.projectRaws().len);
+    try std.testing.expectEqualStrings("isolation", fx.set.projectRaws()[0].id);
+}

@@ -427,8 +427,9 @@ fn resolveUserRulesDir(arena: std.mem.Allocator, environ: *const std.process.Env
 
 fn drainWarnings(stderr: *std.Io.Writer, rule_set: *const loader_mod.RuleSet) void {
     for (rule_set.warnings.items) |w| {
+        const scope = if (w.lang) |lang| lang.toString() else "project";
         stderr.print("kata: warning: {s} rule {s}/{s} overrides previous definition\n", .{
-            @tagName(w.source), w.lang.toString(), w.id,
+            @tagName(w.source), scope, w.id,
         }) catch return;
     }
 

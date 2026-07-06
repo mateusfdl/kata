@@ -9,12 +9,15 @@ const language = lint.language;
 pub const scm_suffix = ".scm";
 pub const kata_suffix = ".kata";
 
+pub const project_dir_name = "project";
+
 pub const RuleFile = struct {
     langs: []const language.Name,
     id: []const u8,
     body: []const u8,
     source: lint.Source,
     format: lint.rule.Format,
+    project: bool = false,
 };
 
 pub const FixtureFile = struct {
@@ -80,6 +83,10 @@ fn collectRuleFiles(
     var root_iter = root.iterate();
     while (try root_iter.next(io)) |entry| {
         if (entry.kind != .directory) continue;
+        if (std.mem.eql(u8, entry.name, project_dir_name)) {
+            try collectProjectRuleFiles(allocator, io, root, source, &files);
+            continue;
+        }
         try collectLanguageRuleFiles(allocator, io, root, entry.name, source, &files);
     }
     return files.toOwnedSlice(allocator);
@@ -121,6 +128,34 @@ fn collectLanguageRuleFiles(
             .body = try lang_dir.readFileAlloc(io, fentry.name, allocator, .limited(std.math.maxInt(usize))),
             .source = source,
             .format = format,
+        });
+    }
+}
+
+fn collectProjectRuleFiles(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    root: *std.Io.Dir,
+    source: lint.Source,
+    out: *std.ArrayList(RuleFile),
+) !void {
+    var project_dir = try root.openDir(io, project_dir_name, .{ .iterate = true });
+    defer project_dir.close(io);
+
+    var file_iter = project_dir.iterate();
+    while (try file_iter.next(io)) |fentry| {
+        if (fentry.kind != .file) continue;
+        const format = formatOf(fentry.name) orelse continue;
+        if (format != .kata) return error.ProjectRuleMustBeKata;
+        const id = stripSuffix(fentry.name, format);
+        if (id.len == 0) return error.InvalidRule;
+        try out.append(allocator, .{
+            .langs = &.{},
+            .id = try allocator.dupe(u8, id),
+            .body = try project_dir.readFileAlloc(io, fentry.name, allocator, .limited(std.math.maxInt(usize))),
+            .source = source,
+            .format = format,
+            .project = true,
         });
     }
 }

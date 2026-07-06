@@ -57,6 +57,7 @@ pub fn resolve(global: ?*const Config, project: ?*const Config) Resolved {
 
 fn applyPresent(out: *Resolved, cfg_opt: ?*const Config) void {
     const cfg = cfg_opt orelse return;
+
     if (cfg.present.enabled) out.enabled = cfg.enabled;
     if (cfg.present.disabled) out.disabled = cfg.disabled;
     if (cfg.present.warnings) out.warnings = cfg.warnings;
@@ -398,10 +399,14 @@ fn appendListItem(
     if (item.len == 0) return error.MalformedListItem;
 
     if (std.mem.indexOfScalar(u8, item, '/')) |slash| {
-        const lang_str = item[0..slash];
+        const scope = item[0..slash];
         const id = item[slash + 1 ..];
-        if (!rule.isValidId(lang_str) or !rule.isValidId(id)) return error.InvalidRuleId;
-        const lang = language.Name.fromString(lang_str) orelse return error.UnknownLanguage;
+        if (!rule.isValidId(scope) or !rule.isValidId(id)) return error.InvalidRuleId;
+        if (std.mem.eql(u8, scope, "project")) {
+            try list.append(arena, .{ .lang = null, .id = try arena.dupe(u8, id), .project = true });
+            return;
+        }
+        const lang = language.Name.fromString(scope) orelse return error.UnknownLanguage;
         try list.append(arena, .{ .lang = lang, .id = try arena.dupe(u8, id) });
         return;
     }
@@ -462,6 +467,27 @@ pub fn applySelection(set: *loader.RuleSet, resolved: Resolved) void {
             }
         }
     }
+
+    var i: usize = 0;
+    while (i < set.project.items.len) {
+        if (isActiveProject(set.project.items[i].id, resolved)) {
+            i += 1;
+        } else {
+            _ = set.project.swapRemove(i);
+        }
+    }
+}
+
+fn isActiveProject(id: []const u8, resolved: Resolved) bool {
+    return anyMatchesProject(resolved.enabled, id) and !anyMatchesProject(resolved.disabled, id);
+}
+
+fn anyMatchesProject(ids: []const ScopedId, id: []const u8) bool {
+    for (ids) |scoped| {
+        if (scoped.matchesProject(id)) return true;
+    }
+
+    return false;
 }
 
 fn isActive(lang: language.Name, id: []const u8, resolved: Resolved) bool {

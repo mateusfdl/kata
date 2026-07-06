@@ -68,6 +68,15 @@ fn addRuleFiles(set: *RuleSet, diag: ?*Diagnostic, files: []const fs.rules.RuleF
     for (files) |file| {
         const id = try set.allocator.dupe(u8, file.id);
 
+        if (file.project) {
+            try set.upsertProject(.{
+                .id = id,
+                .source = file.body,
+                .format = file.format,
+            }, file.source);
+            continue;
+        }
+
         for (file.langs) |lang_name| {
             set.upsert(lang_name, .{
                 .id = id,

@@ -137,12 +137,20 @@ pub fn evaluate(
     }
 
     for (out.items) |*v| {
-        if (project_rule.matchesWarning(warnings, v.diagnostic.language, v.diagnostic.rule_id)) v.diagnostic.severity = .warn;
+        if (matchesWarning(warnings, v.diagnostic.rule_id)) v.diagnostic.severity = .warn;
     }
 
     std.mem.sort(Violation, out.items, {}, project_rule.violationLessThan);
 
     return out.toOwnedSlice(allocator);
+}
+
+fn matchesWarning(warnings: []const ScopedId, id: []const u8) bool {
+    for (warnings) |w| {
+        if (w.matchesProject(id)) return true;
+    }
+
+    return false;
 }
 
 fn needsClassIndex(rules: []const CompiledFactRule) bool {

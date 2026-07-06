@@ -19,7 +19,7 @@ pub const Format = enum { scm, kata };
 
 pub const RawRule = struct {
     id: []const u8,
-    language: language.Name,
+    language: ?language.Name = null,
     source: []const u8,
     origin: Source = .embedded,
     format: Format = .scm,
@@ -28,10 +28,17 @@ pub const RawRule = struct {
 pub const ScopedId = struct {
     lang: ?language.Name,
     id: []const u8,
+    project: bool = false,
 
     pub fn matches(self: ScopedId, lang: language.Name, id: []const u8) bool {
+        if (self.project) return false;
+
         const lang_matches = self.lang == null or self.lang.? == lang;
         return lang_matches and std.mem.eql(u8, self.id, id);
+    }
+
+    pub fn matchesProject(self: ScopedId, id: []const u8) bool {
+        return self.lang == null and std.mem.eql(u8, self.id, id);
     }
 };
 

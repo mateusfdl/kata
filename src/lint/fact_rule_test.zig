@@ -423,9 +423,16 @@ test "fact rule: warnings demote violations to warn severity" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const warnings = [_]fact_rule.ScopedId{.{ .lang = null, .id = "repository-isolation" }};
-    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &warnings, &index);
+    const bare = [_]fact_rule.ScopedId{.{ .lang = null, .id = "repository-isolation" }};
+    const demoted = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &bare, &index);
+    try std.testing.expectEqual(@as(usize, 1), demoted.len);
+    try std.testing.expectEqual(lint_diagnostic.Severity.warn, demoted[0].diagnostic.severity);
 
-    try std.testing.expectEqual(@as(usize, 1), violations.len);
-    try std.testing.expectEqual(lint_diagnostic.Severity.warn, violations[0].diagnostic.severity);
+    const project_scoped = [_]fact_rule.ScopedId{.{ .lang = null, .id = "repository-isolation", .project = true }};
+    const also_demoted = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &project_scoped, &index);
+    try std.testing.expectEqual(lint_diagnostic.Severity.warn, also_demoted[0].diagnostic.severity);
+
+    const lang_scoped = [_]fact_rule.ScopedId{.{ .lang = .ts, .id = "repository-isolation" }};
+    const untouched = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &lang_scoped, &index);
+    try std.testing.expectEqual(lint_diagnostic.Severity.@"error", untouched[0].diagnostic.severity);
 }
