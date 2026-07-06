@@ -1,7 +1,6 @@
 const std = @import("std");
 
 const diagnostic = @import("diagnostic.zig");
-const fs_path = @import("../fs/path.zig");
 const facts = @import("facts.zig");
 const glob = @import("glob.zig");
 const language = @import("language.zig");
@@ -68,7 +67,7 @@ pub fn evaluate(
     return out.toOwnedSlice(allocator);
 }
 
-fn matchesWarning(warnings: []const ScopedId, lang_str: []const u8, id: []const u8) bool {
+pub fn matchesWarning(warnings: []const ScopedId, lang_str: []const u8, id: []const u8) bool {
     const lang = language.Name.fromString(lang_str) orelse return false;
     for (warnings) |w| {
         if (w.matches(lang, id)) return true;
@@ -98,7 +97,7 @@ fn evaluateRestrictedCallers(
     while (callers.next()) |file| {
         for (file.calls) |call| {
             if (call.receiver.len == 0) continue;
-            const receiver_type = receiverType(file, call.receiver) orelse continue;
+            const receiver_type = facts.receiverType(file, call.receiver) orelse continue;
             if (!std.mem.endsWith(u8, receiver_type, restricted.callee_suffix)) continue;
             if (!callee_types.contains(receiver_type)) continue;
             if (call.container.len > 0 and std.mem.endsWith(u8, call.container, restricted.caller_suffix)) continue;
@@ -156,53 +155,11 @@ fn importDenied(
     lang: language.Name,
     specifier: []const u8,
 ) !bool {
-    if (lang == .go or !isRelativeSpecifier(specifier)) return glob.match(deny, specifier);
-    const resolved = try resolveRelative(allocator, importer_path, specifier) orelse return false;
+    const resolved = (try facts.resolveImportSource(allocator, lang, importer_path, specifier)) orelse return false;
     return glob.match(deny, resolved);
 }
 
-fn isRelativeSpecifier(specifier: []const u8) bool {
-    return std.mem.startsWith(u8, specifier, "./") or std.mem.startsWith(u8, specifier, "../");
-}
-
-fn resolveRelative(
-    allocator: std.mem.Allocator,
-    importer_path: []const u8,
-    specifier: []const u8,
-) !?[]const u8 {
-    var segments: std.ArrayList([]const u8) = .empty;
-    defer segments.deinit(allocator);
-
-    const dir = fs_path.parentDir(importer_path);
-    var dir_it = std.mem.tokenizeScalar(u8, dir, '/');
-    while (dir_it.next()) |segment| try segments.append(allocator, segment);
-
-    var spec_it = std.mem.tokenizeScalar(u8, specifier, '/');
-    while (spec_it.next()) |segment| {
-        if (std.mem.eql(u8, segment, ".")) continue;
-        if (std.mem.eql(u8, segment, "..")) {
-            if (segments.pop() == null) return null;
-            continue;
-        }
-        try segments.append(allocator, segment);
-    }
-    return try std.mem.join(allocator, "/", segments.items);
-}
-
-fn receiverType(file: *const facts.FileFacts, receiver: []const u8) ?[]const u8 {
-    var found: ?[]const u8 = null;
-    for (file.typed_decls) |decl| {
-        if (!std.mem.eql(u8, decl.name, receiver)) continue;
-        if (found) |existing| {
-            if (!std.mem.eql(u8, existing, decl.type_name)) return null;
-        } else {
-            found = decl.type_name;
-        }
-    }
-    return found;
-}
-
-fn violationLessThan(_: void, a: Violation, b: Violation) bool {
+pub fn violationLessThan(_: void, a: Violation, b: Violation) bool {
     switch (std.mem.order(u8, a.path, b.path)) {
         .lt => return true,
         .gt => return false,

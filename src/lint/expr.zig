@@ -43,11 +43,16 @@ pub fn parse(
     resolver: anytype,
 ) ParseError!*const Expr {
     var tokens: Tokenizer = .{ .source = source };
+
     try expectOpen(&tokens);
+
     const parsed = try parseForm(arena, &tokens, resolver);
+
     if (tokens.next() != null) return error.MalformedExpression;
+
     const root = try arena.create(Expr);
     root.* = parsed;
+
     return root;
 }
 
@@ -56,6 +61,7 @@ pub fn evaluate(root: *const Expr, measures: anytype) @TypeOf(measures).Error!bo
         .compare => |c| {
             const left = (try resolveTerm(c.left, measures)) orelse return false;
             const right = (try resolveTerm(c.right, measures)) orelse return false;
+
             return switch (c.op) {
                 .gt => left > right,
                 .ge => left >= right,
@@ -69,12 +75,14 @@ pub fn evaluate(root: *const Expr, measures: anytype) @TypeOf(measures).Error!bo
             for (items) |*item| {
                 if (!try evaluate(item, measures)) return false;
             }
+
             return true;
         },
         .any => |items| {
             for (items) |*item| {
                 if (try evaluate(item, measures)) return true;
             }
+
             return false;
         },
         .negate => |inner| return !try evaluate(inner, measures),
@@ -101,21 +109,27 @@ const Tokenizer = struct {
     fn next(self: *Tokenizer) ?Token {
         while (self.pos < self.source.len and std.ascii.isWhitespace(self.source[self.pos])) self.pos += 1;
         if (self.pos >= self.source.len) return null;
+
         switch (self.source[self.pos]) {
             '(' => {
                 self.pos += 1;
+
                 return .open;
             },
             ')' => {
                 self.pos += 1;
+
                 return .close;
             },
             else => {
                 const start = self.pos;
+
                 while (self.pos < self.source.len) : (self.pos += 1) {
                     const c = self.source[self.pos];
+
                     if (std.ascii.isWhitespace(c) or c == '(' or c == ')') break;
                 }
+
                 return .{ .atom = self.source[start..self.pos] };
             },
         }
@@ -147,13 +161,16 @@ fn parseList(arena: std.mem.Allocator, tokens: *Tokenizer, resolver: anytype) Pa
     var items: std.ArrayList(Expr) = .empty;
     while (true) {
         const token = tokens.next() orelse return error.MalformedExpression;
+
         switch (token) {
             .close => break,
             .open => try items.append(arena, try parseForm(arena, tokens, resolver)),
             .atom => return error.MalformedExpression,
         }
     }
+
     if (items.items.len == 0) return error.MalformedExpression;
+
     return items.toOwnedSlice(arena);
 }
 
@@ -164,9 +181,13 @@ fn parseTerm(tokens: *Tokenizer, resolver: anytype) ParseError!Term {
             const name = try expectAtom(tokens);
             const measure = Measure.fromString(name) orelse return error.UnknownMeasure;
             const capture = try expectAtom(tokens);
+
             if (capture.len < 2 or capture[0] != '@') return error.MalformedExpression;
+
             const id = resolver.captureId(capture[1..]) orelse return error.UnknownCapture;
+
             try expectClose(tokens);
+
             return .{ .measure = .{ .measure = measure, .capture_id = id } };
         },
         .atom => |a| return .{ .number = std.fmt.parseInt(u32, a, 10) catch return error.InvalidNumber },
@@ -176,6 +197,7 @@ fn parseTerm(tokens: *Tokenizer, resolver: anytype) ParseError!Term {
 
 fn expectAtom(tokens: *Tokenizer) ParseError![]const u8 {
     const token = tokens.next() orelse return error.MalformedExpression;
+
     return switch (token) {
         .atom => |a| a,
         else => error.MalformedExpression,
@@ -184,11 +206,13 @@ fn expectAtom(tokens: *Tokenizer) ParseError![]const u8 {
 
 fn expectOpen(tokens: *Tokenizer) ParseError!void {
     const token = tokens.next() orelse return error.MalformedExpression;
+
     if (token != .open) return error.MalformedExpression;
 }
 
 fn expectClose(tokens: *Tokenizer) ParseError!void {
     const token = tokens.next() orelse return error.MalformedExpression;
+
     if (token != .close) return error.MalformedExpression;
 }
 
@@ -199,5 +223,6 @@ fn compareFromName(name: []const u8) ?Compare {
     if (std.mem.eql(u8, name, "<=")) return .le;
     if (std.mem.eql(u8, name, "=")) return .eq;
     if (std.mem.eql(u8, name, "!=")) return .ne;
+
     return null;
 }

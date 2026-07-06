@@ -712,13 +712,16 @@ fn resolveCapture(ctx: *Compiler, name: []const u8) Error!u32 {
         ctx.fail("unknown capture");
         return error.UnknownCapture;
     }
+
     return id;
 }
 
 fn compileMessage(ctx: *Compiler, message: []const u8) Error!rule.Message {
     const segments = (try messageSegments(ctx, message)) orelse
         return .{ .plain = try ctx.arena.dupe(u8, message) };
+
     if (segments.len == 1 and segments[0] == .literal) return .{ .plain = segments[0].literal };
+
     return .{ .segments = segments };
 }
 

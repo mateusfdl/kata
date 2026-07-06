@@ -19,6 +19,7 @@ pub const Name = enum {
         for (std.enums.values(Name)) |n| {
             if (std.mem.eql(u8, s, infos.get(n).canonical)) return n;
         }
+
         return null;
     }
 
@@ -26,6 +27,7 @@ pub const Name = enum {
         for (std.enums.values(Name)) |n| {
             if (std.mem.eql(u8, ext_lower, infos.get(n).extension)) return n;
         }
+
         return null;
     }
 };
@@ -35,21 +37,25 @@ pub const max_langs_per_dir: usize = std.enums.values(Name).len;
 pub const supported_list = blk: {
     var text: []const u8 = "";
     const names = std.enums.values(Name);
+
     for (names, 0..) |n, i| {
         if (i > 0) text = text ++ (if (i == names.len - 1) ", or " else ", ");
         text = text ++ infos.get(n).canonical;
     }
+
     break :blk text;
 };
 
 pub fn parseDirName(name: []const u8, out: []Name) ![]Name {
     var n: usize = 0;
     var it = std.mem.splitScalar(u8, name, '+');
+
     while (it.next()) |token| {
         if (n >= out.len) return error.InvalidRule;
         out[n] = Name.fromString(token) orelse return error.InvalidRule;
         n += 1;
     }
+
     return out[0..n];
 }
 
@@ -91,7 +97,9 @@ pub fn resolve(lang_flag: []const u8, filename: []const u8) Resolution {
         if (Name.fromString(lang_flag)) |n| return .{ .ok = n };
         return .{ .unsupported_language = lang_flag };
     }
+
     if (filename.len == 0) return .missing;
+
     return resolveFromFilename(filename);
 }
 
@@ -105,5 +113,6 @@ fn resolveFromFilename(filename: []const u8) Resolution {
     const ext_lower = buf[0..ext.len];
 
     if (Name.fromExtension(ext_lower)) |n| return .{ .ok = n };
+
     return .{ .unknown_extension = ext };
 }

@@ -2,6 +2,7 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 
 const diagnostic = @import("diagnostic.zig");
+const fs_path = @import("../fs/path.zig");
 const language = @import("language.zig");
 
 pub const ClassDef = struct {
@@ -57,6 +58,57 @@ pub const FileFacts = struct {
         child.destroy(self.arena);
     }
 };
+
+pub fn receiverType(file: *const FileFacts, receiver: []const u8) ?[]const u8 {
+    var found: ?[]const u8 = null;
+    for (file.typed_decls) |decl| {
+        if (!std.mem.eql(u8, decl.name, receiver)) continue;
+        if (found) |existing| {
+            if (!std.mem.eql(u8, existing, decl.type_name)) return null;
+        } else {
+            found = decl.type_name;
+        }
+    }
+    return found;
+}
+
+pub fn resolveImportSource(
+    allocator: std.mem.Allocator,
+    lang: language.Name,
+    importer_path: []const u8,
+    specifier: []const u8,
+) std.mem.Allocator.Error!?[]const u8 {
+    if (lang == .go or !isRelativeSpecifier(specifier)) return specifier;
+    return resolveRelative(allocator, importer_path, specifier);
+}
+
+fn isRelativeSpecifier(specifier: []const u8) bool {
+    return std.mem.startsWith(u8, specifier, "./") or std.mem.startsWith(u8, specifier, "../");
+}
+
+fn resolveRelative(
+    allocator: std.mem.Allocator,
+    importer_path: []const u8,
+    specifier: []const u8,
+) std.mem.Allocator.Error!?[]const u8 {
+    var segments: std.ArrayList([]const u8) = .empty;
+    defer segments.deinit(allocator);
+
+    const dir = fs_path.parentDir(importer_path);
+    var dir_it = std.mem.tokenizeScalar(u8, dir, '/');
+    while (dir_it.next()) |segment| try segments.append(allocator, segment);
+
+    var spec_it = std.mem.tokenizeScalar(u8, specifier, '/');
+    while (spec_it.next()) |segment| {
+        if (std.mem.eql(u8, segment, ".")) continue;
+        if (std.mem.eql(u8, segment, "..")) {
+            if (segments.pop() == null) return null;
+            continue;
+        }
+        try segments.append(allocator, segment);
+    }
+    return try std.mem.join(allocator, "/", segments.items);
+}
 
 const go_constructor_prefix = "New";
 
@@ -158,6 +210,7 @@ pub fn compile(
 
     const roles = try allocator.alloc(Role, query.captureCount());
     errdefer allocator.free(roles);
+
     for (roles, 0..) |*role, i| {
         const cap_name = query.captureNameForId(@intCast(i)) orelse return error.FactsQueryCompileFailed;
         role.* = roleFromCaptureName(cap_name) orelse return error.FactsQueryCompileFailed;
@@ -185,8 +238,10 @@ pub fn extract(
 ) !FileFacts {
     const arena_ptr = try gpa.create(std.heap.ArenaAllocator);
     errdefer gpa.destroy(arena_ptr);
+
     arena_ptr.* = std.heap.ArenaAllocator.init(gpa);
     errdefer arena_ptr.deinit();
+
     const arena = arena_ptr.allocator();
 
     var lists: Lists = .{};
@@ -194,9 +249,11 @@ pub fn extract(
     cursor.exec(compiled.query, root);
     while (cursor.nextMatch()) |match| {
         var nodes: std.EnumArray(Role, ?ts.Node) = .initFill(null);
+
         for (match.captures) |cap| {
             nodes.set(compiled.capture_roles[cap.index], cap.node);
         }
+
         try assemble(arena, source, nodes, &lists);
     }
 
@@ -228,6 +285,7 @@ fn assemble(
 ) !void {
     if (nodes.get(.method_name)) |name_node| {
         const span_node = nodes.get(.method_node) orelse name_node;
+
         try lists.methods.append(arena, .{
             .name = try nodeText(arena, source, name_node),
             .container = if (nodes.get(.method_recv)) |recv| try nodeText(arena, source, recv) else "",
@@ -235,30 +293,36 @@ fn assemble(
             .end = span_node.endByte(),
             .range = rangeOf(span_node),
         });
+
         return;
     }
     if (nodes.get(.class_name)) |name_node| {
         const span_node = nodes.get(.class_node) orelse name_node;
+
         try lists.classes.append(arena, .{
             .name = try nodeText(arena, source, name_node),
             .start = span_node.startByte(),
             .end = span_node.endByte(),
             .range = rangeOf(span_node),
         });
+
         return;
     }
     if (nodes.get(.decl_name)) |name_node| {
         const type_name = try declTypeName(arena, source, nodes) orelse return;
+
         try lists.typed_decls.append(arena, .{
             .name = try nodeText(arena, source, name_node),
             .type_name = type_name,
             .start = name_node.startByte(),
             .range = rangeOf(name_node),
         });
+
         return;
     }
     if (nodes.get(.call_method)) |method_node| {
         const span_node = nodes.get(.call_node) orelse method_node;
+
         try lists.calls.append(arena, .{
             .receiver = if (nodes.get(.call_receiver)) |recv| try nodeText(arena, source, recv) else "",
             .method = try nodeText(arena, source, method_node),
@@ -266,16 +330,19 @@ fn assemble(
             .start = span_node.startByte(),
             .range = rangeOf(span_node),
         });
+
         return;
     }
     if (nodes.get(.import_source)) |source_node| {
         const raw = try nodeText(arena, source, source_node);
+
         try lists.imports.append(arena, .{
             .name = if (nodes.get(.import_name)) |name| try nodeText(arena, source, name) else "",
             .source = std.mem.trim(u8, raw, "\""),
             .start = source_node.startByte(),
             .range = rangeOf(source_node),
         });
+
         return;
     }
 }
@@ -286,11 +353,16 @@ fn declTypeName(
     nodes: std.EnumArray(Role, ?ts.Node),
 ) !?[]const u8 {
     if (nodes.get(.decl_type)) |type_node| return try nodeText(arena, source, type_node);
+
     const ctor_node = nodes.get(.decl_ctor) orelse return null;
     const ctor = nodeSlice(source, ctor_node);
+
     if (!std.mem.startsWith(u8, ctor, go_constructor_prefix)) return null;
+
     const type_name = ctor[go_constructor_prefix.len..];
+
     if (type_name.len == 0) return null;
+
     return try arena.dupe(u8, type_name);
 }
 
@@ -305,6 +377,7 @@ fn resolveContainers(
             for (methods) |*m| {
                 if (m.container.len == 0) m.container = innermostClassName(classes, m.start, m.end) orelse "";
             }
+
             for (calls) |*c| {
                 c.container = innermostClassName(classes, c.start, c.start) orelse "";
             }
@@ -319,20 +392,24 @@ fn resolveContainers(
 
 fn innermostClassName(classes: []const ClassDef, start: u32, end: u32) ?[]const u8 {
     var best: ?usize = null;
+
     for (classes, 0..) |cl, i| {
         if (cl.start > start or end > cl.end) continue;
         if (cl.start == start and cl.end == end) continue;
         if (best == null or classes[best.?].start < cl.start) best = i;
     }
+
     return if (best) |i| classes[i].name else null;
 }
 
 fn enclosingMethodContainer(methods: []const MethodDef, start: u32) ?[]const u8 {
     var best: ?usize = null;
+
     for (methods, 0..) |m, i| {
         if (m.start > start or start >= m.end) continue;
         if (best == null or methods[best.?].start < m.start) best = i;
     }
+
     return if (best) |i| methods[i].container else null;
 }
 
@@ -355,6 +432,7 @@ fn nodeText(arena: std.mem.Allocator, source: []const u8, node: ts.Node) ![]cons
 fn rangeOf(node: ts.Node) diagnostic.Range {
     const sp = node.startPoint();
     const ep = node.endPoint();
+
     return .{
         .start = .{ .line = sp.row, .column = sp.column },
         .end = .{ .line = ep.row, .column = ep.column },

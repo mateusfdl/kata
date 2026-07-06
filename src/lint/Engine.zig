@@ -50,18 +50,22 @@ pub const Engine = struct {
         while (it.next()) |entry| {
             if (entry.value.*) |*compiled| compiled.deinit();
         }
+
         var dit = self.compiled_dsl.iterator();
         while (dit.next()) |entry| {
             if (entry.value.*) |*compiled| compiled.deinit();
         }
+
         var pit = self.parsers.iterator();
         while (pit.next()) |entry| {
             if (entry.value.*) |parser| parser.destroy();
         }
+
         var mit = self.metric_queries.iterator();
         while (mit.next()) |entry| {
             if (entry.value.*) |*compiled| compiled.deinit(self.allocator);
         }
+
         var fit = self.facts_queries.iterator();
         while (fit.next()) |entry| {
             if (entry.value.*) |*compiled| compiled.deinit(self.allocator);
@@ -80,8 +84,8 @@ pub const Engine = struct {
         }
     }
 
-    /// Prewarm and, on failure, write the compile diagnostic under `label`.
-    /// Returns true when rules are ready, false when compilation failed.
+    /// prewarm and, on failure, write the compile diagnostic under `label`.
+    /// returns true when rules are ready, false when compilation failed.
     pub fn prewarmOrReport(self: *Engine, label: []const u8, stderr: *std.Io.Writer) !bool {
         self.prewarm() catch {
             try self.compile_diag.write(label, stderr);
@@ -102,28 +106,36 @@ pub const Engine = struct {
     fn ensureCompiled(self: *Engine, lang: language.Name) !*rule.CompiledRule {
         const slot = self.compiled.getPtr(lang);
         if (slot.*) |*cached| return cached;
+
         slot.* = try rule.compile(self.allocator, self.registry, lang, self.rules.get(lang), &self.compile_diag);
+
         return &slot.*.?;
     }
 
     fn ensureCompiledDsl(self: *Engine, lang: language.Name) !?*rule.CompiledRule {
         const slot = self.compiled_dsl.getPtr(lang);
         if (slot.*) |*cached| return cached;
+
         slot.* = (try dsl_compile.compileRaws(self.allocator, self.registry, lang, self.rules.get(lang), &self.compile_diag)) orelse return null;
+
         return &slot.*.?;
     }
 
     fn ensureMetricQuery(self: *Engine, lang: language.Name) !*metric.Compiled {
         const slot = self.metric_queries.getPtr(lang);
         if (slot.*) |*cached| return cached;
+
         slot.* = try metric.compile(self.allocator, self.registry.get(lang), lang);
+
         return &slot.*.?;
     }
 
     fn ensureFactsQuery(self: *Engine, lang: language.Name) !*facts.Compiled {
         const slot = self.facts_queries.getPtr(lang);
         if (slot.*) |*cached| return cached;
+
         slot.* = try facts.compile(self.allocator, self.registry.get(lang), lang);
+
         return &slot.*.?;
     }
 
@@ -138,6 +150,7 @@ pub const Engine = struct {
         const parser = try self.ensureParser(lang);
         const tree = parser.parseString(source, null) orelse return error.ParseFailed;
         defer tree.destroy();
+
         return facts.extract(gpa, compiled, self.cursor, tree.rootNode(), source, path, lang);
     }
 
@@ -188,6 +201,7 @@ pub const Engine = struct {
 fn needsMeasures(compiled: *const rule.CompiledRule, compiled_dsl: ?*rule.CompiledRule) bool {
     if (compiled.needs_measures) return true;
     if (compiled_dsl) |dsl| return dsl.needs_measures;
+
     return false;
 }
 
@@ -205,6 +219,7 @@ fn matchesWarning(warnings: []const rule.ScopedId, lang: language.Name, rule_id:
     for (warnings) |w| {
         if (w.matches(lang, rule_id)) return true;
     }
+
     return false;
 }
 
@@ -231,6 +246,7 @@ pub fn runRule(
             .plain => |text| text,
             .segments => |segments| try matcher.renderMessage(allocator, segments, match, ctx),
         } else meta.rule_id;
+
         try emitMatchDiagnostics(allocator, r, meta, match, lang_str, message, out);
     }
 }
@@ -238,9 +254,11 @@ pub fn runRule(
 fn pathExcluded(globs: []const []const u8, path: ?[]const u8) bool {
     const p = path orelse return false;
     if (p.len == 0) return false;
+
     for (globs) |g| {
         if (glob.match(g, p)) return true;
     }
+
     return false;
 }
 
@@ -255,8 +273,10 @@ fn emitMatchDiagnostics(
 ) !void {
     for (match.captures) |cap| {
         if (cap.index != r.match_capture_id) continue;
+
         const sp = cap.node.startPoint();
         const ep = cap.node.endPoint();
+
         try out.append(allocator, .{
             .rule_id = meta.rule_id,
             .language = lang_str,

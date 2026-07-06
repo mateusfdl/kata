@@ -63,6 +63,7 @@ fn evalWhere(
     const parsed = pred.where orelse return false;
     const metric_ctx = ctx.metric orelse return false;
     const measures: NodeMeasures = .{ .ctx = metric_ctx, .match = match, .source = ctx.source };
+
     return expr.evaluate(parsed, measures);
 }
 
@@ -80,6 +81,7 @@ fn evalHas(
     while (cursor.nextMatch()) |nested_match| {
         if (try nestedMatchPasses(nested, nested_match, subject, ctx)) return !negate;
     }
+
     return negate;
 }
 
@@ -99,6 +101,7 @@ fn evalInside(
         if (!strictlyContains(enclosing, subject)) continue;
         if (try evaluate(nested.predicates, nested_match, ctx)) return !negate;
     }
+
     return negate;
 }
 
@@ -117,6 +120,7 @@ fn evalCount(
     while (cursor.nextMatch()) |nested_match| {
         if (try nestedMatchPasses(nested, nested_match, subject, ctx)) total += 1;
     }
+
     return compareCount(compare.op, total, compare.value);
 }
 
@@ -128,11 +132,13 @@ fn nestedMatchPasses(
 ) std.mem.Allocator.Error!bool {
     const root_node = findCaptureNode(nested.root_capture_id, nested_match) orelse return false;
     if (sameRange(root_node, subject)) return false;
+
     return evaluate(nested.predicates, nested_match, ctx);
 }
 
 fn subjectNode(pred: rule.Predicate, match: ts.Query.Match) ?ts.Node {
     if (pred.args.len != 1) return null;
+
     return switch (pred.args[0]) {
         .capture => |id| findCaptureNode(id, match),
         .string => null,
@@ -141,6 +147,7 @@ fn subjectNode(pred: rule.Predicate, match: ts.Query.Match) ?ts.Node {
 
 fn strictlyContains(enclosing: ts.Node, node: ts.Node) bool {
     if (sameRange(enclosing, node)) return false;
+
     return enclosing.startByte() <= node.startByte() and node.endByte() <= enclosing.endByte();
 }
 
@@ -168,6 +175,7 @@ const NodeMeasures = struct {
 
     pub fn measure(self: NodeMeasures, m: expr.Measure, capture_id: u32) Error!?u32 {
         const node = findCaptureNode(capture_id, self.match) orelse return null;
+
         return switch (m) {
             .complexity => try metric.complexityOf(self.ctx.allocator, self.ctx.compiled, self.ctx.cursor, node),
             .nesting => try metric.nestingOf(self.ctx.allocator, self.ctx.compiled, self.ctx.cursor, node),
@@ -182,8 +190,11 @@ const NodeMeasures = struct {
 
     fn numericText(self: NodeMeasures, node: ts.Node) ?u32 {
         const end = node.endByte();
+
         if (end > self.source.len) return null;
+
         const text = self.source[node.startByte()..end];
+
         return std.fmt.parseInt(u32, text, 10) catch null;
     }
 };
@@ -196,12 +207,14 @@ pub fn renderMessage(
 ) std.mem.Allocator.Error![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
+
     for (segments) |segment| {
         switch (segment) {
             .literal => |text| try out.appendSlice(allocator, text),
             .placeholder => |p| try renderPlaceholder(allocator, &out, p, match, ctx),
         }
     }
+
     return out.toOwnedSlice(allocator);
 }
 
@@ -214,13 +227,16 @@ fn renderPlaceholder(
 ) std.mem.Allocator.Error!void {
     if (p.measure == .text) {
         const text = findCaptureText(p.capture_id, match, ctx.source) orelse "?";
+
         return out.appendSlice(allocator, text);
     }
+
     const metric_ctx = ctx.metric orelse return out.appendSlice(allocator, "?");
     const measures: NodeMeasures = .{ .ctx = metric_ctx, .match = match, .source = ctx.source };
     const value = (try measures.measure(p.measure, p.capture_id)) orelse return out.appendSlice(allocator, "?");
     var buf: [std.fmt.count("{d}", .{std.math.maxInt(u32)})]u8 = undefined;
     const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch unreachable;
+
     try out.appendSlice(allocator, rendered);
 }
 
@@ -231,8 +247,10 @@ fn evalEq(
     negate: bool,
 ) bool {
     if (pred.args.len != 2) return false;
+
     const left_text = resolveText(pred.args[0], match, source) orelse return false;
     const right_text = resolveText(pred.args[1], match, source) orelse return false;
+
     return std.mem.eql(u8, left_text, right_text) != negate;
 }
 
@@ -243,20 +261,25 @@ fn evalAnyOf(
     negate: bool,
 ) bool {
     if (pred.args.len < 2) return false;
+
     const left_text = resolveText(pred.args[0], match, source) orelse return false;
+
     for (pred.args[1..]) |arg| {
         const candidate = resolveText(arg, match, source) orelse continue;
         if (std.mem.eql(u8, left_text, candidate)) return !negate;
     }
+
     return negate;
 }
 
 fn evalCaptured(pred: rule.Predicate, match: ts.Query.Match, negate: bool) bool {
     if (pred.args.len != 1) return false;
+
     const present = switch (pred.args[0]) {
         .capture => |id| findCaptureNode(id, match) != null,
         .string => false,
     };
+
     return present != negate;
 }
 
@@ -270,6 +293,7 @@ fn evalStringHelper(
     negate: bool,
 ) bool {
     if (pred.args.len != 2) return false;
+
     const subject = resolveText(pred.args[0], match, source) orelse return false;
     const candidate = resolveText(pred.args[1], match, source) orelse return false;
     const found = switch (helper) {
@@ -278,6 +302,7 @@ fn evalStringHelper(
         .contains => std.mem.indexOf(u8, subject, candidate) != null,
         .glob => glob.match(candidate, subject),
     };
+
     return found != negate;
 }
 
@@ -289,6 +314,7 @@ fn evalMatch(
 ) bool {
     const re = pred.regex orelse return false;
     const text = resolveText(pred.args[0], match, source) orelse return false;
+
     return re.isMatch(text) != negate;
 }
 
@@ -311,7 +337,9 @@ fn findCaptureText(
     const node = findCaptureNode(id, match) orelse return null;
     const start = node.startByte();
     const end = node.endByte();
+
     if (end > source.len) return null;
+
     return source[start..end];
 }
 
@@ -319,5 +347,6 @@ fn findCaptureNode(id: u32, match: ts.Query.Match) ?ts.Node {
     for (match.captures) |cap| {
         if (cap.index == id) return cap.node;
     }
+
     return null;
 }

@@ -12,6 +12,7 @@ comptime {
     _ = @import("lint/metric_test.zig");
     _ = @import("lint/facts_test.zig");
     _ = @import("lint/project_rule_test.zig");
+    _ = @import("lint/fact_rule_test.zig");
     _ = @import("lint/glob_test.zig");
     _ = @import("dsl.zig");
     _ = @import("dsl/compile_test.zig");

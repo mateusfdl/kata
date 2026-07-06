@@ -13,18 +13,23 @@ pub const ProjectIndex = struct {
     pub fn deinit(self: *ProjectIndex) void {
         var it = self.files.valueIterator();
         while (it.next()) |file_facts| file_facts.deinit();
+
         self.files.deinit(self.allocator);
     }
 
     pub fn put(self: *ProjectIndex, file_facts: facts.FileFacts) !void {
         const gop = try self.files.getOrPut(self.allocator, file_facts.path);
+
         if (gop.found_existing) {
             var old = gop.value_ptr.*;
             gop.key_ptr.* = file_facts.path;
             gop.value_ptr.* = file_facts;
+
             old.deinit();
+
             return;
         }
+
         gop.key_ptr.* = file_facts.path;
         gop.value_ptr.* = file_facts;
     }

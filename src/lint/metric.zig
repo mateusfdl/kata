@@ -33,6 +33,7 @@ pub fn anyEnabled(set: Set) bool {
     for (std.enums.values(Name)) |n| {
         if (set.get(n) != null) return true;
     }
+
     return false;
 }
 
@@ -56,6 +57,7 @@ fn kindFromCaptureName(name: []const u8) ?Kind {
     if (std.mem.eql(u8, name, "switch")) return .switch_stmt;
     if (std.mem.eql(u8, name, "catch")) return .catch_clause;
     if (std.mem.eql(u8, name, "bool-op")) return .bool_op;
+
     return null;
 }
 
@@ -141,6 +143,7 @@ pub fn compile(
 
     const kinds = try allocator.alloc(Kind, query.captureCount());
     errdefer allocator.free(kinds);
+
     for (kinds, 0..) |*kind, i| {
         const cap_name = query.captureNameForId(@intCast(i)) orelse return error.MetricQueryCompileFailed;
         kind.* = kindFromCaptureName(cap_name) orelse return error.MetricQueryCompileFailed;
@@ -172,11 +175,13 @@ pub fn run(
 
     const owners = try allocator.alloc(?usize, spans.items.len);
     defer allocator.free(owners);
+
     for (spans.items, 0..) |span, i| {
         owners[i] = if (span.kind == .function) null else innermostFunction(spans.items, span);
     }
 
     const lang_str = lang.toString();
+
     if (set.get(.function_length)) |max| try checkFunctionLength(allocator, spans.items, max, lang_str, out);
     if (set.get(.complexity)) |max| try checkComplexity(allocator, spans.items, owners, max, lang_str, out);
     if (set.get(.nesting_depth)) |max| try checkNestingDepth(allocator, spans.items, owners, max, lang_str, out);
@@ -193,11 +198,13 @@ pub fn complexityOf(
     try collectSpans(allocator, compiled, cursor, node, &spans);
 
     var cc: u32 = 1;
+
     for (spans.items) |p| {
         if (!isComplexityPoint(p.kind)) continue;
         if (!ownedByNode(spans.items, p, node)) continue;
         cc += 1;
     }
+
     return cc;
 }
 

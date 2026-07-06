@@ -406,6 +406,7 @@ fn parsePredicateGroup(
 fn opNameFromGroup(query: *ts.Query, group: []const ts.Query.PredicateStep) ?[]const u8 {
     if (group.len == 0) return null;
     if (group[0].type != .string) return null;
+
     return query.stringValueForId(group[0].value_id);
 }
 
@@ -418,6 +419,7 @@ fn absorbSetDirective(
     severity: *diagnostic.Severity,
 ) !void {
     if (group.len < 3) return error.RuleCompileFailed;
+
     const key = resolveStepText(query, group[1]) orelse return error.RuleCompileFailed;
     const value = resolveStepText(query, group[2]) orelse return error.RuleCompileFailed;
 
@@ -425,21 +427,26 @@ fn absorbSetDirective(
         if (message.* == null) message.* = value;
         return;
     }
+
     if (std.mem.eql(u8, key, exclude_paths_property)) {
         if (exclude_paths.*.len == 0) exclude_paths.* = try splitFields(arena, value);
         return;
     }
+
     if (std.mem.eql(u8, key, severity_property)) {
         severity.* = std.meta.stringToEnum(diagnostic.Severity, value) orelse return error.RuleCompileFailed;
         return;
     }
+
     return error.RuleCompileFailed;
 }
 
 fn splitFields(arena: std.mem.Allocator, value: []const u8) ![]const []const u8 {
     var list: std.ArrayList([]const u8) = .empty;
     var it = std.mem.tokenizeScalar(u8, value, ' ');
+
     while (it.next()) |field| try list.append(arena, field);
+
     return list.toOwnedSlice(arena);
 }
 
@@ -450,10 +457,12 @@ fn buildPredicate(
     group: []const ts.Query.PredicateStep,
 ) !Predicate {
     var args = try arena.alloc(PredicateOperand, group.len - 1);
+
     for (group[1..], 0..) |arg_step, j| {
         args[j] = operandFromStep(query, arg_step);
     }
     const op = predicateOpFromName(op_name) orelse return error.RuleCompileFailed;
+
     return .{
         .op = op,
         .args = args,
@@ -470,11 +479,13 @@ fn compileWhereArg(
 ) !?*const expr.Expr {
     if (op != .where) return null;
     if (args.len != 1) return error.RuleCompileFailed;
+
     const source = switch (args[0]) {
         .string => |s| s,
         .capture => return error.RuleCompileFailed,
     };
     const resolver: QueryResolver = .{ .query = query };
+
     return expr.parse(arena, source, resolver) catch |err| switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         else => error.RuleCompileFailed,
@@ -493,10 +504,12 @@ const QueryResolver = struct {
 fn compileRegexArg(op: PredicateOp, args: []const PredicateOperand) !?mvzr.Regex {
     if (op != .match and op != .not_match) return null;
     if (args.len != 2) return error.RuleCompileFailed;
+
     const pattern = switch (args[1]) {
         .string => |s| s,
         .capture => return error.RuleCompileFailed,
     };
+
     return mvzr.compile(pattern) orelse error.RuleCompileFailed;
 }
 
