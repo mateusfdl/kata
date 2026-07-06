@@ -195,3 +195,91 @@ test "check: import-boundary project rules report violations" {
     try std.testing.expect(std.mem.indexOf(u8, written, "domain/user.ts:1:21 [domain-no-infra] import \"../infra/db\" is denied from **/domain/**") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "checked 2 files, 1 violations, 0 warnings") != null);
 }
+
+const fact_repository_isolation = [_]lint.fact_rule.CompiledFactRule{.{
+    .id = "repository-isolation",
+    .fact = .call,
+    .predicates = &.{
+        .{ .op = .ends_with, .args = &.{ .receiver_type, .{ .literal = "Repository" } } },
+        .{ .op = .not_ends_with, .args = &.{ .{ .field = .container }, .{ .literal = "Repository" } } },
+    },
+    .message = &.{.{ .literal = "repositories can only be called by repositories" }},
+}};
+
+test "check: project kata rules report at the yaml rule positions" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "user-repository.ts", .data = "export class UserRepository {\n  find(id: number) {}\n}\n" });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "order-service.ts",
+        .data = "import { UserRepository } from \"./user-repository\";\n" ++
+            "class OrderService {\n" ++
+            "  constructor(private repo: UserRepository) {}\n" ++
+            "  create() {\n" ++
+            "    this.repo.find(1);\n" ++
+            "  }\n" ++
+            "}\n",
+    });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    f.engine.compiled_fact = &fact_repository_isolation;
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &reporter);
+
+    try std.testing.expectEqual(check.Outcome.violations, outcome);
+    const written = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, written, "order-service.ts:5:5 [repository-isolation] repositories can only be called by repositories") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "checked 2 files, 1 violations, 0 warnings") != null);
+}
+
+test "check: kata import rules report at the yaml rule positions" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "domain");
+    try tmp.dir.createDirPath(io, "infra");
+    try tmp.dir.writeFile(io, .{ .sub_path = "domain/user.ts", .data = "import { Db } from \"../infra/db\";\nexport class User {}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "infra/db.ts", .data = "export const Db = 1;\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    const fact_rules = [_]lint.fact_rule.CompiledFactRule{.{
+        .id = "domain-no-infra",
+        .fact = .import,
+        .predicates = &.{
+            .{ .op = .glob, .args = &.{ .{ .field = .path }, .{ .literal = "**/domain/**" } } },
+            .{ .op = .glob, .args = &.{ .resolved_import_source, .{ .literal = "**/infra/**" } } },
+        },
+        .message = &.{.{ .literal = "infra imports are denied from the domain layer" }},
+    }};
+    f.engine.compiled_fact = &fact_rules;
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &reporter);
+
+    try std.testing.expectEqual(check.Outcome.violations, outcome);
+    const written = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, written, "domain/user.ts:1:21 [domain-no-infra] infra imports are denied from the domain layer") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "checked 2 files, 1 violations, 0 warnings") != null);
+}

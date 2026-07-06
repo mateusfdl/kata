@@ -287,8 +287,8 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
     defer if (project_state) |*p| p.deinit();
 
     if (root) |r| {
-        if (ctx.resolved.project_rules.len == 0)
-            return printAndExit(c.stderr, "kata daemon --root requires project-rules in rules.yaml\n", exit_usage);
+        if (ctx.resolved.project_rules.len == 0 and ctx.engine.factRules().len == 0)
+            return printAndExit(c.stderr, "kata daemon --root requires project rules in rules.yaml or rules/project\n", exit_usage);
         project_state = daemon.ProjectState.init(c.gpa, ctx.resolved.project_rules);
         _ = daemon.buildIndex(c.io, c.gpa, &ctx.engine, r, &project_state.?) catch |err|
             return internalError(c.stderr, "index project", err);

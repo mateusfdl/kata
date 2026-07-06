@@ -2,6 +2,7 @@ const std = @import("std");
 const mvzr = @import("mvzr");
 
 const ast = @import("ast.zig");
+const dsl_parser = @import("parser.zig");
 const tokenizer = @import("tokenizer.zig");
 
 const fact_rule = @import("../lint/fact_rule.zig");
@@ -17,6 +18,54 @@ pub const Error = error{
     InvalidRegex,
     InvalidStringComparison,
 };
+
+pub const RawError = Error || dsl_parser.Error || error{
+    RuleIdMismatch,
+    LocalRuleInProjectDir,
+};
+
+pub fn compileRaws(
+    arena: std.mem.Allocator,
+    raws: []const rule.RawRule,
+    diag: *rule.Diagnostic,
+) RawError![]fact_rule.CompiledFactRule {
+    var rules: std.ArrayList(ast.Rule) = .empty;
+    for (raws) |raw| {
+        try rules.appendSlice(arena, try parseRaw(arena, raw, diag));
+    }
+
+    return compile(arena, .{ .rules = rules.items }, diag);
+}
+
+fn parseRaw(
+    arena: std.mem.Allocator,
+    raw: rule.RawRule,
+    diag: *rule.Diagnostic,
+) RawError![]const ast.Rule {
+    var parse_diag: dsl_parser.Diagnostic = .{};
+    var p = try dsl_parser.Parser.init(arena, raw.source, &parse_diag);
+    const file = p.parseFile() catch |err| {
+        diag.* = .{
+            .rule_id = raw.id,
+            .detail = "invalid rule syntax",
+            .line = parse_diag.line,
+            .column = parse_diag.column,
+        };
+        return err;
+    };
+    for (file.rules) |r| {
+        if (r.kind != .project) {
+            diag.* = .{ .rule_id = raw.id, .detail = "rules in rules/project must declare kind project" };
+            return error.LocalRuleInProjectDir;
+        }
+        if (!std.mem.eql(u8, r.id, raw.id)) {
+            diag.* = .{ .rule_id = raw.id, .detail = "rule id does not match the file name" };
+            return error.RuleIdMismatch;
+        }
+    }
+
+    return file.rules;
+}
 
 const unknown_fact_detail = "unknown fact (expected class, method, typedDecl, call, or import)";
 const required_match_detail = "project rules require match <fact> @capture";

@@ -497,3 +497,61 @@ test "context: project composition rule lints through the engine" {
     try std.testing.expectEqualStrings("console is only allowed inside Logger", diags[0].message);
     try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
 }
+
+const isolation_fact_rule =
+    \\rule repository-isolation {
+    \\  kind project
+    \\
+    \\  match call @call
+    \\
+    \\  where {
+    \\    endsWith(receiverType(@call), "Repository")
+    \\    !endsWith(field(@call, container), "Repository")
+    \\  }
+    \\
+    \\  emit @call {
+    \\    message "repositories can only be called by repositories"
+    \\  }
+    \\}
+;
+
+test "context: project fact rule compiles through the resolver" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/project");
+    try s.tmp.dir.createDirPath(io, "proj/src");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "enabled:\n  - project/repository-isolation\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/project/repository-isolation.kata", .data = isolation_fact_rule });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
+
+    var r = s.resolver(null, null);
+    const ctx = try r.resolve(try s.path("proj/src/main.ts"));
+    defer ctx.deinit();
+
+    try ctx.engine.prewarm();
+    const fact_rules = ctx.engine.factRules();
+    try std.testing.expectEqual(@as(usize, 1), fact_rules.len);
+    try std.testing.expectEqualStrings("repository-isolation", fact_rules[0].id);
+    try std.testing.expectEqual(lint.fact_rule.FactKind.call, fact_rules[0].fact);
+    try std.testing.expectEqual(@as(usize, 2), fact_rules[0].predicates.len);
+}
+
+test "context: undeclared project fact rule stays inactive" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/project");
+    try s.tmp.dir.createDirPath(io, "proj/src");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/project/repository-isolation.kata", .data = isolation_fact_rule });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
+
+    var r = s.resolver(null, null);
+    const ctx = try r.resolve(try s.path("proj/src/main.ts"));
+    defer ctx.deinit();
+
+    try ctx.engine.prewarm();
+    try std.testing.expectEqual(@as(usize, 0), ctx.engine.factRules().len);
+}

@@ -3,6 +3,8 @@ const ts = @import("tree_sitter");
 
 const diagnostic = @import("diagnostic.zig");
 const dsl_compile = @import("../dsl/compile.zig");
+const fact_compile = @import("../dsl/fact_compile.zig");
+const fact_rule = @import("fact_rule.zig");
 const facts = @import("facts.zig");
 const glob = @import("glob.zig");
 const language = @import("language.zig");
@@ -27,6 +29,8 @@ pub const Engine = struct {
     cursor: *ts.QueryCursor,
     metric_cursor: *ts.QueryCursor,
     nested_cursor: *ts.QueryCursor,
+    compiled_fact: ?[]const fact_rule.CompiledFactRule = null,
+    fact_arena: ?*std.heap.ArenaAllocator = null,
     warnings: []const rule.ScopedId = &.{},
     compile_diag: rule.Diagnostic = .{},
 
@@ -70,6 +74,10 @@ pub const Engine = struct {
         while (fit.next()) |entry| {
             if (entry.value.*) |*compiled| compiled.deinit(self.allocator);
         }
+        if (self.fact_arena) |arena_ptr| {
+            arena_ptr.deinit();
+            self.allocator.destroy(arena_ptr);
+        }
         self.cursor.destroy();
         self.metric_cursor.destroy();
         self.nested_cursor.destroy();
@@ -82,6 +90,32 @@ pub const Engine = struct {
             _ = try self.ensureParser(lang);
             if (metric.anyEnabled(self.metrics) or needsMeasures(compiled, compiled_dsl)) _ = try self.ensureMetricQuery(lang);
         }
+        _ = try self.ensureCompiledFact();
+    }
+
+    pub fn factRules(self: *const Engine) []const fact_rule.CompiledFactRule {
+        return self.compiled_fact orelse &.{};
+    }
+
+    pub fn ensureCompiledFact(self: *Engine) ![]const fact_rule.CompiledFactRule {
+        if (self.compiled_fact) |cached| return cached;
+
+        const raws = self.rules.projectRaws();
+        if (raws.len == 0) {
+            self.compiled_fact = &.{};
+            return self.compiled_fact.?;
+        }
+
+        const arena_ptr = try self.allocator.create(std.heap.ArenaAllocator);
+        errdefer self.allocator.destroy(arena_ptr);
+        arena_ptr.* = std.heap.ArenaAllocator.init(self.allocator);
+        errdefer arena_ptr.deinit();
+
+        const compiled = try fact_compile.compileRaws(arena_ptr.allocator(), raws, &self.compile_diag);
+        self.fact_arena = arena_ptr;
+        self.compiled_fact = compiled;
+
+        return compiled;
     }
 
     /// prewarm and, on failure, write the compile diagnostic under `label`.

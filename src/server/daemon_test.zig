@@ -800,3 +800,46 @@ test "daemon: cached project context lints with kata project rules" {
     try std.testing.expectEqualStrings("flag-zzz", report.diagnostics[0].rule_id);
     try std.testing.expectEqualStrings("zzz is banned here", report.diagnostics[0].message);
 }
+
+const fact_repository_isolation = [_]@import("../lint.zig").fact_rule.CompiledFactRule{.{
+    .id = "repository-isolation",
+    .fact = .call,
+    .predicates = &.{
+        .{ .op = .ends_with, .args = &.{ .receiver_type, .{ .literal = "Repository" } } },
+        .{ .op = .not_ends_with, .args = &.{ .{ .field = .container }, .{ .literal = "Repository" } } },
+    },
+    .message = &.{.{ .literal = "repositories can only be called by repositories" }},
+}};
+
+test "daemon: project kata rules flag a write" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    f.engine.compiled_fact = &fact_repository_isolation;
+    var state = daemon.ProjectState.init(gpa, &.{});
+    defer state.deinit();
+    try state.index.put(try f.engine.extractFacts(gpa, user_repository_src, .ts, "/proj/user-repository.ts"));
+
+    var ctx = context(f);
+    ctx.project = &state;
+
+    const resp = daemon.handle(ctx, arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = "/proj/order-service.ts",
+        .source = order_service_src,
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expect(!report.clean);
+    try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+    try std.testing.expectEqualStrings("repository-isolation", report.diagnostics[0].rule_id);
+    try std.testing.expectEqualStrings(
+        "repositories can only be called by repositories",
+        report.diagnostics[0].message,
+    );
+    try std.testing.expectEqual(@as(u32, 4), report.diagnostics[0].range.start.line);
+}

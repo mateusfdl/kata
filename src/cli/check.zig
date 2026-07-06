@@ -20,10 +20,11 @@ pub fn run(
     reporter: *reports.Reporter,
 ) !Outcome {
     const stat = try fs.source.statTarget(io, target);
+    const fact_rules = try engine.ensureCompiledFact();
 
     var index = lint.ProjectIndex.init(gpa);
     defer index.deinit();
-    const index_ptr: ?*lint.ProjectIndex = if (project_rules.len > 0) &index else null;
+    const index_ptr: ?*lint.ProjectIndex = if (project_rules.len > 0 or fact_rules.len > 0) &index else null;
 
     var counts = switch (stat.kind) {
         .directory => try checkDir(io, gpa, engine, target, index_ptr, reporter),
@@ -31,7 +32,7 @@ pub fn run(
         else => return error.UnsupportedTarget,
     };
 
-    if (index_ptr) |idx| counts.add(try reportProjectViolations(gpa, engine, project_rules, idx, reporter));
+    if (index_ptr) |idx| counts.add(try reportProjectViolations(gpa, engine, project_rules, fact_rules, idx, reporter));
 
     try reporter.finish(counts);
     return if (counts.violations > 0) .violations else .clean;
@@ -112,12 +113,16 @@ fn reportProjectViolations(
     gpa: std.mem.Allocator,
     engine: *Engine,
     project_rules: []const lint.project_rule.ProjectRule,
+    fact_rules: []const lint.fact_rule.CompiledFactRule,
     index: *const lint.ProjectIndex,
     reporter: *reports.Reporter,
 ) !reports.Counts {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    const violations = try lint.project_rule.evaluate(arena.allocator(), project_rules, engine.warnings, index);
+    const yaml_violations = try lint.project_rule.evaluate(arena.allocator(), project_rules, engine.warnings, index);
+    const fact_violations = try lint.fact_rule.evaluate(arena.allocator(), fact_rules, engine.warnings, index);
+    const violations = try std.mem.concat(arena.allocator(), lint.project_rule.Violation, &.{ yaml_violations, fact_violations });
+    std.mem.sort(lint.project_rule.Violation, violations, {}, lint.project_rule.violationLessThan);
 
     try reporter.project(violations);
 
