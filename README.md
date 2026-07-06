@@ -192,19 +192,26 @@ project's context on the fly.
 
 ### Custom rules
 
-Drop `.scm` files under `$XDG_CONFIG_HOME/kata/rules/<lang>/` (or
+Drop `.scm` or `.kata` files under `$XDG_CONFIG_HOME/kata/rules/<lang>/` (or
 `$HOME/.config/kata/rules/<lang>/`) to add your own rules. The basename of the
 file is the rule id; the layout mirrors the embedded `rules/` tree. Like every
 rule, a custom rule stays inactive until listed under `enabled:` in
 `rules.yaml`.
 
 A user or project rule that shares an id with an earlier tier shadows it
-silently. Two rule files with the same id in the same tier (for example
+silently, regardless of format: a user `no-console.kata` overrides the embedded
+`no-console.scm`. Two rule files with the same id in the same tier (for example
 `rules/ts/x.scm` and `rules/ts+tsx/x.scm`) keep the last one and print a
 warning:
 
 ```
 kata: warning: user rule ts/no-console overrides previous definition
+```
+
+The same id in both formats in one tier is an error, not a guess:
+
+```
+kata: rule ts/no-console exists as both .scm and .kata
 ```
 
 To bootstrap a new custom rule, use:
@@ -267,4 +274,35 @@ the offending rule, so a typo never silently disables a check:
 
 ```
 kata: rule go/no-comments: unsupported predicate, #set! key, or regex
+```
+
+### Kata DSL rules
+
+Rules can also be written in the kata DSL as `.kata` files:
+
+```kata
+rule no-console {
+  lang ts
+
+  match call_expression @match {
+    function: member_expression {
+      object: identifier @receiver
+    }
+  }
+
+  where { text(@receiver) == "console" }
+
+  emit @match { message "console is not allowed" }
+}
+```
+
+A `.kata` file declares exactly one rule, the rule id must match the file name,
+and the `lang` clause must include the language directory the file sits in.
+Everything else works exactly like `.scm` rules: same tiers, same shadowing,
+same `enabled:` opt-in, same fixture harness under `tests/`.
+
+Syntax and compile errors fail at startup with the rule id and position:
+
+```
+kata: rule ts/no-x: line 3, column 1: invalid rule syntax
 ```
