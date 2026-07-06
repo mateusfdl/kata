@@ -301,6 +301,32 @@ and the `lang` clause must include the language directory the file sits in.
 Everything else works exactly like `.scm` rules: same tiers, same shadowing,
 same `enabled:` opt-in, same fixture harness under `tests/`.
 
+`where` blocks also take composition predicates - `inside`, `not inside`,
+`has`, `not has`, and `count` - to express containment rules that a single
+query cannot:
+
+```kata
+rule no-empty-catch {
+  lang ts
+
+  match catch_clause @match {
+    body: statement_block @body
+  }
+
+  where {
+    not has @body [throw_statement, call_expression]
+  }
+
+  emit @match { message "catch block must handle or rethrow the error" }
+}
+```
+
+A nested matcher may bind its own captures and filter them with a trailing
+`where` block; those captures stay scoped to the nested matcher. `count`
+compares the number of nested matches: `count @match return_statement > 3`.
+A node never contains itself: matches spanning exactly the subject node's
+range do not count for `inside`, `has`, or `count`.
+
 Syntax and compile errors fail at startup with the rule id and position:
 
 ```
