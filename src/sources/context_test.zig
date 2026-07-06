@@ -452,3 +452,48 @@ test "context: undeclared project kata rule stays inactive" {
 
     try std.testing.expectEqual(@as(usize, 0), diags.len);
 }
+
+test "context: project composition rule lints through the engine" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    const outside_logger_rule =
+        \\rule console-outside-logger {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: member_expression {
+        \\      object: identifier @obj
+        \\    }
+        \\  }
+        \\  where {
+        \\    text(@obj) == "console"
+        \\    not inside @match class_declaration {
+        \\      name: type_identifier @name
+        \\      where {
+        \\        text(@name) == "Logger"
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @match { message "console is only allowed inside Logger" }
+        \\}
+    ;
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.createDirPath(io, "proj/src");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "enabled:\n  - ts/console-outside-logger\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/console-outside-logger.kata", .data = outside_logger_rule });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
+
+    var r = s.resolver(null, null);
+    const ctx = try r.resolve(try s.path("proj/src/main.ts"));
+    defer ctx.deinit();
+
+    const diags = try ctx.engine.lint(gpa, "console.log(1);\nclass Logger { log() { console.log(2); } }\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("console-outside-logger", diags[0].rule_id);
+    try std.testing.expectEqualStrings("console is only allowed inside Logger", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+}

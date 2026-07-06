@@ -281,3 +281,29 @@ test "harness: kata rule with invalid syntax is invalid" {
         s.err.written(),
     );
 }
+
+const kata_composition_rule =
+    \\rule no-empty-catch {
+    \\  lang ts
+    \\  match catch_clause @match {
+    \\    body: statement_block @body
+    \\  }
+    \\  where {
+    \\    not has @body [throw_statement, call_expression]
+    \\  }
+    \\  emit @match { message "catch block must handle or rethrow the error" }
+    \\}
+;
+
+test "harness: composition rule fixtures run through the same harness" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "no-empty-catch.kata", kata_composition_rule, "sample.ts", "// kata-expect: no-empty-catch\n" ++
+        "try { a(); } catch (e) {}\n" ++
+        "try { b(); } catch (e) { rethrow(e); }\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.pass, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+}
