@@ -22,9 +22,12 @@ pub const Context = struct {
     pub fn deinit(self: *Context) void {
         self.engine.deinit();
         self.rule_set.deinit();
+
         if (self.project_config) |*c| c.deinit();
+
         const child = self.arena_ptr.child_allocator;
         self.arena_ptr.deinit();
+
         child.destroy(self.arena_ptr);
         self.gpa.destroy(self);
     }
@@ -47,8 +50,15 @@ pub const Resolver = struct {
         arena_ptr.* = .init(self.gpa);
         errdefer arena_ptr.deinit();
         const arena = arena_ptr.allocator();
+        const root = try self.discoverRoot(arena, anchor);
 
-        return self.build(ctx, arena_ptr, if (anchor) |a| try fs.discover.findProjectRoot(self.io, arena, a) else null);
+        return self.build(ctx, arena_ptr, root);
+    }
+
+    fn discoverRoot(self: *Resolver, arena: std.mem.Allocator, anchor: ?[]const u8) !?[]const u8 {
+        const a = anchor orelse return null;
+
+        return try fs.discover.findProjectRoot(self.io, arena, a);
     }
 
     pub fn resolveAtRoot(self: *Resolver, root: []const u8) !*Context {
