@@ -7,12 +7,14 @@ const source_files = @import("source.zig");
 const language = lint.language;
 
 pub const scm_suffix = ".scm";
+pub const kata_suffix = ".kata";
 
 pub const RuleFile = struct {
     langs: []const language.Name,
     id: []const u8,
     body: []const u8,
     source: lint.Source,
+    format: lint.rule.Format,
 };
 
 pub const FixtureFile = struct {
@@ -110,16 +112,23 @@ fn collectLanguageRuleFiles(
     var file_iter = lang_dir.iterate();
     while (try file_iter.next(io)) |fentry| {
         if (fentry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, fentry.name, scm_suffix)) continue;
-        const id = stripScmSuffix(fentry.name);
+        const format = formatOf(fentry.name) orelse continue;
+        const id = stripSuffix(fentry.name, format);
         if (id.len == 0) return error.InvalidRule;
         try out.append(allocator, .{
             .langs = langs,
             .id = try allocator.dupe(u8, id),
             .body = try lang_dir.readFileAlloc(io, fentry.name, allocator, .limited(std.math.maxInt(usize))),
             .source = source,
+            .format = format,
         });
     }
+}
+
+pub fn formatOf(name: []const u8) ?lint.rule.Format {
+    if (std.mem.endsWith(u8, name, scm_suffix)) return .scm;
+    if (std.mem.endsWith(u8, name, kata_suffix)) return .kata;
+    return null;
 }
 
 fn collectLanguageFixtureFiles(
@@ -153,6 +162,10 @@ fn collectLanguageFixtureFiles(
     }
 }
 
-fn stripScmSuffix(name: []const u8) []const u8 {
-    return name[0 .. name.len - scm_suffix.len];
+fn stripSuffix(name: []const u8, format: lint.rule.Format) []const u8 {
+    const suffix = switch (format) {
+        .scm => scm_suffix,
+        .kata => kata_suffix,
+    };
+    return name[0 .. name.len - suffix.len];
 }

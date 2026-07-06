@@ -217,6 +217,11 @@ fn resolveContext(c: Command, anchor: ?[]const u8) !?*context_mod.Context {
             try c.stderr.flush();
             return null;
         }
+        if (c.resolver.load_diag.lang) |lang| {
+            try c.stderr.print("kata: rule {s}/{s} exists as both .scm and .kata\n", .{ lang.toString(), c.resolver.load_diag.id() });
+            try c.stderr.flush();
+            return null;
+        }
         _ = try internalError(c.stderr, "resolve context", err);
         return null;
     };

@@ -37,6 +37,35 @@ test "upsert: same-tier collision replaces in place and emits one warning" {
     try std.testing.expectEqualStrings("no-any", w.id);
 }
 
+test "upsert: same tier same id across formats errors" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var set: loader.RuleSet = .{ .allocator = arena.allocator() };
+
+    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "((x) @match)" }, .user);
+    const got = set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "rule no-any {}", .format = .kata }, .user);
+
+    try std.testing.expectError(error.DuplicateRuleFormats, got);
+    const dup = set.duplicate.?;
+    try std.testing.expectEqual(loader.Source.user, dup.source);
+    try std.testing.expectEqual(language.Name.ts, dup.lang);
+    try std.testing.expectEqualStrings("no-any", dup.id);
+}
+
+test "upsert: cross-tier override across formats stays silent" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var set: loader.RuleSet = .{ .allocator = arena.allocator() };
+
+    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "((x) @match)" }, .embedded);
+    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "rule no-any {}", .format = .kata }, .user);
+
+    try std.testing.expectEqual(@as(usize, 1), set.get(.ts).len);
+    try std.testing.expectEqual(rule.Format.kata, set.get(.ts)[0].format);
+    try std.testing.expectEqualStrings("rule no-any {}", set.get(.ts)[0].source);
+    try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
+}
+
 test "upsert: user overrides embedded, then project overrides user, silently" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -89,6 +118,65 @@ test "load: user_dir reads scm files into the right language slot" {
     try std.testing.expectEqual(@as(usize, 1), set.get(.ts).len);
     try std.testing.expectEqualStrings("local-rule", set.get(.ts)[0].id);
     try std.testing.expectEqualStrings("((identifier) @match)", set.get(.ts)[0].source);
+    try std.testing.expectEqual(rule.Format.scm, set.get(.ts)[0].format);
+}
+
+test "load: user_dir reads kata files with the kata format" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "ts");
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "ts/local-rule.kata",
+        .data = "rule local-rule {}",
+    });
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var path_buf: [256]u8 = undefined;
+    const rel = try relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    var set = try loader.load(arena.allocator(), std.testing.io, .{
+        .skip_embedded = true,
+        .user_dir = rel,
+    });
+    defer set.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), set.get(.ts).len);
+    try std.testing.expectEqualStrings("local-rule", set.get(.ts)[0].id);
+    try std.testing.expectEqualStrings("rule local-rule {}", set.get(.ts)[0].source);
+    try std.testing.expectEqual(rule.Format.kata, set.get(.ts)[0].format);
+}
+
+test "load: same id in both formats in one dir errors with the scoped id" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "ts");
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "ts/no-x.scm",
+        .data = "((identifier) @match)",
+    });
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "ts/no-x.kata",
+        .data = "rule no-x {}",
+    });
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var path_buf: [256]u8 = undefined;
+    const rel = try relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    var diag: loader.Diagnostic = .{};
+    const got = loader.load(arena.allocator(), std.testing.io, .{
+        .skip_embedded = true,
+        .user_dir = rel,
+        .diag = &diag,
+    });
+
+    try std.testing.expectError(error.DuplicateRuleFormats, got);
+    try std.testing.expectEqual(language.Name.ts, diag.lang.?);
+    try std.testing.expectEqualStrings("no-x", diag.id());
 }
 
 test "load: missing user_dir is silently empty" {

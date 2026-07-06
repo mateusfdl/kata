@@ -15,6 +15,7 @@ pub const RuleSet = struct {
     allocator: std.mem.Allocator,
     by_lang: std.EnumArray(language.Name, std.ArrayList(rule.RawRule)) = .initFill(.empty),
     warnings: std.ArrayList(Warning) = .empty,
+    duplicate: ?Warning = null,
 
     pub fn deinit(self: *RuleSet) void {
         var it = self.by_lang.iterator();
@@ -39,6 +40,10 @@ pub const RuleSet = struct {
         for (list.items, 0..) |existing, idx| {
             if (std.mem.eql(u8, existing.id, entry.id)) {
                 if (existing.origin == source) {
+                    if (existing.format != entry.format) {
+                        self.duplicate = .{ .source = source, .lang = name, .id = entry.id };
+                        return error.DuplicateRuleFormats;
+                    }
                     try self.warnings.append(self.allocator, .{
                         .source = source,
                         .lang = name,
