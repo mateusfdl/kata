@@ -95,6 +95,54 @@ test "pretty: violation on the last line has no trailing context" {
     );
 }
 
+test "pretty: tabs before a violation align the underline with the rendered source" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    const source = "func main() {\n\t\t_, err := send()\n}\n";
+    const d = diag("no-swallowed-errors", "blank identifier discarding function return", .{
+        .start = .{ .line = 1, .column = 2 },
+        .end = .{ .line = 1, .column = 8 },
+    }, .@"error");
+    try render(source, d, &out);
+
+    try std.testing.expectEqualStrings(
+        "src/app.ts:2:3 [no-swallowed-errors]\n" ++
+            "\n" ++
+            "  x blank identifier discarding function return\n" ++
+            "\n" ++
+            "  1 | func main() {\n" ++
+            "> 2 |         _, err := send()\n" ++
+            "    |         ^^^^^^\n" ++
+            "  3 | }\n" ++
+            "\n",
+        out.written(),
+    );
+}
+
+test "pretty: tabs inside a violation keep caret width aligned" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    const source = "value\t:= call()\n";
+    const d = diag("assignment", "assignment is not allowed", .{
+        .start = .{ .line = 0, .column = 0 },
+        .end = .{ .line = 0, .column = 8 },
+    }, .@"error");
+    try render(source, d, &out);
+
+    try std.testing.expectEqualStrings(
+        "src/app.ts:1:1 [assignment]\n" ++
+            "\n" ++
+            "  x assignment is not allowed\n" ++
+            "\n" ++
+            "> 1 | value   := call()\n" ++
+            "    | ^^^^^^^^^^\n" ++
+            "\n",
+        out.written(),
+    );
+}
+
 test "pretty: multi-line node underlines to the end of the first line" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();

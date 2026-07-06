@@ -7,6 +7,7 @@ const text = @import("text.zig");
 const utils = @import("utils.zig");
 
 const context_lines = 2;
+const tab_width = 4;
 const reset = "\x1b[0m";
 
 pub const Pretty = struct {
@@ -75,20 +76,26 @@ pub const Pretty = struct {
                 try self.unpaint();
                 try self.writer.writeAll(" ");
                 try self.gutterNum(line_idx + 1, width);
-                try self.writer.print(" | {s}\n", .{line});
+                try self.writer.writeAll(" | ");
+                try self.sourceLine(line);
+                try self.writer.writeAll("\n");
                 try self.caretLine(line, d, width);
             } else {
                 try self.writer.writeAll("  ");
                 try self.gutterNum(line_idx + 1, width);
-                try self.writer.print(" | {s}\n", .{line});
+                try self.writer.writeAll(" | ");
+                try self.sourceLine(line);
+                try self.writer.writeAll("\n");
             }
         }
         try self.writer.writeAll("\n");
     }
 
     fn caretLine(self: *Pretty, line: []const u8, d: lint.diagnostic.Diagnostic, width: usize) std.Io.Writer.Error!void {
-        const start = @min(d.range.start.column, line.len);
-        const span_end = if (d.range.end.line == d.range.start.line) @min(d.range.end.column, line.len) else line.len;
+        const start_byte = @min(d.range.start.column, line.len);
+        const end_byte = if (d.range.end.line == d.range.start.line) @min(d.range.end.column, line.len) else line.len;
+        const start = renderedWidth(line[0..start_byte]);
+        const span_end = renderedWidth(line[0..end_byte]);
         const carets = @max(span_end -| start, 1);
 
         try self.repeat(' ', width + 2);
@@ -98,6 +105,20 @@ pub const Pretty = struct {
         try self.repeat('^', carets);
         try self.unpaint();
         try self.writer.writeAll("\n");
+    }
+
+    fn sourceLine(self: *Pretty, line: []const u8) std.Io.Writer.Error!void {
+        var col: usize = 0;
+        for (line) |c| {
+            if (c == '\t') {
+                const pad = tab_width - (col % tab_width);
+                try self.repeat(' ', pad);
+                col += pad;
+            } else {
+                try self.writer.writeByte(c);
+                col += 1;
+            }
+        }
     }
 
     fn gutterNum(self: *Pretty, display: usize, width: usize) std.Io.Writer.Error!void {
@@ -125,3 +146,11 @@ pub const Pretty = struct {
         while (i < n) : (i += 1) try self.writer.writeByte(byte);
     }
 };
+
+fn renderedWidth(prefix: []const u8) usize {
+    var col: usize = 0;
+    for (prefix) |c| {
+        col += if (c == '\t') tab_width - (col % tab_width) else 1;
+    }
+    return col;
+}
