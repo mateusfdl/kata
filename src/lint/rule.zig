@@ -56,6 +56,8 @@ pub const PredicateOp = enum {
     not_ends_with,
     contains,
     not_contains,
+    captured,
+    not_captured,
     where,
     has,
     not_has,

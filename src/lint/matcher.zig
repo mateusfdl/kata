@@ -39,6 +39,8 @@ pub fn evaluate(
             .not_ends_with => if (!evalStringHelper(pred, match, ctx.source, .ends_with, true)) return false,
             .contains => if (!evalStringHelper(pred, match, ctx.source, .contains, false)) return false,
             .not_contains => if (!evalStringHelper(pred, match, ctx.source, .contains, true)) return false,
+            .captured => if (!evalCaptured(pred, match, false)) return false,
+            .not_captured => if (!evalCaptured(pred, match, true)) return false,
             .where => if (!try evalWhere(pred, match, ctx)) return false,
             .has => if (!try evalHas(pred, match, ctx, false)) return false,
             .not_has => if (!try evalHas(pred, match, ctx, true)) return false,
@@ -242,6 +244,15 @@ fn evalAnyOf(
         if (std.mem.eql(u8, left_text, candidate)) return !negate;
     }
     return negate;
+}
+
+fn evalCaptured(pred: rule.Predicate, match: ts.Query.Match, negate: bool) bool {
+    if (pred.args.len != 1) return false;
+    const present = switch (pred.args[0]) {
+        .capture => |id| findCaptureNode(id, match) != null,
+        .string => false,
+    };
+    return present != negate;
 }
 
 const StringHelper = enum { starts_with, ends_with, contains };

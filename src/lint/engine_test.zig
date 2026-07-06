@@ -1237,3 +1237,34 @@ test "engine: string helper predicates filter matches" {
     try std.testing.expectEqualStrings("effect hook call", diags[0].message);
     try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
 }
+
+const kata_no_early_exit =
+    \\rule no-early-exit {
+    \\  lang ts
+    \\  match function_declaration @match {
+    \\    body: statement_block {
+    \\      children: return_statement @rets
+    \\    }
+    \\  }
+    \\  where {
+    \\    !capture(@rets)
+    \\  }
+    \\  emit @match { message "function never returns a value" }
+    \\}
+;
+
+test "engine: capture predicate tests optional capture presence" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-early-exit", kata_no_early_exit, .kata);
+    defer f.deinit();
+
+    const src =
+        "function quiet() { let a = 1; }\n" ++
+        "function loud() { return 1; }\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("function never returns a value", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+}

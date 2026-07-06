@@ -727,3 +727,51 @@ test "compile: string helpers require two text arguments" {
     try std.testing.expectError(error.UnsupportedPredicate, compile.compile(gpa, &registry, .ts, file, &diag));
     try std.testing.expectEqualStrings("startsWith, endsWith, and contains expect (value, text)", diag.detail);
 }
+
+test "compile: translates capture presence predicates" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+        \\rule has-returns {
+        \\  lang ts
+        \\  match function_declaration @match {
+        \\    body: statement_block {
+        \\      children: return_statement @rets
+        \\    }
+        \\  }
+        \\  where {
+        \\    capture(@rets)
+        \\    !capture(@rets)
+        \\  }
+        \\  emit @match { message "impossible" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 2), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.captured, predicates[0].op);
+    try std.testing.expectEqual(rule.PredicateOp.not_captured, predicates[1].op);
+}
+
+test "compile: capture predicate requires one capture argument" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where { capture("id") }
+        \\  emit @id { message "bad" }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.UnsupportedPredicate, compile.compile(gpa, &registry, .ts, file, &diag));
+    try std.testing.expectEqualStrings("capture expects one capture argument", diag.detail);
+}

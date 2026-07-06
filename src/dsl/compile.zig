@@ -509,8 +509,19 @@ fn collectDisjunction(
 
 fn callPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
     if (std.mem.eql(u8, call.name, "matches")) return matchesPredicate(ctx, call, negated);
+    if (std.mem.eql(u8, call.name, "capture")) return capturedPredicate(ctx, call, negated);
     if (stringHelperOp(call.name, negated)) |op| return stringHelperPredicate(ctx, call, op);
     return null;
+}
+
+fn capturedPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
+    if (call.args.len != 1 or call.args[0] != .capture) {
+        ctx.fail("capture expects one capture argument");
+        return error.UnsupportedPredicate;
+    }
+    const args = try ctx.arena.alloc(rule.PredicateOperand, 1);
+    args[0] = .{ .capture = try resolveCapture(ctx, call.args[0].capture.name) };
+    return .{ .op = if (negated) .not_captured else .captured, .args = args };
 }
 
 fn stringHelperOp(name: []const u8, negated: bool) ?rule.PredicateOp {
