@@ -2,6 +2,7 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 
 const diagnostic = @import("diagnostic.zig");
+const dsl_compile = @import("../dsl/compile.zig");
 const facts = @import("facts.zig");
 const glob = @import("glob.zig");
 const language = @import("language.zig");
@@ -18,6 +19,7 @@ pub const Engine = struct {
     registry: *language.Registry,
     rules: *RuleSet,
     compiled: std.EnumArray(language.Name, ?rule.CompiledRule) = .initFill(null),
+    compiled_dsl: std.EnumArray(language.Name, ?rule.CompiledRule) = .initFill(null),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
     metrics: metric.Set = metric.empty,
     metric_queries: std.EnumArray(language.Name, ?metric.Compiled) = .initFill(null),
@@ -46,6 +48,10 @@ pub const Engine = struct {
         while (it.next()) |entry| {
             if (entry.value.*) |*compiled| compiled.deinit();
         }
+        var dit = self.compiled_dsl.iterator();
+        while (dit.next()) |entry| {
+            if (entry.value.*) |*compiled| compiled.deinit();
+        }
         var pit = self.parsers.iterator();
         while (pit.next()) |entry| {
             if (entry.value.*) |parser| parser.destroy();
@@ -65,8 +71,9 @@ pub const Engine = struct {
     pub fn prewarm(self: *Engine) !void {
         for (std.enums.values(language.Name)) |lang| {
             const compiled = try self.ensureCompiled(lang);
+            const compiled_dsl = try self.ensureCompiledDsl(lang);
             _ = try self.ensureParser(lang);
-            if (metric.anyEnabled(self.metrics) or compiled.needs_measures) _ = try self.ensureMetricQuery(lang);
+            if (metric.anyEnabled(self.metrics) or needsMeasures(compiled, compiled_dsl)) _ = try self.ensureMetricQuery(lang);
         }
     }
 
@@ -93,6 +100,13 @@ pub const Engine = struct {
         const slot = self.compiled.getPtr(lang);
         if (slot.*) |*cached| return cached;
         slot.* = try rule.compile(self.allocator, self.registry, lang, self.rules.get(lang), &self.compile_diag);
+        return &slot.*.?;
+    }
+
+    fn ensureCompiledDsl(self: *Engine, lang: language.Name) !?*rule.CompiledRule {
+        const slot = self.compiled_dsl.getPtr(lang);
+        if (slot.*) |*cached| return cached;
+        slot.* = (try dsl_compile.compileRaws(self.allocator, self.registry, lang, self.rules.get(lang), &self.compile_diag)) orelse return null;
         return &slot.*.?;
     }
 
@@ -132,6 +146,7 @@ pub const Engine = struct {
         path: ?[]const u8,
     ) ![]diagnostic.Diagnostic {
         const compiled = try self.ensureCompiled(lang);
+        const compiled_dsl = try self.ensureCompiledDsl(lang);
         const parser = try self.ensureParser(lang);
         const tree = parser.parseString(source, null) orelse return error.ParseFailed;
         defer tree.destroy();
@@ -139,7 +154,7 @@ pub const Engine = struct {
         var out: std.ArrayList(diagnostic.Diagnostic) = try .initCapacity(allocator, initial_diagnostic_capacity);
         errdefer out.deinit(allocator);
 
-        const metric_ctx: ?matcher.MetricContext = if (compiled.needs_measures) .{
+        const metric_ctx: ?matcher.MetricContext = if (needsMeasures(compiled, compiled_dsl)) .{
             .allocator = allocator,
             .compiled = try self.ensureMetricQuery(lang),
             .cursor = self.metric_cursor,
@@ -147,6 +162,7 @@ pub const Engine = struct {
         } else null;
 
         try runRule(allocator, compiled, self.cursor, tree.rootNode(), source, lang, path, metric_ctx, &out);
+        if (compiled_dsl) |dsl| try runRule(allocator, dsl, self.cursor, tree.rootNode(), source, lang, path, metric_ctx, &out);
 
         if (metric.anyEnabled(self.metrics)) {
             const metric_query = try self.ensureMetricQuery(lang);
@@ -158,6 +174,12 @@ pub const Engine = struct {
         return out.toOwnedSlice(allocator);
     }
 };
+
+fn needsMeasures(compiled: *const rule.CompiledRule, compiled_dsl: ?*rule.CompiledRule) bool {
+    if (compiled.needs_measures) return true;
+    if (compiled_dsl) |dsl| return dsl.needs_measures;
+    return false;
+}
 
 fn demoteWarnings(
     warnings: []const rule.ScopedId,

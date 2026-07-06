@@ -207,6 +207,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     try finalizePending(arena, &pending, &project_rules, diag);
 
     diag.line = 0;
+
     return .{
         .enabled = try enabled.toOwnedSlice(arena),
         .disabled = try disabled.toOwnedSlice(arena),
@@ -232,8 +233,10 @@ fn markPresent(present: *Presence, state: State) void {
 
 fn parseRatchetValue(raw: []const u8) ParseError!bool {
     const value = std.mem.trim(u8, raw, " ");
+
     if (std.mem.eql(u8, value, "true")) return true;
     if (std.mem.eql(u8, value, "false")) return false;
+
     return error.InvalidRatchetValue;
 }
 
@@ -244,11 +247,14 @@ fn finalizePending(
     diag: *Diagnostic,
 ) ParseError!void {
     const p = pending.* orelse return;
+
     pending.* = null;
+
     const kind = p.kind orelse {
         diag.line = p.line;
         return error.MissingProjectRuleKind;
     };
+
     switch (kind) {
         .restricted_callers => {
             if (p.from != null or p.deny != null) {
@@ -298,8 +304,11 @@ fn startProjectRule(
     line: u32,
 ) ParseError!PendingProjectRule {
     if (!std.mem.endsWith(u8, content, ":")) return error.MalformedProjectRuleEntry;
+
     const id = content[0 .. content.len - 1];
+
     if (!rule.isValidId(id)) return error.InvalidRuleId;
+
     return .{ .id = try arena.dupe(u8, id), .line = line };
 }
 
@@ -317,22 +326,27 @@ fn setProjectRuleProperty(
         pending.kind = project_rule.ProjectRule.Kind.tagFromString(value) orelse return error.UnknownProjectRuleKind;
         return;
     }
+
     if (std.mem.eql(u8, key, "callee-suffix")) {
         pending.callee_suffix = try arena.dupe(u8, value);
         return;
     }
+
     if (std.mem.eql(u8, key, "caller-suffix")) {
         pending.caller_suffix = try arena.dupe(u8, value);
         return;
     }
+
     if (std.mem.eql(u8, key, "from")) {
         pending.from = try arena.dupe(u8, value);
         return;
     }
+
     if (std.mem.eql(u8, key, "deny")) {
         pending.deny = try arena.dupe(u8, value);
         return;
     }
+
     return error.UnknownProjectRuleKey;
 }
 
@@ -340,11 +354,13 @@ fn parseTopLevelKey(content: []const u8) ParseError!State {
     if (std.mem.endsWith(u8, content, ":")) {
         return sectionState(content[0 .. content.len - 1]) orelse error.UnknownTopLevelKey;
     }
+
     if (std.mem.indexOfScalar(u8, content, ':')) |colon| {
         const key = std.mem.trimEnd(u8, content[0..colon], " ");
         if (sectionState(key) != null) return error.ContentAfterKey;
         return error.UnknownTopLevelKey;
     }
+
     return error.UnknownTopLevelKey;
 }
 
@@ -354,6 +370,7 @@ fn sectionState(key: []const u8) ?State {
     if (std.mem.eql(u8, key, "warnings")) return .in_warnings;
     if (std.mem.eql(u8, key, "metrics")) return .in_metrics;
     if (std.mem.eql(u8, key, "project-rules")) return .in_project_rules;
+
     return null;
 }
 
@@ -363,7 +380,9 @@ fn setMetricEntry(metrics: *metric.Set, content: []const u8) ParseError!void {
     const value = std.mem.trim(u8, content[colon + 1 ..], " ");
     const name = metric.Name.fromString(key) orelse return error.UnknownMetric;
     const threshold = std.fmt.parseInt(u32, value, 10) catch return error.InvalidThreshold;
+
     if (threshold == 0) return error.InvalidThreshold;
+
     metrics.set(name, threshold);
 }
 
@@ -373,7 +392,9 @@ fn appendListItem(
     content: []const u8,
 ) ParseError!void {
     if (!std.mem.startsWith(u8, content, "- ")) return error.MalformedListItem;
+
     const item = std.mem.trimStart(u8, content[2..], " ");
+
     if (item.len == 0) return error.MalformedListItem;
 
     if (std.mem.indexOfScalar(u8, item, '/')) |slash| {
@@ -386,6 +407,7 @@ fn appendListItem(
     }
 
     if (!rule.isValidId(item)) return error.InvalidRuleId;
+
     try list.append(arena, .{ .lang = null, .id = try arena.dupe(u8, item) });
 }
 
@@ -423,6 +445,7 @@ pub fn loadFromDisk(
     const base = (try resolveConfigBase(scratch, environ)) orelse return null;
     const path = try fs.config.rulesPath(scratch, base);
     const source = (try fs.config.readRulesYaml(io, scratch, path)) orelse return null;
+
     return try parse(gpa, source, diag);
 }
 
@@ -430,6 +453,7 @@ pub fn applySelection(set: *loader.RuleSet, resolved: Resolved) void {
     for (std.enums.values(language.Name)) |lang| {
         const list = set.by_lang.getPtr(lang);
         var i: usize = 0;
+
         while (i < list.items.len) {
             if (isActive(lang, list.items[i].id, resolved)) {
                 i += 1;
@@ -448,5 +472,6 @@ fn matchesAny(ids: []const ScopedId, lang: language.Name, id: []const u8) bool {
     for (ids) |scoped| {
         if (scoped.matches(lang, id)) return true;
     }
+
     return false;
 }

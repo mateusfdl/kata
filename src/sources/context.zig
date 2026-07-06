@@ -68,6 +68,7 @@ pub const Resolver = struct {
         var project_config: ?config.Config = null;
         errdefer if (project_config) |*c| c.deinit();
         var project_rules_dir: ?[]const u8 = null;
+
         if (root) |r| {
             const kata_dir = try fs.path.join(arena, r, fs.discover.project_dir_name);
             const rules_dir = try fs.path.join(arena, kata_dir, rules_dir_name);
@@ -102,6 +103,7 @@ pub const Resolver = struct {
         ctx.engine = Engine.init(self.gpa, self.registry, &ctx.rule_set);
         ctx.engine.metrics = resolved.metrics;
         ctx.engine.warnings = resolved.warnings;
+
         return ctx;
     }
 };
@@ -122,10 +124,12 @@ pub const Cache = struct {
 
     pub fn deinit(self: *Cache) void {
         var it = self.entries.iterator();
+
         while (it.next()) |entry| {
             self.gpa.free(entry.key_ptr.*);
             entry.value_ptr.ctx.deinit();
         }
+
         self.entries.deinit(self.gpa);
     }
 
@@ -136,13 +140,16 @@ pub const Cache = struct {
 
         if (self.entries.getPtr(root)) |entry| {
             if (entry.fingerprint == current) return entry.ctx;
+
             entry.ctx.deinit();
             entry.ctx = self.resolver.resolveAtRoot(root) catch |err| {
                 const removed = self.entries.fetchRemove(root).?;
                 self.gpa.free(removed.key);
                 return err;
             };
+
             entry.fingerprint = current;
+
             return entry.ctx;
         }
 
@@ -150,7 +157,9 @@ pub const Cache = struct {
         errdefer ctx.deinit();
         const key = try self.gpa.dupe(u8, root);
         errdefer self.gpa.free(key);
+
         try self.entries.put(self.gpa, key, .{ .ctx = ctx, .fingerprint = current });
+
         return ctx;
     }
 };
@@ -183,6 +192,7 @@ fn projectFingerprint(io: std.Io, scratch: std.mem.Allocator, root: []const u8) 
             acc ^= entryHash(entry.name, fentry.name, st);
         }
     }
+
     return acc;
 }
 
@@ -192,11 +202,15 @@ fn statOptional(io: std.Io, path: []const u8) ?std.Io.File.Stat {
 
 fn entryHash(dir_name: []const u8, file_name: []const u8, st: std.Io.File.Stat) u64 {
     var hasher = std.hash.Wyhash.init(0);
+
     hasher.update(dir_name);
     hasher.update("/");
     hasher.update(file_name);
     hasher.update(std.mem.asBytes(&st.size));
+
     const mtime = st.mtime.toMilliseconds();
+
     hasher.update(std.mem.asBytes(&mtime));
+
     return hasher.final();
 }

@@ -33,6 +33,16 @@ pub const Fixture = struct {
         id: []const u8,
         source: []const u8,
     ) !*Fixture {
+        return initFormat(allocator, langs, id, source, .scm);
+    }
+
+    pub fn initFormat(
+        allocator: std.mem.Allocator,
+        langs: []const language.Name,
+        id: []const u8,
+        source: []const u8,
+        format: lint.rule.Format,
+    ) !*Fixture {
         const self = try allocator.create(Fixture);
         self.* = .{
             .allocator = allocator,
@@ -40,17 +50,25 @@ pub const Fixture = struct {
             .rule_set = .{ .allocator = allocator },
             .engine = undefined,
         };
-
-        for (langs) |l| {
-            try self.rule_set.append(l, .{
-                .id = try allocator.dupe(u8, id),
-                .language = l,
-                .source = try allocator.dupe(u8, source),
-            });
-        }
+        for (langs) |l| try self.add(l, id, source, format);
 
         self.engine = Engine.init(allocator, &self.registry, &self.rule_set);
         return self;
+    }
+
+    pub fn add(
+        self: *Fixture,
+        lang: language.Name,
+        id: []const u8,
+        source: []const u8,
+        format: lint.rule.Format,
+    ) !void {
+        try self.rule_set.append(lang, .{
+            .id = try self.allocator.dupe(u8, id),
+            .language = lang,
+            .source = try self.allocator.dupe(u8, source),
+            .format = format,
+        });
     }
 
     pub fn deinit(self: *Fixture) void {

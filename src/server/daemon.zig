@@ -45,6 +45,7 @@ pub fn buildIndex(
     state: *ProjectState,
 ) !usize {
     const visit: IndexVisit = .{ .engine = engine, .index = &state.index };
+
     return fs.source.walkFiles(io, gpa, root, visit, visitForIndex);
 }
 
@@ -95,7 +96,9 @@ fn bind(
                 live.close(io);
                 return error.AlreadyRunning;
             } else |_| {}
+
             fs.socket.deleteAbsolute(io, socket_path);
+
             return address.listen(io, .{});
         },
         else => err,
@@ -119,10 +122,12 @@ pub fn processConnection(
 
     if (parsed.value.shutdown) {
         sendBestEffort(a, writer, reply(ctx, .ok, null, "shutting down"));
+
         return true;
     }
 
     sendBestEffort(a, writer, handle(ctx, a, parsed.value));
+
     return false;
 }
 
@@ -149,6 +154,7 @@ pub fn handle(
 
     var engine = ctx.engine;
     var ratchet = ctx.ratchet;
+
     if (ctx.cache) |cache| {
         const per_project = cache.acquire(arena, req.filename) catch
             return reply(ctx, .fail, null, "project context failed");
@@ -184,8 +190,10 @@ fn applyRatchet(
     diagnostics: []diagnostic.Diagnostic,
 ) !void {
     if (!ratchet) return;
+
     const io = ctx.io;
     const path = filename orelse return;
+
     if (!diagnostic.hasErrors(diagnostics)) return;
 
     const baseline_source = fs.source.read(io, arena, path) catch |err| switch (err) {
@@ -201,14 +209,17 @@ fn applyRatchet(
         const now = countErrors(diagnostics, d.rule_id);
         if (now <= before) try demote.append(arena, i);
     }
+
     for (demote.items) |i| diagnostics[i].severity = .warn;
 }
 
 fn countErrors(diagnostics: []const diagnostic.Diagnostic, rule_id: []const u8) usize {
     var n: usize = 0;
+
     for (diagnostics) |d| {
         if (d.severity == .@"error" and std.mem.eql(u8, d.rule_id, rule_id)) n += 1;
     }
+
     return n;
 }
 
@@ -229,9 +240,11 @@ fn appendProjectDiagnostics(
     const violations = try project_rule.evaluate(arena, project.rules, engine.warnings, &project.index);
     var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
     try out.appendSlice(arena, diagnostics);
+
     for (violations) |v| {
         if (std.mem.eql(u8, v.path, path)) try out.append(arena, v.diagnostic);
     }
+
     return out.toOwnedSlice(arena);
 }
 

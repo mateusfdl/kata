@@ -59,6 +59,7 @@ fn addEmbedded(set: *RuleSet) !void {
 fn addRuleFiles(set: *RuleSet, diag: ?*Diagnostic, files: []const fs.rules.RuleFile) !void {
     for (files) |file| {
         const id = try set.allocator.dupe(u8, file.id);
+
         for (file.langs) |lang_name| {
             set.upsert(lang_name, .{
                 .id = id,
@@ -67,6 +68,7 @@ fn addRuleFiles(set: *RuleSet, diag: ?*Diagnostic, files: []const fs.rules.RuleF
                 .format = file.format,
             }, file.source) catch |err| {
                 if (err == error.DuplicateRuleFormats) fillDiag(diag, set.duplicate.?);
+
                 return err;
             };
         }
@@ -78,5 +80,6 @@ fn fillDiag(diag: ?*Diagnostic, dup: Warning) void {
     d.lang = dup.lang;
     d.source = dup.source;
     d.id_len = @min(dup.id.len, d.id_buf.len);
+
     @memcpy(d.id_buf[0..d.id_len], dup.id[0..d.id_len]);
 }

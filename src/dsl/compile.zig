@@ -4,6 +4,7 @@ const ts = @import("tree_sitter");
 
 const ast = @import("ast.zig");
 const diagnostic = @import("../lint/diagnostic.zig");
+const dsl_parser = @import("parser.zig");
 const expr = @import("../lint/expr.zig");
 const language = @import("../lint/language.zig");
 const rule = @import("../lint/rule.zig");
@@ -22,6 +23,13 @@ pub const Error = error{
     InvalidStringComparison,
 };
 
+pub const RawError = Error || dsl_parser.Error || error{
+    OneRulePerFile,
+    RuleIdMismatch,
+    UndeclaredLanguage,
+    ProjectRuleInLocalDir,
+};
+
 const Cardinality = enum { one, many };
 
 const Compiler = struct {
@@ -35,6 +43,73 @@ const Compiler = struct {
         self.diag.* = .{ .lang = self.lang, .rule_id = self.rule_id, .detail = detail };
     }
 };
+
+pub fn compileRaws(
+    allocator: std.mem.Allocator,
+    registry: *language.Registry,
+    lang: language.Name,
+    raws: []const rule.RawRule,
+    diag: *rule.Diagnostic,
+) RawError!?rule.CompiledRule {
+    var scratch = std.heap.ArenaAllocator.init(allocator);
+    defer scratch.deinit();
+    const arena = scratch.allocator();
+
+    var rules: std.ArrayList(ast.Rule) = .empty;
+    for (raws) |raw| {
+        if (raw.format != .kata) continue;
+        try rules.append(arena, try parseRaw(arena, lang, raw, diag));
+    }
+    if (rules.items.len == 0) return null;
+
+    return try compile(allocator, registry, lang, .{ .rules = rules.items }, diag);
+}
+
+fn parseRaw(
+    arena: std.mem.Allocator,
+    lang: language.Name,
+    raw: rule.RawRule,
+    diag: *rule.Diagnostic,
+) RawError!ast.Rule {
+    var parse_diag: dsl_parser.Diagnostic = .{};
+    const file = parseSource(arena, raw.source, &parse_diag) catch |err| {
+        diag.* = .{
+            .lang = lang,
+            .rule_id = raw.id,
+            .detail = "invalid rule syntax",
+            .line = parse_diag.line,
+            .column = parse_diag.column,
+        };
+        return err;
+    };
+    if (file.rules.len != 1) {
+        diag.* = .{ .lang = lang, .rule_id = raw.id, .detail = "kata rule files declare exactly one rule" };
+        return error.OneRulePerFile;
+    }
+    const r = file.rules[0];
+    if (r.kind == .project) {
+        diag.* = .{ .lang = lang, .rule_id = raw.id, .detail = "project rules are not supported yet" };
+        return error.ProjectRuleInLocalDir;
+    }
+    if (!std.mem.eql(u8, r.id, raw.id)) {
+        diag.* = .{ .lang = lang, .rule_id = raw.id, .detail = "rule id does not match the file name" };
+        return error.RuleIdMismatch;
+    }
+    if (!includesLanguage(r, lang)) {
+        diag.* = .{ .lang = lang, .rule_id = raw.id, .detail = "rule does not declare this language" };
+        return error.UndeclaredLanguage;
+    }
+    return r;
+}
+
+fn parseSource(
+    arena: std.mem.Allocator,
+    source: []const u8,
+    parse_diag: *dsl_parser.Diagnostic,
+) dsl_parser.Error!ast.File {
+    var p = try dsl_parser.Parser.init(arena, source, parse_diag);
+    return p.parseFile();
+}
 
 pub fn compile(
     allocator: std.mem.Allocator,

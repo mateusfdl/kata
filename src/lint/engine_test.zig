@@ -843,3 +843,138 @@ test "engine: message with stray close brace is a hard error" {
     try std.testing.expectError(error.StrayBraceInMessage, f.engine.lint(gpa, "function f() {}", .ts, null));
     try std.testing.expectEqualStrings("stray } in message, use }} for a literal", f.engine.compile_diag.detail);
 }
+
+const kata_no_console_rule =
+    \\rule no-console {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: member_expression {
+    \\      object: identifier @receiver
+    \\    }
+    \\  }
+    \\  where { text(@receiver) == "console" }
+    \\  emit @match { message "console is not allowed" }
+    \\}
+;
+
+test "engine: lints with a kata rule" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-console", kata_no_console_rule, .kata);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(gpa, "console.log(1);\nfoo.bar(2);\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("no-console", diags[0].rule_id);
+    try std.testing.expectEqualStrings("ts", diags[0].language);
+    try std.testing.expectEqualStrings("console is not allowed", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.column);
+    try std.testing.expectEqual(@as(u32, 14), diags[0].range.end.column);
+}
+
+test "engine: scm and kata rules fire together" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-as-any", no_as_any_rule);
+    defer f.deinit();
+    try f.add(.ts, "no-console", kata_no_console_rule, .kata);
+
+    const diags = try f.engine.lint(gpa, "const x = (y as any).z;\nconsole.log(1);\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqualStrings("no-as-any", diags[0].rule_id);
+    try std.testing.expectEqualStrings("no-console", diags[1].rule_id);
+}
+
+test "engine: kata measure rules use the metric context" {
+    const gpa = std.testing.allocator;
+    const measured =
+        \\rule max-complexity {
+        \\  lang ts
+        \\  match function_declaration @match
+        \\  where { complexity(@match) > 1 }
+        \\  emit @match { message "complexity {complexity(@match)} exceeds 1" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-complexity", measured, .kata);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const src = "function f(a: number) { if (a) { return 1; } if (!a) { return 2; } return 3; }\n";
+    const diags = try f.engine.lint(arena.allocator(), src, .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("complexity 3 exceeds 1", diags[0].message);
+}
+
+test "engine: kata parse error reports the rule id and position" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-x", "rule no-x {\n  lang ts\n", .kata);
+    defer f.deinit();
+
+    try std.testing.expectError(error.ExpectedRightBrace, f.engine.lint(gpa, "x;\n", .ts, null));
+    try std.testing.expectEqual(language.Name.ts, f.engine.compile_diag.lang.?);
+    try std.testing.expectEqualStrings("no-x", f.engine.compile_diag.rule_id);
+    try std.testing.expectEqualStrings("invalid rule syntax", f.engine.compile_diag.detail);
+    try std.testing.expectEqual(@as(u32, 3), f.engine.compile_diag.line);
+    try std.testing.expectEqual(@as(u32, 1), f.engine.compile_diag.column);
+}
+
+test "engine: kata rule id must match the file name" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "other-name", kata_no_console_rule, .kata);
+    defer f.deinit();
+
+    try std.testing.expectError(error.RuleIdMismatch, f.engine.lint(gpa, "x;\n", .ts, null));
+    try std.testing.expectEqualStrings("other-name", f.engine.compile_diag.rule_id);
+    try std.testing.expectEqualStrings("rule id does not match the file name", f.engine.compile_diag.detail);
+}
+
+test "engine: kata rule must declare the directory language" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-console", kata_no_console_rule, .kata);
+    defer f.deinit();
+
+    try std.testing.expectError(error.UndeclaredLanguage, f.engine.lint(gpa, "package main\n", .go, null));
+    try std.testing.expectEqual(language.Name.go, f.engine.compile_diag.lang.?);
+    try std.testing.expectEqualStrings("rule does not declare this language", f.engine.compile_diag.detail);
+}
+
+test "engine: kata file must declare exactly one rule" {
+    const gpa = std.testing.allocator;
+    const two_rules =
+        \\rule no-a {
+        \\  lang ts
+        \\  match identifier @match
+        \\  emit @match { message "a" }
+        \\}
+        \\rule no-b {
+        \\  lang ts
+        \\  match identifier @match
+        \\  emit @match { message "b" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-a", two_rules, .kata);
+    defer f.deinit();
+
+    try std.testing.expectError(error.OneRulePerFile, f.engine.lint(gpa, "x;\n", .ts, null));
+    try std.testing.expectEqualStrings("kata rule files declare exactly one rule", f.engine.compile_diag.detail);
+}
+
+test "engine: project kata rules cannot load from language dirs" {
+    const gpa = std.testing.allocator;
+    const project_rule =
+        \\rule boundaries {
+        \\  kind project
+        \\  emit @match { message "m" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "boundaries", project_rule, .kata);
+    defer f.deinit();
+
+    try std.testing.expectError(error.ProjectRuleInLocalDir, f.engine.lint(gpa, "x;\n", .ts, null));
+    try std.testing.expectEqualStrings("project rules are not supported yet", f.engine.compile_diag.detail);
+}

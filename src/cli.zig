@@ -63,8 +63,10 @@ pub const Subcommand = union(enum) {
 
 pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
     if (args.len == 0) return .{ .daemon = null };
+
     const cmd = args[0];
     if (args_mod.isFlag(cmd)) return .one_shot;
+
     return switch (args_mod.CommandName.parse(cmd) orelse return .{ .unknown = cmd }) {
         .daemon => .{ .daemon = rootFlag(args[1..]) },
         .check => .{ .check = .{
@@ -84,12 +86,14 @@ fn formatOf(args: []const [:0]const u8) reports.Format {
     for (args) |a| {
         if (formatFlag(a)) |f| format = f;
     }
+
     return format;
 }
 
 fn formatFlag(arg: []const u8) ?reports.Format {
     if (std.mem.eql(u8, arg, "--json")) return .json;
     if (std.mem.eql(u8, arg, "--text")) return .text;
+
     return null;
 }
 
@@ -186,6 +190,7 @@ pub fn main(init: std.process.Init) u8 {
 
 fn rootFlag(args: []const [:0]const u8) ?[]const u8 {
     var i: usize = 0;
+
     while (i < args.len) : (i += 1) {
         switch (args_mod.valueFor(args, &i, .root)) {
             .found => |value| return value,
@@ -193,6 +198,7 @@ fn rootFlag(args: []const [:0]const u8) ?[]const u8 {
             .absent => {},
         }
     }
+
     return null;
 }
 
@@ -226,12 +232,14 @@ fn resolveContext(c: Command, anchor: ?[]const u8) !?*context_mod.Context {
         return null;
     };
     drainWarnings(c.stderr, &ctx.rule_set);
+
     return ctx;
 }
 
 fn runOneShot(c: Command) !u8 {
     const ctx = (try resolveContext(c, one_shot.anchorOf(c.args))) orelse return exit_internal_error;
     defer ctx.deinit();
+
     return one_shot.run(c.gpa, &ctx.engine, .{
         .args = c.args,
         .stdin = c.stdin,
@@ -266,6 +274,7 @@ fn runUnknown(c: Command, cmd: []const u8) !u8 {
 fn runDaemon(c: Command, root: ?[]const u8) !u8 {
     const ctx = (try resolveContext(c, null)) orelse return exit_internal_error;
     defer ctx.deinit();
+
     if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
 
     const socket_path = resolveSocketPath(c.arena, c.environ) catch |err|
@@ -276,6 +285,7 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
 
     var project_state: ?daemon.ProjectState = null;
     defer if (project_state) |*p| p.deinit();
+
     if (root) |r| {
         if (ctx.resolved.project_rules.len == 0)
             return printAndExit(c.stderr, "kata daemon --root requires project-rules in rules.yaml\n", exit_usage);
@@ -304,14 +314,17 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
 
 fn runCheck(c: Command, opts: CheckOptions) !u8 {
     const ctx = (try resolveContext(c, opts.target)) orelse return exit_internal_error;
+
     defer ctx.deinit();
     if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
 
     var reporter = reports.reporter(opts.format, c.stdout, c.color);
+
     const outcome = check.run(c.io, c.gpa, &ctx.engine, opts.target, ctx.resolved.project_rules, &reporter) catch |err| switch (err) {
         error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{opts.target}, exit_usage),
         else => return internalError(c.stderr, "check", err),
     };
+
     return switch (outcome) {
         .clean => exit_clean,
         .violations => exit_violations,
@@ -320,14 +333,17 @@ fn runCheck(c: Command, opts: CheckOptions) !u8 {
 
 fn runFacts(c: Command, target: []const u8) !u8 {
     if (target.len == 0) return printAndExit(c.stderr, "usage: kata facts <file>\n", exit_usage);
+
     const ctx = (try resolveContext(c, target)) orelse return exit_internal_error;
     defer ctx.deinit();
+
     return facts.run(c.io, c.gpa, &ctx.engine, target, c.stdout, c.stderr);
 }
 
 fn runQuery(c: Command, q: query.Options) !u8 {
     var opts = q;
     opts.color = c.color;
+
     return switch (try query.run(c.io, c.gpa, c.resolver.registry, opts, c.stdout, c.stderr)) {
         .clean => exit_clean,
         .matches => exit_violations,
@@ -337,6 +353,7 @@ fn runQuery(c: Command, q: query.Options) !u8 {
 
 fn runRuleTest(c: Command, dir: []const u8) !u8 {
     if (dir.len == 0) return printAndExit(c.stderr, "usage: kata test <rules-dir>\n", exit_usage);
+
     return switch (try harness.run(c.io, c.gpa, c.arena, dir, c.stdout, c.stderr)) {
         .pass => exit_clean,
         .failures => exit_violations,
@@ -360,6 +377,7 @@ fn runStop(c: Command) !u8 {
 
     try c.stdout.writeAll("kata daemon stopped\n");
     try c.stdout.flush();
+
     return exit_clean;
 }
 
@@ -370,6 +388,7 @@ fn resolveSocketPath(
     if (environ.get(args_mod.env_socket)) |path| return path;
     if (environ.get(args_mod.env_runtime_dir)) |dir|
         return std.fmt.allocPrint(arena, "{s}/kata.sock", .{dir});
+
     return args_mod.fallback_socket_path;
 }
 
@@ -397,6 +416,7 @@ fn internalError(stderr: *std.Io.Writer, context: []const u8, err: anyerror) !u8
 
 fn die(stderr: *std.Io.Writer, context: []const u8, err: anyerror) u8 {
     _ = output.internal(stderr, context, err, exit_internal_error) catch {};
+
     return exit_internal_error;
 }
 
@@ -411,6 +431,7 @@ fn drainWarnings(stderr: *std.Io.Writer, rule_set: *const loader_mod.RuleSet) vo
             @tagName(w.source), w.lang.toString(), w.id,
         }) catch return;
     }
+
     stderr.flush() catch {};
 }
 
@@ -420,6 +441,8 @@ fn dieConfig(stderr: *std.Io.Writer, diag: config.Diagnostic, err: anyerror) u8 
     } else {
         stderr.print("kata: rules.yaml: {s}\n", .{@errorName(err)}) catch {};
     }
+
     stderr.flush() catch {};
+
     return exit_internal_error;
 }

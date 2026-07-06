@@ -117,10 +117,23 @@ pub const Diagnostic = struct {
     lang: ?language.Name = null,
     rule_id: []const u8 = "",
     detail: []const u8 = "",
+    line: u32 = 0,
+    column: u32 = 0,
 
     pub fn write(self: Diagnostic, prefix: []const u8, out: *std.Io.Writer) !void {
         if (self.lang) |lang| {
-            try out.print("{s}: rule {s}/{s}: {s}\n", .{ prefix, lang.toString(), self.rule_id, self.detail });
+            if (self.line > 0) {
+                try out.print("{s}: rule {s}/{s}: line {d}, column {d}: {s}\n", .{
+                    prefix,
+                    lang.toString(),
+                    self.rule_id,
+                    self.line,
+                    self.column,
+                    self.detail,
+                });
+            } else {
+                try out.print("{s}: rule {s}/{s}: {s}\n", .{ prefix, lang.toString(), self.rule_id, self.detail });
+            }
         } else {
             try out.print("{s}: rule compilation failed\n", .{prefix});
         }
@@ -143,9 +156,14 @@ pub fn compile(
     errdefer arena_ptr.deinit();
     const arena = arena_ptr.allocator();
 
+    var scm: std.ArrayList(RawRule) = .empty;
+    for (raws) |raw| {
+        if (raw.format == .scm) try scm.append(arena, raw);
+    }
+
     var source: std.ArrayList(u8) = .empty;
-    const rule_starts = try arena.alloc(u32, raws.len);
-    for (raws, 0..) |raw, i| {
+    const rule_starts = try arena.alloc(u32, scm.items.len);
+    for (scm.items, 0..) |raw, i| {
         rule_starts[i] = @intCast(source.items.len);
         try source.appendSlice(arena, raw.source);
         try source.append(arena, '\n');
@@ -153,14 +171,14 @@ pub fn compile(
 
     var error_offset: u32 = 0;
     const query = ts.Query.create(ts_lang, source.items, &error_offset) catch {
-        diag.* = .{ .lang = lang, .rule_id = ownerId(rule_starts, raws, error_offset), .detail = "query syntax error" };
+        diag.* = .{ .lang = lang, .rule_id = ownerId(rule_starts, scm.items, error_offset), .detail = "query syntax error" };
         return error.RuleCompileFailed;
     };
     errdefer query.destroy();
 
     const patterns = try arena.alloc(PatternMeta, query.patternCount());
     for (patterns, 0..) |*pattern, idx| {
-        const owner_id = ownerId(rule_starts, raws, query.startByteForPattern(@intCast(idx)));
+        const owner_id = ownerId(rule_starts, scm.items, query.startByteForPattern(@intCast(idx)));
         pattern.* = parsePattern(arena, query, @intCast(idx)) catch |err| {
             diag.* = .{ .lang = lang, .rule_id = owner_id, .detail = compileDetail(err) };
             return err;

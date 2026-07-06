@@ -48,12 +48,14 @@ pub fn readFrame(r: *std.Io.Reader, gpa: std.mem.Allocator, max_bytes: usize) Fr
 
     const len = content_length orelse return error.MissingContentLength;
     if (len > max_bytes) return error.FrameTooLarge;
+
     return r.readAlloc(gpa, len);
 }
 
 pub fn encode(gpa: std.mem.Allocator, w: *std.Io.Writer, value: anytype) !void {
     var buf: std.Io.Writer.Allocating = .init(gpa);
     defer buf.deinit();
+
     try std.json.Stringify.value(value, .{}, &buf.writer);
     try writeFrame(w, buf.written());
 }
@@ -61,6 +63,7 @@ pub fn encode(gpa: std.mem.Allocator, w: *std.Io.Writer, value: anytype) !void {
 pub fn decode(comptime T: type, gpa: std.mem.Allocator, r: *std.Io.Reader) !std.json.Parsed(T) {
     const body = try readFrame(r, gpa, max_frame_bytes);
     defer gpa.free(body);
+
     return std.json.parseFromSlice(T, gpa, body, .{
         .ignore_unknown_fields = true,
         .allocate = .alloc_always,
