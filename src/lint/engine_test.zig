@@ -1238,6 +1238,37 @@ test "engine: string helper predicates filter matches" {
     try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
 }
 
+const kata_glob_imports =
+    \\rule no-internal-imports {
+    \\  lang ts
+    \\  match import_statement {
+    \\    source: string {
+    \\      child: string_fragment @src
+    \\    }
+    \\  }
+    \\  where {
+    \\    glob(text(@src), "**/internal/**")
+    \\  }
+    \\  emit @src { message "internal import" }
+    \\}
+;
+
+test "engine: glob predicate filters matches" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-internal-imports", kata_glob_imports, .kata);
+    defer f.deinit();
+
+    const src =
+        "import { Db } from \"../infra/internal/db\";\n" ++
+        "import { Money } from \"./money\";\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("internal import", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+}
+
 const kata_no_early_exit =
     \\rule no-early-exit {
     \\  lang ts

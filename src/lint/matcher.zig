@@ -2,6 +2,7 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 
 const expr = @import("expr.zig");
+const glob = @import("glob.zig");
 const language = @import("language.zig");
 const metric = @import("metric.zig");
 const rule = @import("rule.zig");
@@ -39,6 +40,8 @@ pub fn evaluate(
             .not_ends_with => if (!evalStringHelper(pred, match, ctx.source, .ends_with, true)) return false,
             .contains => if (!evalStringHelper(pred, match, ctx.source, .contains, false)) return false,
             .not_contains => if (!evalStringHelper(pred, match, ctx.source, .contains, true)) return false,
+            .glob => if (!evalStringHelper(pred, match, ctx.source, .glob, false)) return false,
+            .not_glob => if (!evalStringHelper(pred, match, ctx.source, .glob, true)) return false,
             .captured => if (!evalCaptured(pred, match, false)) return false,
             .not_captured => if (!evalCaptured(pred, match, true)) return false,
             .where => if (!try evalWhere(pred, match, ctx)) return false,
@@ -257,7 +260,7 @@ fn evalCaptured(pred: rule.Predicate, match: ts.Query.Match, negate: bool) bool 
     return present != negate;
 }
 
-const StringHelper = enum { starts_with, ends_with, contains };
+const StringHelper = enum { starts_with, ends_with, contains, glob };
 
 fn evalStringHelper(
     pred: rule.Predicate,
@@ -273,6 +276,7 @@ fn evalStringHelper(
         .starts_with => std.mem.startsWith(u8, subject, candidate),
         .ends_with => std.mem.endsWith(u8, subject, candidate),
         .contains => std.mem.indexOf(u8, subject, candidate) != null,
+        .glob => glob.match(candidate, subject),
     };
     return found != negate;
 }

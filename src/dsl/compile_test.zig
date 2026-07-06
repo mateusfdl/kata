@@ -728,6 +728,56 @@ test "compile: string helpers require two text arguments" {
     try std.testing.expectEqualStrings("startsWith, endsWith, and contains expect (value, text)", diag.detail);
 }
 
+test "compile: translates glob predicates" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+        \\rule no-internal-imports {
+        \\  lang ts
+        \\  match import_statement @match {
+        \\    source: string {
+        \\      child: string_fragment @src
+        \\    }
+        \\  }
+        \\  where {
+        \\    glob(text(@src), "**/internal/**")
+        \\    !glob(text(@src), "**/public/**")
+        \\  }
+        \\  emit @match { message "internal import" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 2), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.glob, predicates[0].op);
+    try std.testing.expectEqual(rule.PredicateOp.not_glob, predicates[1].op);
+    try std.testing.expectEqualStrings("**/internal/**", predicates[0].args[1].string);
+    try std.testing.expectEqualStrings("**/public/**", predicates[1].args[1].string);
+}
+
+test "compile: glob requires a string literal pattern" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where { glob(text(@id), text(@id)) }
+        \\  emit @id { message "bad" }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.UnsupportedPredicate, compile.compile(gpa, &registry, .ts, file, &diag));
+    try std.testing.expectEqualStrings("glob expects (value, \"pattern\")", diag.detail);
+}
+
 test "compile: translates capture presence predicates" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);

@@ -510,8 +510,25 @@ fn collectDisjunction(
 fn callPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
     if (std.mem.eql(u8, call.name, "matches")) return matchesPredicate(ctx, call, negated);
     if (std.mem.eql(u8, call.name, "capture")) return capturedPredicate(ctx, call, negated);
+    if (std.mem.eql(u8, call.name, "glob")) return globPredicate(ctx, call, negated);
     if (stringHelperOp(call.name, negated)) |op| return stringHelperPredicate(ctx, call, op);
     return null;
+}
+
+fn globPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
+    const fail_detail = "glob expects (value, \"pattern\")";
+    if (call.args.len != 2 or call.args[1] != .string) {
+        ctx.fail(fail_detail);
+        return error.UnsupportedPredicate;
+    }
+    const subject = (try textOperand(ctx, call.args[0])) orelse {
+        ctx.fail(fail_detail);
+        return error.UnsupportedPredicate;
+    };
+    const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
+    args[0] = subject;
+    args[1] = .{ .string = try ctx.arena.dupe(u8, call.args[1].string.value) };
+    return .{ .op = if (negated) .not_glob else .glob, .args = args };
 }
 
 fn capturedPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
@@ -719,8 +736,10 @@ fn messageSegments(ctx: *Compiler, message: []const u8) Error!?[]const rule.Mess
                 i += 2;
                 continue;
             }
+
             const close = std.mem.indexOfScalarPos(u8, message, i + 1, '}') orelse
                 return failPlaceholder(ctx);
+
             if (literal.items.len > 0)
                 try segments.append(ctx.arena, .{ .literal = try literal.toOwnedSlice(ctx.arena) });
             try segments.append(ctx.arena, .{ .placeholder = try parsePlaceholder(ctx, message[i + 1 .. close]) });
@@ -733,23 +752,31 @@ fn messageSegments(ctx: *Compiler, message: []const u8) Error!?[]const rule.Mess
                 i += 2;
                 continue;
             }
+
             return failPlaceholder(ctx);
         }
+
         try literal.append(ctx.arena, c);
         i += 1;
     }
+
     if (literal.items.len > 0)
         try segments.append(ctx.arena, .{ .literal = try literal.toOwnedSlice(ctx.arena) });
+
     return try segments.toOwnedSlice(ctx.arena);
 }
 
 fn parsePlaceholder(ctx: *Compiler, inner: []const u8) Error!rule.Placeholder {
     const open = std.mem.indexOfScalar(u8, inner, '(') orelse return failPlaceholder(ctx);
     if (inner.len == 0 or inner[inner.len - 1] != ')') return failPlaceholder(ctx);
+
     const name = inner[0..open];
     const arg = inner[open + 1 .. inner.len - 1];
+
     if (arg.len < 2 or arg[0] != '@') return failPlaceholder(ctx);
+
     const measure = expr.Measure.fromString(name) orelse return failPlaceholder(ctx);
+
     return .{ .measure = measure, .capture_id = try resolveCapture(ctx, arg[1..]) };
 }
 
