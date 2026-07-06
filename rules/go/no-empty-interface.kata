@@ -1,0 +1,77 @@
+rule no-empty-interface {
+  lang go
+
+  match interface_type @match
+
+  where {
+    matches(text(@match), "^interface\\s*\\{\\s*\\}")
+  }
+
+  emit @match {
+    message "the empty interface accepts anything and asserts nothing - use a concrete type or a generic constraint"
+  }
+}
+
+rule no-empty-interface {
+  lang go
+
+  match parameter_declaration {
+    type: type_identifier @match
+  }
+
+  where {
+    text(@match) == "any"
+  }
+
+  emit @match {
+    message "any accepts anything and asserts nothing - use a concrete type or a generic constraint"
+  }
+}
+
+rule no-empty-interface {
+  lang go
+
+  match function_declaration {
+    result: type_identifier @match
+  }
+
+  where {
+    text(@match) == "any"
+  }
+
+  emit @match {
+    message "any accepts anything and asserts nothing - use a concrete type or a generic constraint"
+  }
+}
+
+rule no-empty-interface {
+  lang go
+
+  match field_declaration {
+    type: type_identifier @match
+  }
+
+  where {
+    text(@match) == "any"
+  }
+
+  emit @match {
+    message "any accepts anything and asserts nothing - use a concrete type or a generic constraint"
+  }
+}
+
+rule no-empty-interface {
+  lang go
+
+  match var_spec {
+    type: type_identifier @match
+  }
+
+  where {
+    text(@match) == "any"
+  }
+
+  emit @match {
+    message "any accepts anything and asserts nothing - use a concrete type or a generic constraint"
+  }
+}
