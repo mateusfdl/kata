@@ -1,0 +1,17 @@
+rule no-swallowed-errors {
+  lang go
+
+  match short_var_declaration @match {
+    left: expression_list {
+      child: identifier @blank
+    }
+  }
+
+  where {
+    text(@blank) == "_"
+  }
+
+  emit @match {
+    message "blank identifier discarding function return - errors must be handled explicitly"
+  }
+}
