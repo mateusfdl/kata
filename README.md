@@ -327,8 +327,95 @@ compares the number of nested matches: `count @match return_statement > 3`.
 A node never contains itself: matches spanning exactly the subject node's
 range do not count for `inside`, `has`, or `count`.
 
+String predicates cover exact and pattern matching: `==`, `!=`, `matches`
+(regex), `startsWith`, `endsWith`, `contains`, and `glob`, which matches paths
+and path-like text against `*`/`**` patterns:
+
+```kata
+where { glob(text(@src), "**/internal/**") }
+```
+
 Syntax and compile errors fail at startup with the rule id and position:
 
 ```
 kata: rule ts/no-x: line 3, column 1: invalid rule syntax
+```
+
+### Project DSL rules
+
+Rules with `kind project` lint the whole project instead of one syntax tree.
+They live in `rules/project/<id>.kata` (project tier: `.kata/rules/project/`),
+are opt-in via the `project` scope, and evaluate against facts extracted from
+every checked file:
+
+```yaml
+enabled:
+  - project/repository-isolation
+```
+
+```kata
+rule repository-isolation {
+  kind project
+
+  match call @call
+
+  where {
+    endsWith(receiverType(@call), "Repository")
+    !endsWith(field(@call, container), "Repository")
+  }
+
+  emit @call {
+    message "call to {receiverType(@call)}.{field(@call, method)} is restricted to repository callers"
+  }
+}
+```
+
+A project rule matches exactly one fact and binds it to a capture. The facts
+and their fields:
+
+| Fact | Fields |
+| --- | --- |
+| `class` | `name` |
+| `method` | `name`, `container` |
+| `typedDecl` | `name`, `type` |
+| `call` | `receiver`, `method`, `container` |
+| `import` | `name`, `source` |
+
+Every fact also has `path` and `lang`. `field(@x, name)` reads a field;
+fields the extractor could not attribute are empty strings, never missing.
+There is no `lang` clause on project rules - filter with
+`field(@x, lang) == "go"`.
+
+Two helpers derive values a raw field cannot give:
+
+- `receiverType(@call)` resolves the call receiver through same-file typed
+  declarations and returns the type only when it is a class defined in the
+  project; ambiguous or unknown receivers are missing and the predicate fails.
+- `resolvedImportSource(@import)` resolves `./` and `../` specifiers against
+  the importing file (`src/domain/user.ts` + `../infra/db` gives
+  `src/infra/db`); Go and non-relative specifiers pass through verbatim.
+
+```kata
+rule no-infra-from-domain {
+  kind project
+
+  match import @import
+
+  where {
+    glob(field(@import, path), "src/domain/**")
+    glob(resolvedImportSource(@import), "src/infra/**")
+  }
+
+  emit @import {
+    message "import {field(@import, source)} is denied from the domain layer"
+  }
+}
+```
+
+`disabled:` and `warnings:` accept the same `project/<id>` scope; bare ids
+match project rules too. The yaml `project-rules:` config keeps working
+unchanged next to DSL project rules. Compile errors report the project scope:
+
+```
+kata: rule project/bad-rule: project rules do not take a lang clause - filter with field(@x, lang)
 ```
