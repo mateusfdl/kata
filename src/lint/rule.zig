@@ -51,6 +51,11 @@ pub const PredicateOp = enum {
     match,
     not_match,
     where,
+    has,
+    not_has,
+    inside,
+    not_inside,
+    count,
 };
 
 pub const PredicateOperand = union(enum) {
@@ -58,11 +63,24 @@ pub const PredicateOperand = union(enum) {
     string: []const u8,
 };
 
+pub const NestedMatcher = struct {
+    query: *ts.Query,
+    root_capture_id: u32,
+    predicates: []Predicate,
+};
+
+pub const CountCompare = struct {
+    op: expr.Compare,
+    value: u32,
+};
+
 pub const Predicate = struct {
     op: PredicateOp,
     args: []PredicateOperand,
     regex: ?mvzr.Regex = null,
     where: ?*const expr.Expr = null,
+    nested: ?*const NestedMatcher = null,
+    count: ?CountCompare = null,
 };
 
 pub const Placeholder = struct {
@@ -94,10 +112,12 @@ pub const CompiledRule = struct {
     patterns: []PatternMeta,
     match_capture_id: u32,
     needs_measures: bool,
+    nested_queries: []const *ts.Query = &.{},
     arena: *std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *CompiledRule) void {
+        for (self.nested_queries) |query| query.destroy();
         self.query.destroy();
         self.arena.deinit();
         self.allocator.destroy(self.arena);

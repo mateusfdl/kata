@@ -7,6 +7,7 @@ const dsl_parser = @import("parser.zig");
 
 const diagnostic = @import("../lint/diagnostic.zig");
 const engine = @import("../lint/Engine.zig");
+const expr = @import("../lint/expr.zig");
 const language = @import("../lint/language.zig");
 const rule = @import("../lint/rule.zig");
 
@@ -492,4 +493,183 @@ test "compile: disjunction across different captures is unsupported" {
     );
 
     try std.testing.expectError(error.UnsupportedPredicate, got);
+}
+
+test "compile: translates has composition to a nested matcher" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .go,
+        \\rule has-panic {
+        \\  lang go
+        \\  match function_declaration @match
+        \\  where {
+        \\    has @match call_expression {
+        \\      function: identifier @fn
+        \\      where {
+        \\        text(@fn) == "panic"
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @match { message "function panics" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 1), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.has, predicates[0].op);
+    const nested = predicates[0].nested.?;
+    try std.testing.expect(nested.root_capture_id != rule.invalid_capture_id);
+    try std.testing.expectEqual(@as(usize, 1), nested.predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.eq, nested.predicates[0].op);
+    try std.testing.expectEqualStrings("panic", nested.predicates[0].args[1].string);
+    try std.testing.expectEqual(@as(usize, 1), compiled.nested_queries.len);
+    try std.testing.expect(!compiled.needs_measures);
+}
+
+test "compile: reuses a bound nested root capture" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+        \\rule outside-logger {
+        \\  lang ts
+        \\  match call_expression @match
+        \\  where {
+        \\    not inside @match class_declaration @cls {
+        \\      name: type_identifier @name
+        \\      where {
+        \\        text(@name) == "Logger"
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @match { message "only inside Logger" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(rule.PredicateOp.not_inside, predicates[0].op);
+    const nested = predicates[0].nested.?;
+    try std.testing.expectEqual(rule.captureIdForName(nested.query, "cls"), nested.root_capture_id);
+}
+
+test "compile: translates count with a comparison" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+        \\rule too-many-returns {
+        \\  lang ts
+        \\  match function_declaration @match
+        \\  where {
+        \\    count @match return_statement > 3
+        \\  }
+        \\  emit @match { message "too many returns" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(rule.PredicateOp.count, predicates[0].op);
+    try std.testing.expect(predicates[0].nested != null);
+    try std.testing.expectEqual(expr.Compare.gt, predicates[0].count.?.op);
+    try std.testing.expectEqual(@as(u32, 3), predicates[0].count.?.value);
+}
+
+test "compile: unknown subject capture in composition fails" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where {
+        \\    has @nope return_statement
+        \\  }
+        \\  emit @id { message "bad" }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.UnknownCapture, compile.compile(gpa, &registry, .ts, file, &diag));
+    try std.testing.expectEqualStrings("bad", diag.rule_id);
+    try std.testing.expectEqualStrings("unknown capture", diag.detail);
+}
+
+test "compile: invalid node kind in a nested matcher fails" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where {
+        \\    has @id not_a_real_node_kind
+        \\  }
+        \\  emit @id { message "bad" }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.QueryCompileFailed, compile.compile(gpa, &registry, .ts, file, &diag));
+    try std.testing.expectEqualStrings("bad", diag.rule_id);
+    try std.testing.expectEqualStrings("node kind or field is invalid for the grammar", diag.detail);
+}
+
+test "compile: reserved nested root capture fails" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where {
+        \\    has @id return_statement @kata-nested-root
+        \\  }
+        \\  emit @id { message "bad" }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.ReservedCapture, compile.compile(gpa, &registry, .ts, file, &diag));
+    try std.testing.expectEqualStrings("kata-nested-root is a reserved capture", diag.detail);
+}
+
+test "compile: measures in a nested where set needs_measures" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+        \\rule complex-methods {
+        \\  lang ts
+        \\  match class_declaration @match
+        \\  where {
+        \\    has @match method_definition @method {
+        \\      where {
+        \\        complexity(@method) > 5
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @match { message "class has a complex method" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    try std.testing.expect(compiled.needs_measures);
 }

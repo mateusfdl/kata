@@ -28,6 +28,7 @@ pub fn evaluate(
             .match => if (!evalMatch(pred, match, source, false)) return false,
             .not_match => if (!evalMatch(pred, match, source, true)) return false,
             .where => if (!try evalWhere(pred, match, source, metric_ctx)) return false,
+            .has, .not_has, .inside, .not_inside, .count => return false,
         }
     }
     return true;

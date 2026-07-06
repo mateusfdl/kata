@@ -21,6 +21,7 @@ pub const Error = error{
     EmitCaptureConflict,
     InvalidRegex,
     InvalidStringComparison,
+    ReservedCapture,
 };
 
 pub const RawError = Error || dsl_parser.Error || error{
@@ -31,12 +32,16 @@ pub const RawError = Error || dsl_parser.Error || error{
 
 const Cardinality = enum { one, many };
 
+const nested_root_capture = "kata-nested-root";
+
 const Compiler = struct {
     arena: std.mem.Allocator,
     lang: language.Name,
     diag: *rule.Diagnostic,
+    registry: *language.Registry,
     rule_id: []const u8 = "",
     query: *ts.Query = undefined,
+    nested_queries: std.ArrayList(*ts.Query) = .empty,
 
     fn fail(self: *Compiler, detail: []const u8) void {
         self.diag.* = .{ .lang = self.lang, .rule_id = self.rule_id, .detail = detail };
@@ -120,7 +125,8 @@ pub fn compile(
     errdefer arena_ptr.deinit();
     const arena = arena_ptr.allocator();
 
-    var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag };
+    var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag, .registry = registry };
+    errdefer for (ctx.nested_queries.items) |nested| nested.destroy();
 
     var selected: std.ArrayList(*const ast.Rule) = .empty;
     var starts: std.ArrayList(u32) = .empty;
@@ -163,6 +169,7 @@ pub fn compile(
         .patterns = patterns,
         .match_capture_id = rule.captureIdForName(query, rule.match_capture),
         .needs_measures = needsMeasures(patterns),
+        .nested_queries = ctx.nested_queries.items,
         .arena = arena_ptr,
         .allocator = allocator,
     };
@@ -309,11 +316,20 @@ fn compilePattern(ctx: *Compiler, r: ast.Rule) Error!rule.PatternMeta {
 fn needsMeasures(patterns: []const rule.PatternMeta) bool {
     for (patterns) |pattern| {
         for (pattern.predicates) |pred| {
-            if (pred.op == .where) return true;
+            if (predicateNeedsMeasures(pred)) return true;
         }
         if (pattern.message) |message| {
             if (message == .segments) return true;
         }
+    }
+    return false;
+}
+
+fn predicateNeedsMeasures(pred: rule.Predicate) bool {
+    if (pred.op == .where) return true;
+    const nested = pred.nested orelse return false;
+    for (nested.predicates) |inner| {
+        if (predicateNeedsMeasures(inner)) return true;
     }
     return false;
 }
@@ -331,11 +347,73 @@ fn translatePredicate(
 ) Error!void {
     switch (predicate) {
         .expression => |expression| try translateExpression(ctx, expression, out),
-        .composition, .count => {
-            ctx.fail("composition predicates are not supported yet");
-            return error.UnsupportedPredicate;
-        },
+        .composition => |composition| try out.append(ctx.arena, try compositionPredicate(ctx, composition)),
+        .count => |count| try out.append(ctx.arena, try countPredicate(ctx, count)),
     }
+}
+
+fn compositionPredicate(ctx: *Compiler, composition: ast.Composition) Error!rule.Predicate {
+    const op: rule.PredicateOp = switch (composition.op) {
+        .inside => if (composition.negated) .not_inside else .inside,
+        .has => if (composition.negated) .not_has else .has,
+    };
+    return .{
+        .op = op,
+        .args = try subjectArgs(ctx, composition.matcher),
+        .nested = try compileNestedMatcher(ctx, composition.matcher),
+    };
+}
+
+fn countPredicate(ctx: *Compiler, count: ast.CountPredicate) Error!rule.Predicate {
+    return .{
+        .op = .count,
+        .args = try subjectArgs(ctx, count.matcher),
+        .nested = try compileNestedMatcher(ctx, count.matcher),
+        .count = .{ .op = compareOp(count.op), .value = count.value },
+    };
+}
+
+fn subjectArgs(ctx: *Compiler, matcher: ast.NestedMatcher) Error![]rule.PredicateOperand {
+    const args = try ctx.arena.alloc(rule.PredicateOperand, 1);
+    args[0] = .{ .capture = try resolveCapture(ctx, matcher.subject.name) };
+    return args;
+}
+
+fn compileNestedMatcher(ctx: *Compiler, matcher: ast.NestedMatcher) Error!*const rule.NestedMatcher {
+    if (captureExists(matcher.pattern, nested_root_capture)) {
+        ctx.fail(nested_root_capture ++ " is a reserved capture");
+        return error.ReservedCapture;
+    }
+
+    var source: std.ArrayList(u8) = .empty;
+    try renderNode(ctx, &source, matcher.pattern, "", .one);
+    if (matcher.pattern.capture == null) {
+        try source.appendSlice(ctx.arena, " @" ++ nested_root_capture);
+    }
+
+    var error_offset: u32 = 0;
+    const query = ts.Query.create(ctx.registry.get(ctx.lang), source.items, &error_offset) catch {
+        ctx.fail("node kind or field is invalid for the grammar");
+        return error.QueryCompileFailed;
+    };
+    try ctx.nested_queries.append(ctx.arena, query);
+
+    const root_name = if (matcher.pattern.capture) |capture| capture.name else nested_root_capture;
+
+    var nested_ctx = ctx.*;
+    nested_ctx.query = query;
+    var predicates: std.ArrayList(rule.Predicate) = .empty;
+    for (matcher.where) |expression| {
+        try translateExpression(&nested_ctx, expression, &predicates);
+    }
+
+    const out = try ctx.arena.create(rule.NestedMatcher);
+    out.* = .{
+        .query = query,
+        .root_capture_id = rule.captureIdForName(query, root_name),
+        .predicates = try predicates.toOwnedSlice(ctx.arena),
+    };
+    return out;
 }
 
 fn translateExpression(
