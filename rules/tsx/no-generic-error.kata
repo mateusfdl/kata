@@ -1,0 +1,17 @@
+rule no-generic-error {
+  lang tsx
+
+  match throw_statement @match {
+    child: new_expression {
+      child: identifier @name
+    }
+  }
+
+  where {
+    text(@name) == "Error"
+  }
+
+  emit @match {
+    message "generic Error is not allowed - throw a domain-specific error class"
+  }
+}
