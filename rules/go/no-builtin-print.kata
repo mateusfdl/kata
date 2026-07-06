@@ -1,0 +1,16 @@
+rule no-builtin-print {
+  lang go
+
+  match call_expression @match {
+    function: identifier @fn
+  }
+
+  where {
+    text(@fn) == "print" ||
+    text(@fn) == "println"
+  }
+
+  emit @match {
+    message "builtin print/println is debug-only and not guaranteed by the spec - use proper instrumentation"
+  }
+}
