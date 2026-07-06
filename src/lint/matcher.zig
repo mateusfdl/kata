@@ -33,6 +33,12 @@ pub fn evaluate(
             .not_any_of => if (!evalAnyOf(pred, match, ctx.source, true)) return false,
             .match => if (!evalMatch(pred, match, ctx.source, false)) return false,
             .not_match => if (!evalMatch(pred, match, ctx.source, true)) return false,
+            .starts_with => if (!evalStringHelper(pred, match, ctx.source, .starts_with, false)) return false,
+            .not_starts_with => if (!evalStringHelper(pred, match, ctx.source, .starts_with, true)) return false,
+            .ends_with => if (!evalStringHelper(pred, match, ctx.source, .ends_with, false)) return false,
+            .not_ends_with => if (!evalStringHelper(pred, match, ctx.source, .ends_with, true)) return false,
+            .contains => if (!evalStringHelper(pred, match, ctx.source, .contains, false)) return false,
+            .not_contains => if (!evalStringHelper(pred, match, ctx.source, .contains, true)) return false,
             .where => if (!try evalWhere(pred, match, ctx)) return false,
             .has => if (!try evalHas(pred, match, ctx, false)) return false,
             .not_has => if (!try evalHas(pred, match, ctx, true)) return false,
@@ -236,6 +242,26 @@ fn evalAnyOf(
         if (std.mem.eql(u8, left_text, candidate)) return !negate;
     }
     return negate;
+}
+
+const StringHelper = enum { starts_with, ends_with, contains };
+
+fn evalStringHelper(
+    pred: rule.Predicate,
+    match: ts.Query.Match,
+    source: []const u8,
+    helper: StringHelper,
+    negate: bool,
+) bool {
+    if (pred.args.len != 2) return false;
+    const subject = resolveText(pred.args[0], match, source) orelse return false;
+    const candidate = resolveText(pred.args[1], match, source) orelse return false;
+    const found = switch (helper) {
+        .starts_with => std.mem.startsWith(u8, subject, candidate),
+        .ends_with => std.mem.endsWith(u8, subject, candidate),
+        .contains => std.mem.indexOf(u8, subject, candidate) != null,
+    };
+    return found != negate;
 }
 
 fn evalMatch(

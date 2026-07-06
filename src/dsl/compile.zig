@@ -447,7 +447,7 @@ fn translateExpression(
 fn stringPredicate(ctx: *Compiler, expression: ast.Expression, negated: bool) Error!?rule.Predicate {
     return switch (expression) {
         .negate => |negate| stringPredicate(ctx, negate.expression.*, !negated),
-        .call => |call| matchesPredicate(ctx, call, negated),
+        .call => |call| callPredicate(ctx, call, negated),
         .compare => |c| comparePredicate(ctx, c, negated),
         .logical => |logical| if (logical.op == .@"or") anyOfPredicate(ctx, expression, negated) else null,
         else => null,
@@ -505,6 +505,38 @@ fn collectDisjunction(
         },
         else => return false,
     }
+}
+
+fn callPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
+    if (std.mem.eql(u8, call.name, "matches")) return matchesPredicate(ctx, call, negated);
+    if (stringHelperOp(call.name, negated)) |op| return stringHelperPredicate(ctx, call, op);
+    return null;
+}
+
+fn stringHelperOp(name: []const u8, negated: bool) ?rule.PredicateOp {
+    if (std.mem.eql(u8, name, "startsWith")) return if (negated) .not_starts_with else .starts_with;
+    if (std.mem.eql(u8, name, "endsWith")) return if (negated) .not_ends_with else .ends_with;
+    if (std.mem.eql(u8, name, "contains")) return if (negated) .not_contains else .contains;
+    return null;
+}
+
+fn stringHelperPredicate(ctx: *Compiler, call: ast.Call, op: rule.PredicateOp) Error!?rule.Predicate {
+    if (call.args.len != 2) {
+        ctx.fail("startsWith, endsWith, and contains expect (value, text)");
+        return error.UnsupportedPredicate;
+    }
+    const subject = (try textOperand(ctx, call.args[0])) orelse {
+        ctx.fail("startsWith, endsWith, and contains expect (value, text)");
+        return error.UnsupportedPredicate;
+    };
+    const candidate = (try textOperand(ctx, call.args[1])) orelse {
+        ctx.fail("startsWith, endsWith, and contains expect (value, text)");
+        return error.UnsupportedPredicate;
+    };
+    const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
+    args[0] = subject;
+    args[1] = candidate;
+    return .{ .op = op, .args = args };
 }
 
 fn matchesPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {

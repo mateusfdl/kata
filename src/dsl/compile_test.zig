@@ -673,3 +673,57 @@ test "compile: measures in a nested where set needs_measures" {
 
     try std.testing.expect(compiled.needs_measures);
 }
+
+test "compile: translates string helper predicates" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+        \\rule hook-names {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: identifier @fn
+        \\  }
+        \\  where {
+        \\    startsWith(text(@fn), "use")
+        \\    !endsWith(text(@fn), "Deprecated")
+        \\    contains(text(@fn), "Effect")
+        \\    !contains(text(@fn), "Legacy")
+        \\  }
+        \\  emit @match { message "bad hook name" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 4), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.starts_with, predicates[0].op);
+    try std.testing.expectEqual(rule.PredicateOp.not_ends_with, predicates[1].op);
+    try std.testing.expectEqual(rule.PredicateOp.contains, predicates[2].op);
+    try std.testing.expectEqual(rule.PredicateOp.not_contains, predicates[3].op);
+    try std.testing.expectEqualStrings("use", predicates[0].args[1].string);
+    try std.testing.expectEqualStrings("Deprecated", predicates[1].args[1].string);
+    try std.testing.expectEqualStrings("Effect", predicates[2].args[1].string);
+    try std.testing.expectEqualStrings("Legacy", predicates[3].args[1].string);
+}
+
+test "compile: string helpers require two text arguments" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where { startsWith(text(@id)) }
+        \\  emit @id { message "bad" }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.UnsupportedPredicate, compile.compile(gpa, &registry, .ts, file, &diag));
+    try std.testing.expectEqualStrings("startsWith, endsWith, and contains expect (value, text)", diag.detail);
+}

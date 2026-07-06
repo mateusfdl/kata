@@ -1204,3 +1204,36 @@ test "engine: a missing subject capture evaluates to false" {
     try std.testing.expectEqual(@as(usize, 1), diags.len);
     try std.testing.expectEqual(@as(u32, 1), diags[0].range.start.line);
 }
+
+const kata_effect_hooks =
+    \\rule effect-hooks {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: identifier @fn
+    \\  }
+    \\  where {
+    \\    startsWith(text(@fn), "use")
+    \\    endsWith(text(@fn), "Effect")
+    \\    !contains(text(@fn), "Legacy")
+    \\  }
+    \\  emit @match { message "effect hook call" }
+    \\}
+;
+
+test "engine: string helper predicates filter matches" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "effect-hooks", kata_effect_hooks, .kata);
+    defer f.deinit();
+
+    const src =
+        "useEffect();\n" ++
+        "useLegacyEffect();\n" ++
+        "useState();\n" ++
+        "runEffect();\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("effect hook call", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+}
