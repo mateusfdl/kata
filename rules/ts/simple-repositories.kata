@@ -1,0 +1,19 @@
+rule simple-repositories {
+  lang ts
+
+  match class_declaration {
+    name: type_identifier @name
+    body: class_body {
+      child: method_definition @match
+    }
+  }
+
+  where {
+    matches(text(@name), "Repository$")
+    complexity(@match) > 5
+  }
+
+  emit @match {
+    message "repository method complexity {complexity(@match)} exceeds 5 - repositories must stay simple"
+  }
+}
