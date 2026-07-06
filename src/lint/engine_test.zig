@@ -1011,3 +1011,196 @@ test "engine: project kata rules cannot load from language dirs" {
     try std.testing.expectError(error.ProjectRuleInLocalDir, f.engine.lint(gpa, "x;\n", .ts, null));
     try std.testing.expectEqualStrings("project rules are not supported yet", f.engine.compile_diag.detail);
 }
+
+const kata_console_outside_logger =
+    \\rule console-outside-logger {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: member_expression {
+    \\      object: identifier @obj
+    \\    }
+    \\  }
+    \\  where {
+    \\    text(@obj) == "console"
+    \\    not inside @match class_declaration {
+    \\      name: type_identifier @name
+    \\      where {
+    \\        text(@name) == "Logger"
+    \\      }
+    \\    }
+    \\  }
+    \\  emit @match { message "console is only allowed inside Logger" }
+    \\}
+;
+
+test "engine: not inside skips matches enclosed by the named class" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "console-outside-logger", kata_console_outside_logger, .kata);
+    defer f.deinit();
+
+    const src =
+        "console.log(1);\n" ++
+        "class Logger { log() { console.log(2); } }\n" ++
+        "class Other { log() { console.log(3); } }\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqualStrings("console is only allowed inside Logger", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 2), diags[1].range.start.line);
+}
+
+const kata_no_empty_catch =
+    \\rule no-empty-catch {
+    \\  lang ts
+    \\  match catch_clause @match {
+    \\    body: statement_block @body
+    \\  }
+    \\  where {
+    \\    not has @body [throw_statement, call_expression]
+    \\  }
+    \\  emit @match { message "catch block must handle or rethrow the error" }
+    \\}
+;
+
+test "engine: not has fires only when the subtree lacks a match" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-empty-catch", kata_no_empty_catch, .kata);
+    defer f.deinit();
+
+    const src =
+        "try { a(); } catch (e) {}\n" ++
+        "try { b(); } catch (e) { rethrow(e); }\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("catch block must handle or rethrow the error", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+}
+
+const kata_too_many_returns =
+    \\rule too-many-returns {
+    \\  lang ts
+    \\  match function_declaration @match
+    \\  where {
+    \\    count @match return_statement > 3
+    \\  }
+    \\  emit @match { message "function has too many return statements" }
+    \\}
+;
+
+test "engine: count compares nested match totals" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "too-many-returns", kata_too_many_returns, .kata);
+    defer f.deinit();
+
+    const src =
+        "function busy(a) {\n" ++
+        "  if (a == 1) { return 1; }\n" ++
+        "  if (a == 2) { return 2; }\n" ++
+        "  if (a == 3) { return 3; }\n" ++
+        "  return 4;\n" ++
+        "}\n" ++
+        "function calm(a) {\n" ++
+        "  if (a == 1) { return 1; }\n" ++
+        "  return 2;\n" ++
+        "}\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("function has too many return statements", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+}
+
+const kata_complex_class =
+    \\rule complex-class {
+    \\  lang ts
+    \\  match class_declaration @match {
+    \\    name: type_identifier @name
+    \\  }
+    \\  where {
+    \\    has @match method_definition @method {
+    \\      where {
+    \\        complexity(@method) > 2
+    \\      }
+    \\    }
+    \\  }
+    \\  emit @match { message "class has a complex method" }
+    \\}
+;
+
+test "engine: has evaluates measures in the nested where" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "complex-class", kata_complex_class, .kata);
+    defer f.deinit();
+
+    const src =
+        "class Busy {\n" ++
+        "  work(a, b) {\n" ++
+        "    if (a) { return 1; }\n" ++
+        "    if (b) { return 2; }\n" ++
+        "    return 3;\n" ++
+        "  }\n" ++
+        "}\n" ++
+        "class Calm {\n" ++
+        "  work() { return 1; }\n" ++
+        "}\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("class has a complex method", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+}
+
+const kata_self_has =
+    \\rule self-has {
+    \\  lang ts
+    \\  match return_statement @match
+    \\  where {
+    \\    has @match return_statement
+    \\  }
+    \\  emit @match { message "return contains a return" }
+    \\}
+;
+
+test "engine: has rejects the same-range self match" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "self-has", kata_self_has, .kata);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(gpa, "function f() { return 1; }\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 0), diags.len);
+}
+
+const kata_missing_subject =
+    \\rule missing-subject {
+    \\  lang ts
+    \\  match function_declaration @match {
+    \\    body: statement_block {
+    \\      children: return_statement @rets
+    \\    }
+    \\  }
+    \\  where {
+    \\    has @rets call_expression
+    \\  }
+    \\  emit @match { message "a return calls something" }
+    \\}
+;
+
+test "engine: a missing subject capture evaluates to false" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "missing-subject", kata_missing_subject, .kata);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(gpa, "function quiet() { let a = 1; }\nfunction loud() { return call(); }\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(@as(u32, 1), diags[0].range.start.line);
+}

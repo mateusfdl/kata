@@ -26,6 +26,7 @@ pub const Engine = struct {
     facts_queries: std.EnumArray(language.Name, ?facts.Compiled) = .initFill(null),
     cursor: *ts.QueryCursor,
     metric_cursor: *ts.QueryCursor,
+    nested_cursor: *ts.QueryCursor,
     warnings: []const rule.ScopedId = &.{},
     compile_diag: rule.Diagnostic = .{},
 
@@ -40,6 +41,7 @@ pub const Engine = struct {
             .rules = rules,
             .cursor = ts.QueryCursor.create(),
             .metric_cursor = ts.QueryCursor.create(),
+            .nested_cursor = ts.QueryCursor.create(),
         };
     }
 
@@ -66,6 +68,7 @@ pub const Engine = struct {
         }
         self.cursor.destroy();
         self.metric_cursor.destroy();
+        self.nested_cursor.destroy();
     }
 
     pub fn prewarm(self: *Engine) !void {
@@ -161,8 +164,15 @@ pub const Engine = struct {
             .lang = lang,
         } else null;
 
-        try runRule(allocator, compiled, self.cursor, tree.rootNode(), source, lang, path, metric_ctx, &out);
-        if (compiled_dsl) |dsl| try runRule(allocator, dsl, self.cursor, tree.rootNode(), source, lang, path, metric_ctx, &out);
+        const eval_ctx: matcher.EvalContext = .{
+            .source = source,
+            .root = tree.rootNode(),
+            .metric = metric_ctx,
+            .nested_cursor = self.nested_cursor,
+        };
+
+        try runRule(allocator, compiled, self.cursor, eval_ctx, lang, path, &out);
+        if (compiled_dsl) |dsl| try runRule(allocator, dsl, self.cursor, eval_ctx, lang, path, &out);
 
         if (metric.anyEnabled(self.metrics)) {
             const metric_query = try self.ensureMetricQuery(lang);
@@ -202,26 +212,24 @@ pub fn runRule(
     allocator: std.mem.Allocator,
     r: *const rule.CompiledRule,
     cursor: *ts.QueryCursor,
-    root: ts.Node,
-    source: []const u8,
+    ctx: matcher.EvalContext,
     lang: language.Name,
     path: ?[]const u8,
-    metric_ctx: ?matcher.MetricContext,
     out: *std.ArrayList(diagnostic.Diagnostic),
 ) !void {
     if (r.match_capture_id == rule.invalid_capture_id) return;
 
-    cursor.exec(r.query, root);
+    cursor.exec(r.query, ctx.root);
     const lang_str = lang.toString();
 
     while (cursor.nextMatch()) |match| {
         const meta = r.patterns[match.pattern_index];
         if (pathExcluded(meta.exclude_paths, path)) continue;
-        if (!try matcher.evaluate(meta.predicates, match, source, metric_ctx)) continue;
+        if (!try matcher.evaluate(meta.predicates, match, ctx)) continue;
 
         const message = if (meta.message) |m| switch (m) {
             .plain => |text| text,
-            .segments => |segments| try matcher.renderMessage(allocator, segments, match, source, metric_ctx),
+            .segments => |segments| try matcher.renderMessage(allocator, segments, match, ctx),
         } else meta.rule_id;
         try emitMatchDiagnostics(allocator, r, meta, match, lang_str, message, out);
     }

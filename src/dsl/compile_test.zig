@@ -47,7 +47,7 @@ fn runCompiled(
 
     var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
     errdefer out.deinit(gpa);
-    try engine.runRule(gpa, compiled, cursor, tree.rootNode(), source, lang, path, null, &out);
+    try engine.runRule(gpa, compiled, cursor, .{ .source = source, .root = tree.rootNode() }, lang, path, &out);
     return out.toOwnedSlice(gpa);
 }
 
