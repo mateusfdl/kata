@@ -411,3 +411,85 @@ test "compile: rejects invalid rules" {
         try std.testing.expectError(case.err, compileDsl(gpa, &registry, arena.allocator(), .ts, case.source));
     }
 }
+
+test "compile: folds string disjunctions into any-of" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+        \\rule no-weak-assertions {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: member_expression {
+        \\      property: property_identifier @name
+        \\    }
+        \\  }
+        \\  where {
+        \\    text(@name) == "toBeDefined" || text(@name) == "toBeNull" || text(@name) == "toBeTruthy"
+        \\  }
+        \\  emit @match { message "weak assertion" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 1), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.any_of, predicates[0].op);
+    try std.testing.expectEqual(@as(usize, 4), predicates[0].args.len);
+    try std.testing.expectEqualStrings("toBeDefined", predicates[0].args[1].string);
+    try std.testing.expectEqualStrings("toBeNull", predicates[0].args[2].string);
+    try std.testing.expectEqualStrings("toBeTruthy", predicates[0].args[3].string);
+}
+
+test "compile: negated string disjunction becomes not-any-of" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+        \\rule allowlist {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: identifier @name
+        \\  }
+        \\  where {
+        \\    !(text(@name) == "info" || text(@name) == "warn")
+        \\  }
+        \\  emit @match { message "not allowlisted" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 1), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.not_any_of, predicates[0].op);
+    try std.testing.expectEqual(@as(usize, 3), predicates[0].args.len);
+}
+
+test "compile: disjunction across different captures is unsupported" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    const got = compileDsl(gpa, &registry, arena.allocator(), .ts,
+        \\rule mixed {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: member_expression {
+        \\      object: identifier @obj
+        \\      property: property_identifier @name
+        \\    }
+        \\  }
+        \\  where {
+        \\    text(@obj) == "console" || text(@name) == "log"
+        \\  }
+        \\  emit @match { message "mixed" }
+        \\}
+    );
+
+    try std.testing.expectError(error.UnsupportedPredicate, got);
+}

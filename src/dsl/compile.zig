@@ -361,8 +361,62 @@ fn stringPredicate(ctx: *Compiler, expression: ast.Expression, negated: bool) Er
         .negate => |negate| stringPredicate(ctx, negate.expression.*, !negated),
         .call => |call| matchesPredicate(ctx, call, negated),
         .compare => |c| comparePredicate(ctx, c, negated),
+        .logical => |logical| if (logical.op == .@"or") anyOfPredicate(ctx, expression, negated) else null,
         else => null,
     };
+}
+
+fn anyOfPredicate(ctx: *Compiler, expression: ast.Expression, negated: bool) Error!?rule.Predicate {
+    var capture: ?u32 = null;
+    var strings: std.ArrayList([]const u8) = .empty;
+    if (!try collectDisjunction(ctx, expression, &capture, &strings)) return null;
+
+    const args = try ctx.arena.alloc(rule.PredicateOperand, strings.items.len + 1);
+    args[0] = .{ .capture = capture.? };
+    for (strings.items, args[1..]) |s, *slot| slot.* = .{ .string = s };
+    return .{ .op = if (negated) .not_any_of else .any_of, .args = args };
+}
+
+fn collectDisjunction(
+    ctx: *Compiler,
+    expression: ast.Expression,
+    capture: *?u32,
+    strings: *std.ArrayList([]const u8),
+) Error!bool {
+    switch (expression) {
+        .logical => |logical| {
+            if (logical.op != .@"or") return false;
+            if (!try collectDisjunction(ctx, logical.left.*, capture, strings)) return false;
+            return collectDisjunction(ctx, logical.right.*, capture, strings);
+        },
+        .compare => |c| {
+            if (c.op != .eq) return false;
+            const left = (try textOperand(ctx, c.left.*)) orelse return false;
+            const right = (try textOperand(ctx, c.right.*)) orelse return false;
+            const leaf_capture = switch (left) {
+                .capture => |id| id,
+                .string => switch (right) {
+                    .capture => |id| id,
+                    .string => return false,
+                },
+            };
+            const leaf_string = switch (left) {
+                .string => |s| s,
+                .capture => switch (right) {
+                    .string => |s| s,
+                    .capture => return false,
+                },
+            };
+            if (capture.*) |seen| {
+                if (seen != leaf_capture) return false;
+            } else {
+                capture.* = leaf_capture;
+            }
+            try strings.append(ctx.arena, leaf_string);
+            return true;
+        },
+        else => return false,
+    }
 }
 
 fn matchesPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
