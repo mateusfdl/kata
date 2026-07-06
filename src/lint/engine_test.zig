@@ -943,7 +943,40 @@ test "engine: kata rule must declare the directory language" {
     try std.testing.expectEqualStrings("rule does not declare this language", f.engine.compile_diag.detail);
 }
 
-test "engine: kata file must declare exactly one rule" {
+test "engine: kata rule variants in one file all fire" {
+    const gpa = std.testing.allocator;
+    const variants =
+        \\rule no-any {
+        \\  lang ts
+        \\  match type_annotation @match {
+        \\    child: predefined_type @t
+        \\  }
+        \\  where { text(@t) == "any" }
+        \\  emit @match { message "any is not allowed" }
+        \\}
+        \\rule no-any {
+        \\  lang ts
+        \\  match as_expression @match {
+        \\    child: predefined_type @t
+        \\  }
+        \\  where { text(@t) == "any" }
+        \\  emit @match { message "as any is not allowed" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-any", variants, .kata);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(gpa, "const x: any = y as any;\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqualStrings("no-any", diags[0].rule_id);
+    try std.testing.expectEqualStrings("any is not allowed", diags[0].message);
+    try std.testing.expectEqualStrings("no-any", diags[1].rule_id);
+    try std.testing.expectEqualStrings("as any is not allowed", diags[1].message);
+}
+
+test "engine: kata variant with a different id fails" {
     const gpa = std.testing.allocator;
     const two_rules =
         \\rule no-a {
@@ -960,8 +993,8 @@ test "engine: kata file must declare exactly one rule" {
     var f = try Fixture.initFormat(gpa, &.{.ts}, "no-a", two_rules, .kata);
     defer f.deinit();
 
-    try std.testing.expectError(error.OneRulePerFile, f.engine.lint(gpa, "x;\n", .ts, null));
-    try std.testing.expectEqualStrings("kata rule files declare exactly one rule", f.engine.compile_diag.detail);
+    try std.testing.expectError(error.RuleIdMismatch, f.engine.lint(gpa, "x;\n", .ts, null));
+    try std.testing.expectEqualStrings("rule id does not match the file name", f.engine.compile_diag.detail);
 }
 
 test "engine: project kata rules cannot load from language dirs" {

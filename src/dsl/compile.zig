@@ -24,7 +24,6 @@ pub const Error = error{
 };
 
 pub const RawError = Error || dsl_parser.Error || error{
-    OneRulePerFile,
     RuleIdMismatch,
     UndeclaredLanguage,
     ProjectRuleInLocalDir,
@@ -58,7 +57,7 @@ pub fn compileRaws(
     var rules: std.ArrayList(ast.Rule) = .empty;
     for (raws) |raw| {
         if (raw.format != .kata) continue;
-        try rules.append(arena, try parseRaw(arena, lang, raw, diag));
+        try rules.appendSlice(arena, try parseRaw(arena, lang, raw, diag));
     }
     if (rules.items.len == 0) return null;
 
@@ -70,7 +69,7 @@ fn parseRaw(
     lang: language.Name,
     raw: rule.RawRule,
     diag: *rule.Diagnostic,
-) RawError!ast.Rule {
+) RawError![]const ast.Rule {
     var parse_diag: dsl_parser.Diagnostic = .{};
     const file = parseSource(arena, raw.source, &parse_diag) catch |err| {
         diag.* = .{
@@ -82,24 +81,21 @@ fn parseRaw(
         };
         return err;
     };
-    if (file.rules.len != 1) {
-        diag.* = .{ .lang = lang, .rule_id = raw.id, .detail = "kata rule files declare exactly one rule" };
-        return error.OneRulePerFile;
+    for (file.rules) |r| {
+        if (r.kind == .project) {
+            diag.* = .{ .lang = lang, .rule_id = raw.id, .detail = "project rules are not supported yet" };
+            return error.ProjectRuleInLocalDir;
+        }
+        if (!std.mem.eql(u8, r.id, raw.id)) {
+            diag.* = .{ .lang = lang, .rule_id = raw.id, .detail = "rule id does not match the file name" };
+            return error.RuleIdMismatch;
+        }
+        if (!includesLanguage(r, lang)) {
+            diag.* = .{ .lang = lang, .rule_id = raw.id, .detail = "rule does not declare this language" };
+            return error.UndeclaredLanguage;
+        }
     }
-    const r = file.rules[0];
-    if (r.kind == .project) {
-        diag.* = .{ .lang = lang, .rule_id = raw.id, .detail = "project rules are not supported yet" };
-        return error.ProjectRuleInLocalDir;
-    }
-    if (!std.mem.eql(u8, r.id, raw.id)) {
-        diag.* = .{ .lang = lang, .rule_id = raw.id, .detail = "rule id does not match the file name" };
-        return error.RuleIdMismatch;
-    }
-    if (!includesLanguage(r, lang)) {
-        diag.* = .{ .lang = lang, .rule_id = raw.id, .detail = "rule does not declare this language" };
-        return error.UndeclaredLanguage;
-    }
-    return r;
+    return file.rules;
 }
 
 fn parseSource(
