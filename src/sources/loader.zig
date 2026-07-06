@@ -50,7 +50,15 @@ fn addEmbedded(set: *RuleSet) !void {
         const field_name = "embedded_" ++ @tagName(lang);
         if (@hasDecl(embedded_rules, field_name)) {
             for (@field(embedded_rules, field_name)) |entry| {
-                try set.upsert(lang, .{ .id = entry.id, .language = lang, .source = entry.source }, .embedded);
+                try set.upsert(lang, .{
+                    .id = entry.id,
+                    .language = lang,
+                    .source = entry.source,
+                    .format = switch (entry.format) {
+                        .scm => .scm,
+                        .kata => .kata,
+                    },
+                }, .embedded);
             }
         }
     }
