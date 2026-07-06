@@ -1,0 +1,13 @@
+rule max-complexity {
+  lang go
+
+  match [function_declaration, method_declaration, func_literal] @match
+
+  where {
+    complexity(@match) > 10
+  }
+
+  emit @match {
+    message "cyclomatic complexity {complexity(@match)} exceeds 10 - extract smaller functions"
+  }
+}
