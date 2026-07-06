@@ -292,7 +292,7 @@ fn renderNode(
 fn compilePattern(ctx: *Compiler, r: ast.Rule) Error!rule.PatternMeta {
     var predicates: std.ArrayList(rule.Predicate) = .empty;
     for (r.where) |predicate| {
-        try translatePredicate(ctx, predicate.expression, &predicates);
+        try translatePredicate(ctx, predicate, &predicates);
     }
     return .{
         .predicates = try predicates.toOwnedSlice(ctx.arena),
@@ -326,12 +326,26 @@ fn dupeAll(arena: std.mem.Allocator, items: []const []const u8) Error![]const []
 
 fn translatePredicate(
     ctx: *Compiler,
+    predicate: ast.Predicate,
+    out: *std.ArrayList(rule.Predicate),
+) Error!void {
+    switch (predicate) {
+        .expression => |expression| try translateExpression(ctx, expression, out),
+        .composition, .count => {
+            ctx.fail("composition predicates are not supported yet");
+            return error.UnsupportedPredicate;
+        },
+    }
+}
+
+fn translateExpression(
+    ctx: *Compiler,
     expression: ast.Expression,
     out: *std.ArrayList(rule.Predicate),
 ) Error!void {
     if (expression == .logical and expression.logical.op == .@"and") {
-        try translatePredicate(ctx, expression.logical.left.*, out);
-        try translatePredicate(ctx, expression.logical.right.*, out);
+        try translateExpression(ctx, expression.logical.left.*, out);
+        try translateExpression(ctx, expression.logical.right.*, out);
         return;
     }
     if (try stringPredicate(ctx, expression, false)) |pred| {

@@ -758,3 +758,225 @@ test "parser: rejects invalid expressions" {
         \\}
     , &missing_rhs_diag));
 }
+
+test "parser: parses inside composition with a nested where" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule no-console-outside-logger {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: identifier @fn
+        \\  }
+        \\  where {
+        \\    not inside @match class_declaration {
+        \\      name: type_identifier @class_name
+        \\      where {
+        \\        text(@class_name) == "Logger"
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @match { message "console is only allowed inside Logger" }
+        \\}
+    , &diag);
+
+    const composition = file.rules[0].where[0].composition;
+    try std.testing.expectEqual(ast.CompositionOp.inside, composition.op);
+    try std.testing.expectEqual(true, composition.negated);
+    try std.testing.expectEqualStrings("match", composition.matcher.subject.name);
+    try std.testing.expectEqualStrings("class_declaration", composition.matcher.pattern.node_kind.symbol);
+    try std.testing.expectEqual(@as(usize, 1), composition.matcher.pattern.fields.len);
+    try expectFieldRelation("name", composition.matcher.pattern.fields[0].relation);
+    try std.testing.expectEqualStrings("class_name", composition.matcher.pattern.fields[0].pattern.capture.?.name);
+    try std.testing.expectEqual(@as(usize, 1), composition.matcher.where.len);
+    const nested = composition.matcher.where[0].compare;
+    try std.testing.expectEqual(ast.CompareOp.eq, nested.op);
+    try std.testing.expectEqualStrings("Logger", nested.right.*.string.value);
+}
+
+test "parser: parses has with an alternation matcher" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule no-empty-catch {
+        \\  lang ts
+        \\  match catch_clause @match {
+        \\    body: statement_block @body
+        \\  }
+        \\  where {
+        \\    not has @body [throw_statement, call_expression]
+        \\  }
+        \\  emit @match { message "catch block must handle or rethrow the error" }
+        \\}
+    , &diag);
+
+    const composition = file.rules[0].where[0].composition;
+    try std.testing.expectEqual(ast.CompositionOp.has, composition.op);
+    try std.testing.expectEqual(true, composition.negated);
+    try std.testing.expectEqualStrings("body", composition.matcher.subject.name);
+    const kinds = composition.matcher.pattern.node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 2), kinds.len);
+    try std.testing.expectEqualStrings("throw_statement", kinds[0]);
+    try std.testing.expectEqualStrings("call_expression", kinds[1]);
+    try std.testing.expectEqual(@as(usize, 0), composition.matcher.where.len);
+}
+
+test "parser: parses has without negation alongside expressions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule has-panic {
+        \\  lang go
+        \\  match function_declaration @match {
+        \\    name: identifier @name
+        \\  }
+        \\  where {
+        \\    text(@name) == "process"
+        \\    has @match call_expression {
+        \\      function: identifier @fn
+        \\      where {
+        \\        text(@fn) == "panic"
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @match { message "process must not panic" }
+        \\}
+    , &diag);
+
+    try std.testing.expectEqual(@as(usize, 2), file.rules[0].where.len);
+    try std.testing.expectEqual(ast.CompareOp.eq, file.rules[0].where[0].expression.compare.op);
+    const composition = file.rules[0].where[1].composition;
+    try std.testing.expectEqual(ast.CompositionOp.has, composition.op);
+    try std.testing.expectEqual(false, composition.negated);
+    try std.testing.expectEqualStrings("panic", composition.matcher.where[0].compare.right.*.string.value);
+}
+
+test "parser: parses count with a comparison" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule too-many-returns {
+        \\  lang ts
+        \\  match function_declaration @match
+        \\  where {
+        \\    count @match return_statement > 3
+        \\  }
+        \\  emit @match { message "function has too many return statements" }
+        \\}
+    , &diag);
+
+    const count = file.rules[0].where[0].count;
+    try std.testing.expectEqualStrings("match", count.matcher.subject.name);
+    try std.testing.expectEqualStrings("return_statement", count.matcher.pattern.node_kind.symbol);
+    try std.testing.expectEqual(ast.CompareOp.gt, count.op);
+    try std.testing.expectEqual(@as(u32, 3), count.value);
+}
+
+test "parser: rejects not without inside or has" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedComposition, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where {
+        \\    not count @id return_statement > 3
+        \\  }
+        \\  emit @id { message "bad" }
+        \\}
+    , &diag));
+    try std.testing.expectEqual(@as(u32, 5), diag.line);
+    try std.testing.expectEqual(@as(u32, 9), diag.column);
+}
+
+test "parser: rejects count without a comparison" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedComparison, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where {
+        \\    count @id return_statement
+        \\  }
+        \\  emit @id { message "bad" }
+        \\}
+    , &diag));
+    try std.testing.expectEqual(@as(u32, 6), diag.line);
+    try std.testing.expectEqual(@as(u32, 3), diag.column);
+}
+
+test "parser: rejects composition inside a nested where" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.NestedComposition, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where {
+        \\    inside @id class_declaration {
+        \\      where {
+        \\        has @id return_statement
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @id { message "bad" }
+        \\}
+    , &diag));
+    try std.testing.expectEqual(@as(u32, 7), diag.line);
+    try std.testing.expectEqual(@as(u32, 9), diag.column);
+}
+
+test "parser: rejects duplicate nested where clauses" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.DuplicateClause, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where {
+        \\    inside @id class_declaration {
+        \\      where { text(@id) == "a" }
+        \\      where { text(@id) == "b" }
+        \\    }
+        \\  }
+        \\  emit @id { message "bad" }
+        \\}
+    , &diag));
+}
+
+test "parser: rejects fields after a nested where" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedRightBrace, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  where {
+        \\    inside @id class_declaration {
+        \\      where { text(@id) == "a" }
+        \\      name: type_identifier @name
+        \\    }
+        \\  }
+        \\  emit @id { message "bad" }
+        \\}
+    , &diag));
+}

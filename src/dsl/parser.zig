@@ -31,6 +31,9 @@ pub const Error = tokenizer.Error || error{
     InvalidKind,
     InvalidSeverity,
     InvalidExpression,
+    ExpectedComposition,
+    ExpectedComparison,
+    NestedComposition,
 };
 
 const Keyword = enum {
@@ -48,6 +51,10 @@ const Keyword = enum {
     where,
     emit,
     message,
+    inside,
+    has,
+    count,
+    not,
 };
 
 const ParsedNodeKind = struct {
@@ -335,11 +342,7 @@ pub const Parser = struct {
                 self.failAt(self.current);
                 return error.ExpectedRightBrace;
             }
-            const expression = try self.parseExpression();
-            try predicates.append(self.allocator, .{
-                .expression = expression,
-                .range = .{ .start = expressionStart(expression), .end = expressionEnd(expression) },
-            });
+            try predicates.append(self.allocator, try self.parsePredicate());
         }
         try self.advance();
         if (predicates.items.len == 0) {
@@ -347,6 +350,122 @@ pub const Parser = struct {
             return error.EmptyWhere;
         }
         return predicates.toOwnedSlice(self.allocator);
+    }
+
+    fn parsePredicate(self: *Parser) Error!ast.Predicate {
+        if (compositionKeyword(self.current)) |keyword| {
+            return self.parseCompositionPredicate(keyword);
+        }
+        return .{ .expression = try self.parseExpression() };
+    }
+
+    fn parseCompositionPredicate(self: *Parser, keyword: Keyword) Error!ast.Predicate {
+        try self.advance();
+        if (keyword == .count) {
+            const matcher = try self.parseNestedMatcher();
+            const op = compareOp(self.current.kind) orelse {
+                self.failAt(self.current);
+                return error.ExpectedComparison;
+            };
+            try self.advance();
+            const value = try self.parseNumberLiteral();
+            return .{ .count = .{ .matcher = matcher, .op = op, .value = value.value } };
+        }
+
+        var negated = false;
+        var op = keyword;
+        if (op == .not) {
+            negated = true;
+            const inner = self.current;
+            op = compositionKeyword(inner) orelse {
+                self.failAt(inner);
+                return error.ExpectedComposition;
+            };
+            if (op != .inside and op != .has) {
+                self.failAt(inner);
+                return error.ExpectedComposition;
+            }
+            try self.advance();
+        }
+
+        return .{ .composition = .{
+            .op = if (op == .inside) .inside else .has,
+            .negated = negated,
+            .matcher = try self.parseNestedMatcher(),
+        } };
+    }
+
+    fn parseNestedMatcher(self: *Parser) Error!ast.NestedMatcher {
+        const subject = try self.expectCapture();
+        const node = try self.parseNodeKind(.rejected);
+        const capture = try self.parseOptionalCapture();
+        var fields: []const ast.FieldPattern = &.{};
+        var where: []const ast.Expression = &.{};
+        var end = node.range.end;
+        if (capture) |value| end = value.range.end;
+        if (try self.consume(.left_brace)) {
+            var list: std.ArrayList(ast.FieldPattern) = .empty;
+            var seen_where = false;
+            while (self.current.kind != .right_brace) {
+                if (self.current.kind == .eof) {
+                    self.failAt(self.current);
+                    return error.ExpectedRightBrace;
+                }
+                const name = try self.expectSymbol(error.ExpectedSymbol);
+                if (isKeyword(name, .where) and self.current.kind == .left_brace) {
+                    try self.rejectDuplicate(name, &seen_where);
+                    where = try self.parseNestedWhere();
+                    continue;
+                }
+                if (seen_where) {
+                    self.failAt(name);
+                    return error.ExpectedRightBrace;
+                }
+                _ = try self.expect(.colon, error.ExpectedColon);
+                const pattern = try self.parseNodePattern(.allowed);
+                try list.append(self.allocator, .{
+                    .relation = patternRelation(name.lexeme),
+                    .pattern = pattern,
+                    .range = .{ .start = name.range.start, .end = pattern.range.end },
+                });
+            }
+            end = self.current.range.end;
+            try self.advance();
+            fields = try list.toOwnedSlice(self.allocator);
+        }
+        return .{
+            .subject = subject,
+            .pattern = .{
+                .node_kind = node.value,
+                .capture = capture,
+                .fields = fields,
+                .range = .{ .start = node.range.start, .end = end },
+            },
+            .where = where,
+            .range = .{ .start = subject.range.start, .end = end },
+        };
+    }
+
+    fn parseNestedWhere(self: *Parser) Error![]const ast.Expression {
+        const start = try self.expect(.left_brace, error.ExpectedLeftBrace);
+        var expressions: std.ArrayList(ast.Expression) = .empty;
+        while (self.current.kind != .right_brace) {
+            if (self.current.kind == .eof) {
+                self.failAt(self.current);
+                return error.ExpectedRightBrace;
+            }
+            if (compositionKeyword(self.current) != null) {
+                self.failAt(self.current);
+                return error.NestedComposition;
+            }
+            try expressions.append(self.allocator, try self.parseExpression());
+        }
+        try self.advance();
+        if (expressions.items.len == 0) {
+            self.failAt(start);
+            return error.EmptyWhere;
+        }
+        return expressions.toOwnedSlice(self.allocator);
     }
 
     fn parseEmit(self: *Parser, start: Token) Error!ast.Emit {
@@ -569,6 +688,15 @@ pub const Parser = struct {
         self.diag.* = .{ .line = token.range.start.line, .column = token.range.start.column };
     }
 };
+
+fn compositionKeyword(token: Token) ?Keyword {
+    if (token.kind != .symbol) return null;
+    if (isKeyword(token, .inside)) return .inside;
+    if (isKeyword(token, .has)) return .has;
+    if (isKeyword(token, .count)) return .count;
+    if (isKeyword(token, .not)) return .not;
+    return null;
+}
 
 fn patternRelation(name: []const u8) ast.PatternRelation {
     if (std.mem.eql(u8, name, "child")) return .child;

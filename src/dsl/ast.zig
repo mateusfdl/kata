@@ -62,8 +62,33 @@ pub const PatternRelation = union(enum) {
     children,
 };
 
-pub const Predicate = struct {
+pub const Predicate = union(enum) {
     expression: Expression,
+    composition: Composition,
+    count: CountPredicate,
+};
+
+pub const Composition = struct {
+    op: CompositionOp,
+    negated: bool,
+    matcher: NestedMatcher,
+};
+
+pub const CompositionOp = enum {
+    inside,
+    has,
+};
+
+pub const CountPredicate = struct {
+    matcher: NestedMatcher,
+    op: CompareOp,
+    value: u32,
+};
+
+pub const NestedMatcher = struct {
+    subject: Capture,
+    pattern: NodePattern,
+    where: []const Expression = &.{},
     range: tokenizer.Range,
 };
 
