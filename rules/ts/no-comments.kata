@@ -1,0 +1,9 @@
+rule no-comments {
+  lang ts
+
+  match comment @match
+
+  emit @match {
+    message "comments are not allowed - code should be self-documenting"
+  }
+}
