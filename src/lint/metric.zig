@@ -236,6 +236,22 @@ pub fn nestingOf(
     return deepest;
 }
 
+pub fn positionOf(node: ts.Node) ?u32 {
+    if (node.parent() == null) return null;
+    var ordinal: u32 = 1;
+    var current = node;
+    while (current.prevNamedSibling()) |prev| {
+        ordinal += 1;
+        current = prev;
+    }
+    return ordinal;
+}
+
+pub fn siblingsOf(node: ts.Node) ?u32 {
+    const container = node.parent() orelse return null;
+    return container.namedChildCount();
+}
+
 pub fn lengthOf(node: ts.Node) u32 {
     return node.endPoint().row - node.startPoint().row + 1;
 }

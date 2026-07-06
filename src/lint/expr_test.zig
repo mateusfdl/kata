@@ -16,6 +16,8 @@ const FakeMeasures = struct {
     text: ?u32 = null,
     params: u32 = 0,
     args: u32 = 0,
+    position: u32 = 0,
+    siblings: u32 = 0,
     missing_capture: ?u32 = null,
 
     pub const Error = error{};
@@ -29,6 +31,8 @@ const FakeMeasures = struct {
             .text => self.text,
             .params => self.params,
             .args => self.args,
+            .position => self.position,
+            .siblings => self.siblings,
         };
     }
 };

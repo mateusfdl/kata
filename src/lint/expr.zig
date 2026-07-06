@@ -7,6 +7,8 @@ pub const Measure = enum {
     text,
     params,
     args,
+    position,
+    siblings,
 
     pub fn fromString(s: []const u8) ?Measure {
         return std.meta.stringToEnum(Measure, s);

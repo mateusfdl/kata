@@ -1268,3 +1268,59 @@ test "engine: capture predicate tests optional capture presence" {
     try std.testing.expectEqualStrings("function never returns a value", diags[0].message);
     try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
 }
+
+const kata_second_element =
+    \\rule second-element {
+    \\  lang ts
+    \\  match array {
+    \\    child: identifier @match
+    \\  }
+    \\  where {
+    \\    position(@match) == 2
+    \\  }
+    \\  emit @match { message "element {position(@match)} of {siblings(@match)} is flagged" }
+    \\}
+;
+
+test "engine: position measure selects the nth named sibling" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "second-element", kata_second_element, .kata);
+    defer f.deinit();
+
+    const src = "const x = [a, b, c];\nconst y = [d];\n";
+    const diags = try f.engine.lint(arena.allocator(), src, .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("element 2 of 3 is flagged", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 14), diags[0].range.start.column);
+}
+
+const kata_last_element =
+    \\rule last-element {
+    \\  lang ts
+    \\  match array {
+    \\    child: identifier @match
+    \\  }
+    \\  where {
+    \\    position(@match) == siblings(@match)
+    \\  }
+    \\  emit @match { message "last element" }
+    \\}
+;
+
+test "engine: position equals siblings selects the last named sibling" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "last-element", kata_last_element, .kata);
+    defer f.deinit();
+
+    const src = "const x = [a, b, c];\nconst y = [d];\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqual(@as(u32, 17), diags[0].range.start.column);
+    try std.testing.expectEqual(@as(u32, 1), diags[1].range.start.line);
+    try std.testing.expectEqual(@as(u32, 11), diags[1].range.start.column);
+}

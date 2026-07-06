@@ -172,6 +172,8 @@ const NodeMeasures = struct {
             .text => self.numericText(node),
             .params => metric.paramsOf(node, self.ctx.lang),
             .args => metric.argsOf(node),
+            .position => metric.positionOf(node),
+            .siblings => metric.siblingsOf(node),
         };
     }
 
