@@ -384,6 +384,32 @@ test "fact rule: missing message operands render as question marks" {
     try std.testing.expectEqual(lint_diagnostic.Severity.warn, violations[0].diagnostic.severity);
 }
 
+test "fact rule: exclude paths skip matching files" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+    try index.put(try f.engine.extractFacts(gpa, order_service_ts, .ts, "src/order-service.ts"));
+    try index.put(try f.engine.extractFacts(gpa, order_service_ts, .ts, "src/generated/order-service.ts"));
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const all_calls: fact_rule.CompiledFactRule = .{
+        .id = "all-calls",
+        .fact = .call,
+        .predicates = &.{},
+        .message = &.{.{ .literal = "call" }},
+        .exclude_paths = &.{"src/generated/**"},
+    };
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{all_calls}, &.{}, &index);
+
+    try std.testing.expectEqual(@as(usize, 1), violations.len);
+    try std.testing.expectEqualStrings("src/order-service.ts", violations[0].path);
+}
+
 test "fact rule: warnings demote violations to warn severity" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);

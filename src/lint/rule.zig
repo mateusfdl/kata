@@ -164,6 +164,18 @@ pub const Diagnostic = struct {
             } else {
                 try out.print("{s}: rule {s}/{s}: {s}\n", .{ prefix, lang.toString(), self.rule_id, self.detail });
             }
+        } else if (self.rule_id.len > 0) {
+            if (self.line > 0) {
+                try out.print("{s}: rule project/{s}: line {d}, column {d}: {s}\n", .{
+                    prefix,
+                    self.rule_id,
+                    self.line,
+                    self.column,
+                    self.detail,
+                });
+            } else {
+                try out.print("{s}: rule project/{s}: {s}\n", .{ prefix, self.rule_id, self.detail });
+            }
         } else {
             try out.print("{s}: rule compilation failed\n", .{prefix});
         }

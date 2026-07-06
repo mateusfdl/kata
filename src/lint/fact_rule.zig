@@ -72,7 +72,34 @@ pub const CompiledFactRule = struct {
     predicates: []const Predicate,
     message: []const MessageSegment,
     severity: diagnostic.Severity = .@"error",
+    exclude_paths: []const []const u8 = &.{},
 };
+
+pub fn factKindFromString(name: []const u8) ?FactKind {
+    if (std.mem.eql(u8, name, "class")) return .class;
+    if (std.mem.eql(u8, name, "method")) return .method;
+    if (std.mem.eql(u8, name, "typedDecl")) return .typed_decl;
+    if (std.mem.eql(u8, name, "call")) return .call;
+    if (std.mem.eql(u8, name, "import")) return .import;
+
+    return null;
+}
+
+pub fn fieldFromString(name: []const u8) ?Field {
+    return std.meta.stringToEnum(Field, name);
+}
+
+pub fn factHasField(kind: FactKind, field: Field) bool {
+    if (field == .path or field == .lang) return true;
+
+    return switch (kind) {
+        .class => field == .name,
+        .method => field == .name or field == .container,
+        .typed_decl => field == .name or field == .type,
+        .call => field == .receiver or field == .method or field == .container,
+        .import => field == .name or field == .source,
+    };
+}
 
 const Fact = union(FactKind) {
     class: facts.ClassDef,
@@ -153,6 +180,10 @@ fn evaluateFile(
     r: CompiledFactRule,
     ctx: Context,
 ) !void {
+    for (r.exclude_paths) |pattern| {
+        if (glob.match(pattern, ctx.file.path)) return;
+    }
+
     switch (r.fact) {
         .class => for (ctx.file.classes) |c| try evaluateFact(out, allocator, r, ctx, .{ .class = c }),
         .method => for (ctx.file.methods) |m| try evaluateFact(out, allocator, r, ctx, .{ .method = m }),
