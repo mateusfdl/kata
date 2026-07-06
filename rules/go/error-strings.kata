@@ -1,0 +1,24 @@
+rule error-strings {
+  lang go
+
+  match call_expression {
+    function: selector_expression {
+      operand: identifier @pkg
+      field: field_identifier @fn
+    }
+    arguments: argument_list {
+      child: interpreted_string_literal @match
+    }
+  }
+
+  where {
+    text(@pkg) == "errors" || text(@pkg) == "fmt"
+    text(@fn) == "New" || text(@fn) == "Errorf"
+    position(@match) == 1
+    matches(text(@match), "^\"[A-Z]")
+  }
+
+  emit @match {
+    message "error strings should not be capitalized - they are wrapped and printed mid-sentence"
+  }
+}
