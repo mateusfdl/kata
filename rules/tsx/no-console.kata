@@ -1,0 +1,17 @@
+rule no-console {
+  lang tsx
+
+  match call_expression @match {
+    function: member_expression {
+      object: identifier @obj
+    }
+  }
+
+  where {
+    text(@obj) == "console"
+  }
+
+  emit @match {
+    message "console is not allowed - use proper instrumentation"
+  }
+}
