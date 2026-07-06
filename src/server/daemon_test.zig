@@ -759,3 +759,44 @@ test "daemon: broken project rules yaml fails the request" {
     try std.testing.expectEqual(protocol.Status.fail, resp.status);
     try std.testing.expectEqualStrings("project context failed", resp.message.?);
 }
+
+const flag_zzz_kata_rule =
+    \\rule flag-zzz {
+    \\  lang ts
+    \\  match identifier @match
+    \\  where { text(@match) == "zzz" }
+    \\  emit @match { message "zzz is banned here" }
+    \\}
+;
+
+test "daemon: cached project context lints with kata project rules" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+    var h = try ProjectHarness.init();
+    defer h.deinit();
+
+    try h.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "enabled:\n  - flag-zzz\n" });
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.kata", .data = flag_zzz_kata_rule });
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/main.ts", .data = "const ok = 1;\n" });
+
+    var ctx = context(f);
+    ctx.cache = &h.cache;
+
+    const resp = daemon.handle(ctx, arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = try h.path("proj/main.ts"),
+        .source = "const zzz = 1;",
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expect(!report.clean);
+    try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+    try std.testing.expectEqualStrings("flag-zzz", report.diagnostics[0].rule_id);
+    try std.testing.expectEqualStrings("zzz is banned here", report.diagnostics[0].message);
+}

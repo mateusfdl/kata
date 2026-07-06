@@ -391,3 +391,64 @@ test "cache: deleted rules yaml rebuilds and drops project config" {
     const second = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
     try std.testing.expectEqual(false, second.resolved.ratchet);
 }
+
+test "context: project kata rule lints through the engine" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    const no_zzz_rule =
+        \\rule no-zzz {
+        \\  lang ts
+        \\  match identifier @match
+        \\  where { text(@match) == "zzz" }
+        \\  emit @match { message "zzz is banned" }
+        \\}
+    ;
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.createDirPath(io, "proj/src");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "enabled:\n  - ts/no-zzz\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/no-zzz.kata", .data = no_zzz_rule });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
+
+    var r = s.resolver(null, null);
+    const ctx = try r.resolve(try s.path("proj/src/main.ts"));
+    defer ctx.deinit();
+
+    const diags = try ctx.engine.lint(gpa, "const zzz = 1;\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("no-zzz", diags[0].rule_id);
+    try std.testing.expectEqualStrings("zzz is banned", diags[0].message);
+}
+
+test "context: undeclared project kata rule stays inactive" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    const no_zzz_rule =
+        \\rule no-zzz {
+        \\  lang ts
+        \\  match identifier @match
+        \\  where { text(@match) == "zzz" }
+        \\  emit @match { message "zzz is banned" }
+        \\}
+    ;
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.createDirPath(io, "proj/src");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/no-zzz.kata", .data = no_zzz_rule });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
+
+    var r = s.resolver(null, null);
+    const ctx = try r.resolve(try s.path("proj/src/main.ts"));
+    defer ctx.deinit();
+
+    const diags = try ctx.engine.lint(gpa, "const zzz = 1;\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 0), diags.len);
+}

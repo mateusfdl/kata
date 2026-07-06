@@ -242,3 +242,42 @@ test "harness: a single expectation does not cover two diagnostics" {
     try std.testing.expectEqual(harness.Outcome.failures, outcome);
     try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:2 unexpected [flag-any]") != null);
 }
+
+const kata_no_console_rule =
+    \\rule no-console {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: member_expression {
+    \\      object: identifier @receiver
+    \\    }
+    \\  }
+    \\  where { text(@receiver) == "console" }
+    \\  emit @match { message "console is not allowed" }
+    \\}
+;
+
+test "harness: kata rule fixtures run through the same harness" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "no-console.kata", kata_no_console_rule, "sample.ts", "// kata-expect: no-console\n" ++
+        "console.log(1);\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.pass, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+}
+
+test "harness: kata rule with invalid syntax is invalid" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "broken.kata", "rule broken {\n  lang ts\n", "sample.ts", "const ok = 1;\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.invalid, outcome);
+    try std.testing.expectEqualStrings(
+        "kata test: rule ts/broken: line 3, column 1: invalid rule syntax\n",
+        s.err.written(),
+    );
+}
