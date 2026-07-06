@@ -1,0 +1,13 @@
+rule no-defer-in-loop {
+  lang go
+
+  match for_statement {
+    body: block {
+      child: defer_statement @match
+    }
+  }
+
+  emit @match {
+    message "defer in a loop runs only when the function returns, not each iteration - extract the body into its own function or release the resource explicitly"
+  }
+}
