@@ -1,0 +1,15 @@
+rule no-init-func {
+  lang go
+
+  match function_declaration @match {
+    name: identifier @name
+  }
+
+  where {
+    text(@name) == "init"
+  }
+
+  emit @match {
+    message "init functions hide setup and resist testing - use an explicit constructor and dependency injection"
+  }
+}
