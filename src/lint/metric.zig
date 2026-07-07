@@ -159,6 +159,75 @@ const Span = struct {
     range: diagnostic.Range,
 };
 
+/// Spans sorted parent-before-child plus, for every span, the index of the
+/// innermost function span that strictly contains it (null when the span sits
+/// outside any captured function). The owner and depth passes rely on the
+/// parent-before-child order.
+const Analysis = struct {
+    spans: []const Span,
+    owners: []const ?usize,
+
+    fn deinit(self: Analysis, allocator: std.mem.Allocator) void {
+        allocator.free(self.owners);
+        allocator.free(self.spans);
+    }
+};
+
+fn analyze(
+    allocator: std.mem.Allocator,
+    compiled: *const Compiled,
+    cursor: *ts.QueryCursor,
+    root: ts.Node,
+) std.mem.Allocator.Error!Analysis {
+    var list: std.ArrayList(Span) = .empty;
+    errdefer list.deinit(allocator);
+    try collectSpans(allocator, compiled, cursor, root, &list);
+    std.mem.sort(Span, list.items, {}, spanLessThan);
+
+    const spans = try list.toOwnedSlice(allocator);
+    errdefer allocator.free(spans);
+    const owners = try computeOwners(allocator, spans);
+
+    return .{ .spans = spans, .owners = owners };
+}
+
+/// Single stack pass: spans arrive parent-before-child, so the functions still
+/// open at a span's start are exactly the functions containing it.
+fn computeOwners(allocator: std.mem.Allocator, spans: []const Span) std.mem.Allocator.Error![]?usize {
+    const owners = try allocator.alloc(?usize, spans.len);
+    errdefer allocator.free(owners);
+
+    var stack: std.ArrayList(usize) = .empty;
+    defer stack.deinit(allocator);
+
+    for (spans, 0..) |span, i| {
+        popEnded(&stack, spans, span);
+        owners[i] = innermostOpen(spans, stack.items, span);
+        if (span.kind == .function) try stack.append(allocator, i);
+    }
+
+    return owners;
+}
+
+/// A span that extends past the top of the stack cannot be contained by it;
+/// syntax spans never partially overlap, so the top has ended and is done.
+fn popEnded(stack: *std.ArrayList(usize), spans: []const Span, span: Span) void {
+    while (stack.items.len > 0 and span.end > spans[stack.items[stack.items.len - 1]].end) {
+        _ = stack.pop();
+    }
+}
+
+fn innermostOpen(spans: []const Span, stack: []const usize, span: Span) ?usize {
+    var i = stack.len;
+    while (i > 0) {
+        i -= 1;
+        // containsSpan rejects an identical range: that entry is the span
+        // itself (the query root is captured too), not a container of it.
+        if (containsSpan(spans[stack[i]], span)) return stack[i];
+    }
+    return null;
+}
+
 pub fn run(
     allocator: std.mem.Allocator,
     set: Set,
@@ -168,23 +237,14 @@ pub fn run(
     lang: language.Name,
     out: *std.ArrayList(diagnostic.Diagnostic),
 ) !void {
-    var spans: std.ArrayList(Span) = .empty;
-    defer spans.deinit(allocator);
-    try collectSpans(allocator, compiled, cursor, root, &spans);
-    std.mem.sort(Span, spans.items, {}, spanLessThan);
-
-    const owners = try allocator.alloc(?usize, spans.items.len);
-    defer allocator.free(owners);
-
-    for (spans.items, 0..) |span, i| {
-        owners[i] = if (span.kind == .function) null else innermostFunction(spans.items, span);
-    }
+    const analysis = try analyze(allocator, compiled, cursor, root);
+    defer analysis.deinit(allocator);
 
     const lang_str = lang.toString();
 
-    if (set.get(.function_length)) |max| try checkFunctionLength(allocator, spans.items, max, lang_str, out);
-    if (set.get(.complexity)) |max| try checkComplexity(allocator, spans.items, owners, max, lang_str, out);
-    if (set.get(.nesting_depth)) |max| try checkNestingDepth(allocator, spans.items, owners, max, lang_str, out);
+    if (set.get(.function_length)) |max| try checkFunctionLength(allocator, analysis.spans, max, lang_str, out);
+    if (set.get(.complexity)) |max| try checkComplexity(allocator, analysis.spans, analysis.owners, max, lang_str, out);
+    if (set.get(.nesting_depth)) |max| try checkNestingDepth(allocator, analysis.spans, analysis.owners, max, lang_str, out);
 }
 
 pub fn complexityOf(
@@ -193,15 +253,13 @@ pub fn complexityOf(
     cursor: *ts.QueryCursor,
     node: ts.Node,
 ) std.mem.Allocator.Error!u32 {
-    var spans: std.ArrayList(Span) = .empty;
-    defer spans.deinit(allocator);
-    try collectSpans(allocator, compiled, cursor, node, &spans);
+    const analysis = try analyze(allocator, compiled, cursor, node);
+    defer analysis.deinit(allocator);
 
     var cc: u32 = 1;
-
-    for (spans.items) |p| {
+    for (analysis.spans, analysis.owners) |p, owner| {
         if (!isComplexityPoint(p.kind)) continue;
-        if (!ownedByNode(spans.items, p, node)) continue;
+        if (!ownedByRoot(analysis.spans, owner, node)) continue;
         cc += 1;
     }
 
@@ -214,33 +272,33 @@ pub fn nestingOf(
     cursor: *ts.QueryCursor,
     node: ts.Node,
 ) std.mem.Allocator.Error!u32 {
-    var spans: std.ArrayList(Span) = .empty;
-    defer spans.deinit(allocator);
-    try collectSpans(allocator, compiled, cursor, node, &spans);
+    const analysis = try analyze(allocator, compiled, cursor, node);
+    defer analysis.deinit(allocator);
 
-    var containers: std.ArrayList(Container) = .empty;
-    defer containers.deinit(allocator);
+    // Collapse ownership to one class: constructs belonging to `node` share a
+    // key, constructs inside nested functions drop out entirely.
+    const keys = try allocator.alloc(?usize, analysis.spans.len);
+    defer allocator.free(keys);
+    for (keys, analysis.owners) |*key, owner| {
+        key.* = if (ownedByRoot(analysis.spans, owner, node)) 0 else null;
+    }
+
+    const depths = try nestingDepths(allocator, analysis.spans, keys);
+    defer allocator.free(depths);
 
     var deepest: u32 = 0;
-    for (spans.items, 0..) |n, ni| {
-        if (!isNestingConstruct(n.kind)) continue;
-        if (!ownedByNode(spans.items, n, node)) continue;
+    for (depths) |depth| deepest = @max(deepest, depth);
 
-        containers.clearRetainingCapacity();
-        for (spans.items, 0..) |p, pi| {
-            if (pi == ni) continue;
-            if (!isNestingConstruct(p.kind)) continue;
-            if (!ownedByNode(spans.items, p, node)) continue;
-            if (!containsSpan(p, n)) continue;
-            const entry: Container = .{ .kind = p.kind, .end = p.end };
-            if (entry.kind == n.kind and entry.end == n.end) continue;
-            if (!hasContainer(containers.items, entry)) try containers.append(allocator, entry);
-        }
-
-        const depth: u32 = @intCast(containers.items.len + 1);
-        if (depth > deepest) deepest = depth;
-    }
     return deepest;
+}
+
+/// A span collected under `node` belongs to `node` itself when no captured
+/// function strictly contains it, or when the innermost one is `node` (the
+/// query root is captured too, so it shows up as a function span).
+fn ownedByRoot(spans: []const Span, owner: ?usize, node: ts.Node) bool {
+    const fi = owner orelse return true;
+    const f = spans[fi];
+    return f.start == node.startByte() and f.end == node.endByte();
 }
 
 pub fn positionOf(node: ts.Node) ?u32 {
@@ -318,12 +376,6 @@ pub fn argsOf(node: ts.Node) ?u32 {
     return countNonExtraNamed(arguments);
 }
 
-fn ownedByNode(spans: []const Span, p: Span, node: ts.Node) bool {
-    const owner = innermostFunction(spans, p) orelse return true;
-    const f = spans[owner];
-    return f.start == node.startByte() and f.end == node.endByte();
-}
-
 fn collectSpans(
     allocator: std.mem.Allocator,
     compiled: *const Compiled,
@@ -349,6 +401,8 @@ fn collectSpans(
     }
 }
 
+/// Start ascending, end descending: an enclosing span always sorts before the
+/// spans it contains.
 fn spanLessThan(_: void, a: Span, b: Span) bool {
     if (a.start != b.start) return a.start < b.start;
     return a.end > b.end;
@@ -357,16 +411,6 @@ fn spanLessThan(_: void, a: Span, b: Span) bool {
 fn containsSpan(outer: Span, inner: Span) bool {
     if (outer.start == inner.start and outer.end == inner.end) return false;
     return outer.start <= inner.start and inner.end <= outer.end;
-}
-
-fn innermostFunction(spans: []const Span, p: Span) ?usize {
-    var best: ?usize = null;
-    for (spans, 0..) |f, fi| {
-        if (f.kind != .function) continue;
-        if (!containsSpan(f, p)) continue;
-        if (best == null or spans[best.?].start < f.start) best = fi;
-    }
-    return best;
 }
 
 fn checkFunctionLength(
@@ -392,14 +436,19 @@ fn checkComplexity(
     lang_str: []const u8,
     out: *std.ArrayList(diagnostic.Diagnostic),
 ) !void {
-    for (spans, 0..) |f, fi| {
+    const counts = try allocator.alloc(u32, spans.len);
+    defer allocator.free(counts);
+    @memset(counts, 0);
+
+    for (spans, owners) |p, owner| {
+        if (!isComplexityPoint(p.kind)) continue;
+        const fi = owner orelse continue;
+        counts[fi] += 1;
+    }
+
+    for (spans, counts) |f, count| {
         if (f.kind != .function) continue;
-        var cc: u32 = 1;
-        for (spans, 0..) |p, pi| {
-            if (!isComplexityPoint(p.kind)) continue;
-            const owner = owners[pi] orelse continue;
-            if (owner == fi) cc += 1;
-        }
+        const cc = count + 1;
         if (cc <= max) continue;
         try emit(allocator, out, .complexity, lang_str, f.range, "cyclomatic complexity {d} exceeds max {d}", .{ cc, max });
     }
@@ -418,29 +467,60 @@ fn checkNestingDepth(
     lang_str: []const u8,
     out: *std.ArrayList(diagnostic.Diagnostic),
 ) !void {
-    var containers: std.ArrayList(Container) = .empty;
-    defer containers.deinit(allocator);
+    const depths = try nestingDepths(allocator, spans, owners);
+    defer allocator.free(depths);
 
-    for (spans, 0..) |n, ni| {
-        if (!isNestingConstruct(n.kind)) continue;
-        const owner = owners[ni] orelse continue;
-
-        containers.clearRetainingCapacity();
-        for (spans, 0..) |p, pi| {
-            if (pi == ni) continue;
-            if (!isNestingConstruct(p.kind)) continue;
-            const p_owner = owners[pi] orelse continue;
-            if (p_owner != owner) continue;
-            if (!containsSpan(p, n)) continue;
-            const entry: Container = .{ .kind = p.kind, .end = p.end };
-            if (entry.kind == n.kind and entry.end == n.end) continue;
-            if (!hasContainer(containers.items, entry)) try containers.append(allocator, entry);
-        }
-
-        const depth: u32 = @intCast(containers.items.len + 1);
+    for (spans, depths) |n, depth| {
+        // Report only the construct at exactly max + 1: any deeper chain
+        // always passes through max + 1 on the way down, so this yields one
+        // diagnostic per offending chain instead of one per extra level.
         if (depth != max + 1) continue;
         try emit(allocator, out, .nesting_depth, lang_str, n.range, "nesting depth {d} exceeds max {d}", .{ depth, max });
     }
+}
+
+/// Depth of every nesting construct: 1 + the number of enclosing levels that
+/// share its owner key (spans with a null key, or that are not nesting
+/// constructs, get depth 0). Containers sharing a kind and end byte collapse
+/// into one level: the nested if_statements of an `else if` chain all end at
+/// the same byte, so a chain counts as a single level of indentation. The
+/// construct's own (kind, end) is excluded for the same reason — an `else if`
+/// link sits at the depth of its chain head, not one below it.
+fn nestingDepths(
+    allocator: std.mem.Allocator,
+    spans: []const Span,
+    keys: []const ?usize,
+) std.mem.Allocator.Error![]u32 {
+    const depths = try allocator.alloc(u32, spans.len);
+    errdefer allocator.free(depths);
+    @memset(depths, 0);
+
+    var stack: std.ArrayList(usize) = .empty;
+    defer stack.deinit(allocator);
+    var levels: std.ArrayList(Container) = .empty;
+    defer levels.deinit(allocator);
+
+    for (spans, 0..) |span, i| {
+        popEnded(&stack, spans, span);
+        if (!isNestingConstruct(span.kind)) continue;
+        const key = keys[i] orelse continue;
+
+        levels.clearRetainingCapacity();
+        for (stack.items) |pi| {
+            const p_key = keys[pi] orelse continue;
+            if (p_key != key) continue;
+            const p = spans[pi];
+            if (!containsSpan(p, span)) continue;
+            const entry: Container = .{ .kind = p.kind, .end = p.end };
+            if (entry.kind == span.kind and entry.end == span.end) continue;
+            if (!hasContainer(levels.items, entry)) try levels.append(allocator, entry);
+        }
+
+        depths[i] = @intCast(levels.items.len + 1);
+        try stack.append(allocator, i);
+    }
+
+    return depths;
 }
 
 fn hasContainer(containers: []const Container, entry: Container) bool {
