@@ -302,8 +302,8 @@ repeat the rule block to bundle pattern variants under one id. Everything else
 works exactly like `.scm` rules: same tiers, same shadowing, same `enabled:`
 opt-in, same fixture harness under `tests/`.
 
-Matchers accept alternations of node kinds, and a field block on an
-alternation is distributed into every branch:
+Matchers accept alternations, and a field block on an alternation is
+distributed into every branch:
 
 ```kata
 match [function_declaration, method_declaration, func_literal] {
@@ -313,9 +313,30 @@ match [function_declaration, method_declaration, func_literal] {
 }
 ```
 
-matches the parameters of any of the three kinds. Branches share the same
-fields and captures; when variants need different fields or messages, repeated
-rule blocks remain the tool.
+matches the parameters of any of the three kinds. A branch is a full node
+pattern, not just a kind name: it may bind its own capture and carry its own
+field block, so structural variants collapse into one rule block:
+
+```kata
+match method_declaration @match {
+  receiver: parameter_list {
+    child: parameter_declaration {
+      type: [type_identifier @recv, pointer_type { child: type_identifier @recv }]
+    }
+  }
+}
+```
+
+Branch fields render before distributed fields, alternations nest, the list
+tolerates a trailing comma, and anonymous tokens make valid branches in field
+position (`operator: ["void", "delete"]`). The emit capture must be bound in
+every branch of an alternation it appears in - a match through a branch
+without it would have no diagnostic anchor, so the compiler rejects the rule.
+Other captures may be bound in only some branches: a predicate referencing a
+capture the matched branch did not bind fails closed (the match is dropped,
+even for negated forms like `!=`), and `capture(@x)` tests presence
+explicitly. When variants need different messages, repeated rule blocks
+remain the tool.
 
 `where` blocks also take composition predicates - `inside`, `not inside`,
 `has`, `not has`, `parent`, `not parent`, and `count` - to express containment

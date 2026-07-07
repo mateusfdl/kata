@@ -80,10 +80,16 @@ fn runCompiled(
     defer tree.destroy();
     const cursor = ts.QueryCursor.create();
     defer cursor.destroy();
+    const nested_cursor = ts.QueryCursor.create();
+    defer nested_cursor.destroy();
 
     var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
     errdefer out.deinit(gpa);
-    try engine.runRule(gpa, compiled, cursor, .{ .source = source, .root = tree.rootNode() }, lang, path, &out);
+    try engine.runRule(gpa, compiled, cursor, .{
+        .source = source,
+        .root = tree.rootNode(),
+        .nested_cursor = nested_cursor,
+    }, lang, path, &out);
     return out.toOwnedSlice(gpa);
 }
 
@@ -384,6 +390,181 @@ test "compile: distributes fields over an alternation inside a field pattern" {
     try std.testing.expectEqual(@as(usize, 2), diags.len);
     try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
     try std.testing.expectEqual(@as(u32, 1), diags[1].range.start.line);
+}
+
+test "compile: subtree alternation branches bind captures" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule repo-receiver {
+        \\  lang go
+        \\  match method_declaration @match {
+        \\    receiver: parameter_list {
+        \\      child: parameter_declaration {
+        \\        type: [type_identifier @recv, pointer_type { child: type_identifier @recv }]
+        \\      }
+        \\    }
+        \\  }
+        \\  where { matches(text(@recv), "Repository$") }
+        \\  emit @match { message "method on {text(@recv)}" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const src =
+        "package main\n\n" ++
+        "type UserRepository struct{}\n\n" ++
+        "func (r UserRepository) FindValue(id string) string { return id }\n\n" ++
+        "func (r *UserRepository) FindPointer(id string) string { return id }\n\n" ++
+        "type OrderService struct{}\n\n" ++
+        "func (s *OrderService) Create(id string) string { return id }\n";
+    const diags = try runCompiled(gpa, &compiled, .go, src, null);
+    defer gpa.free(diags);
+    defer for (diags) |d| gpa.free(d.message);
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqualStrings("method on UserRepository", diags[0].message);
+    try std.testing.expectEqualStrings("method on UserRepository", diags[1].message);
+    try std.testing.expectEqual(@as(u32, 4), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 6), diags[1].range.start.line);
+}
+
+test "compile: distributes shared fields after branch fields" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule named-callable {
+        \\  lang go
+        \\  match [
+        \\    function_declaration { name: identifier @name },
+        \\    method_declaration { name: field_identifier @name },
+        \\  ] @match {
+        \\    body: block
+        \\  }
+        \\  where { startsWith(text(@name), "Handle") }
+        \\  emit @match { message "callable {text(@name)}" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const src =
+        "package main\n\n" ++
+        "func HandleUser() {}\n\n" ++
+        "func ignored() {}\n\n" ++
+        "type Svc struct{}\n\n" ++
+        "func (s Svc) HandleOrder() {}\n";
+    const diags = try runCompiled(gpa, &compiled, .go, src, null);
+    defer gpa.free(diags);
+    defer for (diags) |d| gpa.free(d.message);
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqualStrings("callable HandleUser", diags[0].message);
+    try std.testing.expectEqualStrings("callable HandleOrder", diags[1].message);
+}
+
+test "compile: matches anonymous alternation branches" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule no-logical-operators {
+        \\  lang ts
+        \\  match binary_expression @match {
+        \\    operator: ["&&", "||"]
+        \\  }
+        \\  emit @match { message "no logical operators" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const src = "const x = a && b;\nconst y = a || b;\nconst z = a + b;\n";
+    const diags = try runCompiled(gpa, &compiled, .ts, src, null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+}
+
+test "compile: partial branch captures fail predicates closed" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule pointer-repo-receiver {
+        \\  lang go
+        \\  match method_declaration @match {
+        \\    receiver: parameter_list {
+        \\      child: parameter_declaration {
+        \\        type: [type_identifier, pointer_type { child: type_identifier @inner }]
+        \\      }
+        \\    }
+        \\  }
+        \\  where { matches(text(@inner), "Repository$") }
+        \\  emit @match { message "pointer repo receiver" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const src =
+        "package main\n\n" ++
+        "type UserRepository struct{}\n\n" ++
+        "func (r UserRepository) FindValue(id string) string { return id }\n\n" ++
+        "func (r *UserRepository) FindPointer(id string) string { return id }\n";
+    const diags = try runCompiled(gpa, &compiled, .go, src, null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(@as(u32, 6), diags[0].range.start.line);
+}
+
+test "compile: rejects an emit capture missing from an alternation branch" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang go
+        \\  match parameter_declaration {
+        \\    type: [type_identifier @match, pointer_type { child: type_identifier }]
+        \\  }
+        \\  emit @match { message "bad" }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.EmitCaptureMissingInBranch, compile.compile(gpa, .go, file, &diag));
+    try std.testing.expectEqualStrings("bad", diag.rule_id);
+    try std.testing.expectEqualStrings("emit capture must be bound in every alternation branch", diag.detail);
+}
+
+test "compile: nested matchers accept subtree alternation branches" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule returns-literal {
+        \\  lang go
+        \\  match function_declaration @match {
+        \\    name: identifier @name
+        \\  }
+        \\  where {
+        \\    has @match [return_statement { child: expression_list }, go_statement]
+        \\  }
+        \\  emit @match { message "returns or spawns" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const src =
+        "package main\n\n" ++
+        "func withReturn() int { return 1 }\n\n" ++
+        "func withGo() { go withReturn() }\n\n" ++
+        "func bare() {}\n";
+    const diags = try runCompiled(gpa, &compiled, .go, src, null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
 }
 
 test "compile: nested matchers accept alternations with fields" {

@@ -19,6 +19,7 @@ pub const Error = error{
     UnknownCapture,
     UnknownMeasure,
     EmitCaptureConflict,
+    EmitCaptureMissingInBranch,
     InvalidRegex,
     InvalidStringComparison,
     ReservedCapture,
@@ -212,6 +213,10 @@ fn renderPattern(ctx: *Compiler, out: *std.ArrayList(u8), r: ast.Rule) Error!voi
         ctx.fail("emit capture not found in match");
         return error.UnknownCapture;
     }
+    if (!guaranteedCapture(pattern, emit_name)) {
+        ctx.fail("emit capture must be bound in every alternation branch");
+        return error.EmitCaptureMissingInBranch;
+    }
     if (!std.mem.eql(u8, emit_name, rule.match_capture) and captureExists(pattern, rule.match_capture)) {
         ctx.fail("rule emits another capture but also binds @match");
         return error.EmitCaptureConflict;
@@ -223,8 +228,30 @@ fn captureExists(pattern: ast.NodePattern, name: []const u8) bool {
     if (pattern.capture) |capture| {
         if (std.mem.eql(u8, capture.name, name)) return true;
     }
+    if (pattern.node_kind == .alternation) {
+        for (pattern.node_kind.alternation) |branch| {
+            if (captureExists(branch, name)) return true;
+        }
+    }
     for (pattern.fields) |field| {
         if (captureExists(field.pattern, name)) return true;
+    }
+    return false;
+}
+
+fn guaranteedCapture(pattern: ast.NodePattern, name: []const u8) bool {
+    if (pattern.capture) |capture| {
+        if (std.mem.eql(u8, capture.name, name)) return true;
+    }
+    if (pattern.node_kind == .alternation) {
+        var in_every_branch = true;
+        for (pattern.node_kind.alternation) |branch| {
+            if (!guaranteedCapture(branch, name)) in_every_branch = false;
+        }
+        if (in_every_branch) return true;
+    }
+    for (pattern.fields) |field| {
+        if (guaranteedCapture(field.pattern, name)) return true;
     }
     return false;
 }
@@ -250,11 +277,11 @@ fn renderNode(
             }
             try out.append(ctx.arena, '"');
         },
-        .alternation => |kinds| {
+        .alternation => |branches| {
             try out.append(ctx.arena, '[');
-            for (kinds, 0..) |kind, i| {
+            for (branches, 0..) |branch, i| {
                 if (i > 0) try out.append(ctx.arena, ' ');
-                try renderBranch(ctx, out, kind, pattern.fields, emit_name);
+                try renderNode(ctx, out, try withSharedFields(ctx, branch, pattern.fields), emit_name, .one);
             }
             try out.append(ctx.arena, ']');
         },
@@ -268,6 +295,23 @@ fn renderNode(
             try out.appendSlice(ctx.arena, rule.match_capture);
         }
     }
+}
+
+fn withSharedFields(
+    ctx: *Compiler,
+    branch: ast.NodePattern,
+    shared: []const ast.FieldPattern,
+) Error!ast.NodePattern {
+    if (shared.len == 0) return branch;
+    const fields = try ctx.arena.alloc(ast.FieldPattern, branch.fields.len + shared.len);
+    @memcpy(fields[0..branch.fields.len], branch.fields);
+    @memcpy(fields[branch.fields.len..], shared);
+    return .{
+        .node_kind = branch.node_kind,
+        .capture = branch.capture,
+        .fields = fields,
+        .range = branch.range,
+    };
 }
 
 fn renderBranch(

@@ -41,7 +41,7 @@ pub const NodePattern = struct {
 pub const NodeKind = union(enum) {
     symbol: []const u8,
     anonymous: []const u8,
-    alternation: []const []const u8,
+    alternation: []const NodePattern,
 };
 
 pub const KindPattern = struct {

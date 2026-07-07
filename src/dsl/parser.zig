@@ -305,7 +305,7 @@ pub const Parser = struct {
                 const token = try self.parseStringLiteral();
                 return .{ .value = .{ .anonymous = token.value }, .range = token.range };
             },
-            .left_bracket => return self.parseAlternation(),
+            .left_bracket => return self.parseAlternation(anonymous),
             else => {
                 self.failAt(self.current);
                 return error.ExpectedSymbol;
@@ -313,16 +313,17 @@ pub const Parser = struct {
         }
     }
 
-    fn parseAlternation(self: *Parser) Error!ParsedNodeKind {
+    fn parseAlternation(self: *Parser, anonymous: AnonymousNodeKind) Error!ParsedNodeKind {
         const start = try self.expect(.left_bracket, error.ExpectedSymbol);
-        var kinds: std.ArrayList([]const u8) = .empty;
-        try kinds.append(self.allocator, (try self.expectSymbol(error.ExpectedSymbol)).lexeme);
+        var branches: std.ArrayList(ast.NodePattern) = .empty;
+        try branches.append(self.allocator, try self.parseNodePattern(anonymous));
         while (try self.consume(.comma)) {
-            try kinds.append(self.allocator, (try self.expectSymbol(error.ExpectedSymbol)).lexeme);
+            if (self.current.kind == .right_bracket) break;
+            try branches.append(self.allocator, try self.parseNodePattern(anonymous));
         }
         const end = try self.expect(.right_bracket, error.ExpectedRightBracket);
         return .{
-            .value = .{ .alternation = try kinds.toOwnedSlice(self.allocator) },
+            .value = .{ .alternation = try branches.toOwnedSlice(self.allocator) },
             .range = .{ .start = start.range.start, .end = end.range.end },
         };
     }

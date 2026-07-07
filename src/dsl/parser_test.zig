@@ -313,11 +313,11 @@ test "parser: parses alternation matchers" {
         \\}
     , &diag);
 
-    const kinds = file.rules[0].match.?.node.node_kind.alternation;
-    try std.testing.expectEqual(@as(usize, 3), kinds.len);
-    try std.testing.expectEqualStrings("function_declaration", kinds[0]);
-    try std.testing.expectEqualStrings("function_expression", kinds[1]);
-    try std.testing.expectEqualStrings("arrow_function", kinds[2]);
+    const branches = file.rules[0].match.?.node.node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 3), branches.len);
+    try std.testing.expectEqualStrings("function_declaration", branches[0].node_kind.symbol);
+    try std.testing.expectEqualStrings("function_expression", branches[1].node_kind.symbol);
+    try std.testing.expectEqualStrings("arrow_function", branches[2].node_kind.symbol);
     try std.testing.expectEqualStrings("match", file.rules[0].match.?.node.capture.?.name);
 }
 
@@ -338,11 +338,119 @@ test "parser: parses nested alternation matchers" {
 
     const field = file.rules[0].match.?.node.fields[0];
     try std.testing.expectEqual(ast.PatternRelation.child, field.relation);
-    const kinds = field.pattern.node_kind.alternation;
-    try std.testing.expectEqual(@as(usize, 2), kinds.len);
-    try std.testing.expectEqualStrings("return_statement", kinds[0]);
-    try std.testing.expectEqualStrings("throw_statement", kinds[1]);
+    const branches = field.pattern.node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 2), branches.len);
+    try std.testing.expectEqualStrings("return_statement", branches[0].node_kind.symbol);
+    try std.testing.expectEqualStrings("throw_statement", branches[1].node_kind.symbol);
     try std.testing.expectEqualStrings("exit", field.pattern.capture.?.name);
+}
+
+test "parser: parses subtree alternation branches" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule repo-receiver {
+        \\  lang go
+        \\  match method_declaration @match {
+        \\    receiver: [type_identifier @recv, pointer_type { child: type_identifier @recv }]
+        \\  }
+        \\  emit @match { message "repo receiver" }
+        \\}
+    , &diag);
+
+    const branches = file.rules[0].match.?.node.fields[0].pattern.node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 2), branches.len);
+    try std.testing.expectEqualStrings("type_identifier", branches[0].node_kind.symbol);
+    try std.testing.expectEqualStrings("recv", branches[0].capture.?.name);
+    try std.testing.expectEqual(@as(usize, 0), branches[0].fields.len);
+    try std.testing.expectEqualStrings("pointer_type", branches[1].node_kind.symbol);
+    try std.testing.expectEqual(@as(?ast.Capture, null), branches[1].capture);
+    try std.testing.expectEqual(ast.PatternRelation.child, branches[1].fields[0].relation);
+    try std.testing.expectEqualStrings("type_identifier", branches[1].fields[0].pattern.node_kind.symbol);
+    try std.testing.expectEqualStrings("recv", branches[1].fields[0].pattern.capture.?.name);
+}
+
+test "parser: parses anonymous alternation branches in field position" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule no-unary-keywords {
+        \\  lang ts
+        \\  match unary_expression @match {
+        \\    operator: ["void", "delete"]
+        \\  }
+        \\  emit @match { message "unary keyword" }
+        \\}
+    , &diag);
+
+    const branches = file.rules[0].match.?.node.fields[0].pattern.node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 2), branches.len);
+    try std.testing.expectEqualStrings("void", branches[0].node_kind.anonymous);
+    try std.testing.expectEqualStrings("delete", branches[1].node_kind.anonymous);
+}
+
+test "parser: tolerates trailing commas in alternation matchers" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule function-like {
+        \\  lang go
+        \\  match [
+        \\    function_declaration,
+        \\    method_declaration,
+        \\  ] @match
+        \\  emit @match { message "function-like" }
+        \\}
+    , &diag);
+
+    const branches = file.rules[0].match.?.node.node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 2), branches.len);
+    try std.testing.expectEqualStrings("function_declaration", branches[0].node_kind.symbol);
+    try std.testing.expectEqualStrings("method_declaration", branches[1].node_kind.symbol);
+}
+
+test "parser: parses nested alternation branches" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule indirect-type {
+        \\  lang go
+        \\  match parameter_declaration @match {
+        \\    type: [type_identifier, [pointer_type, slice_type]]
+        \\  }
+        \\  emit @match { message "indirect type" }
+        \\}
+    , &diag);
+
+    const branches = file.rules[0].match.?.node.fields[0].pattern.node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 2), branches.len);
+    try std.testing.expectEqualStrings("type_identifier", branches[0].node_kind.symbol);
+    const inner = branches[1].node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 2), inner.len);
+    try std.testing.expectEqualStrings("pointer_type", inner[0].node_kind.symbol);
+    try std.testing.expectEqualStrings("slice_type", inner[1].node_kind.symbol);
+}
+
+test "parser: rejects anonymous alternation branches at match root" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedSymbol, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match [identifier, "&&"] @match
+        \\  emit @match { message "bad" }
+        \\}
+    , &diag));
 }
 
 test "parser: parses positional children relations" {
@@ -818,10 +926,10 @@ test "parser: parses has with an alternation matcher" {
     try std.testing.expectEqual(ast.CompositionOp.has, composition.op);
     try std.testing.expectEqual(true, composition.negated);
     try std.testing.expectEqualStrings("body", composition.matcher.subject.name);
-    const kinds = composition.matcher.pattern.node_kind.alternation;
-    try std.testing.expectEqual(@as(usize, 2), kinds.len);
-    try std.testing.expectEqualStrings("throw_statement", kinds[0]);
-    try std.testing.expectEqualStrings("call_expression", kinds[1]);
+    const branches = composition.matcher.pattern.node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 2), branches.len);
+    try std.testing.expectEqualStrings("throw_statement", branches[0].node_kind.symbol);
+    try std.testing.expectEqualStrings("call_expression", branches[1].node_kind.symbol);
     try std.testing.expectEqual(@as(usize, 0), composition.matcher.where.len);
 }
 
