@@ -35,6 +35,7 @@ pub const NodePattern = struct {
     node_kind: NodeKind,
     capture: ?Capture = null,
     fields: []const FieldPattern = &.{},
+    absent_fields: []const []const u8 = &.{},
     range: tokenizer.Range,
 };
 

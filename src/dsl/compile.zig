@@ -264,9 +264,9 @@ fn renderNode(
     cardinality: Cardinality,
 ) Error!void {
     switch (pattern.node_kind) {
-        .symbol => |kind| try renderBranch(ctx, out, kind, pattern.fields, emit_name),
+        .symbol => |kind| try renderBranch(ctx, out, kind, pattern.fields, pattern.absent_fields, emit_name),
         .anonymous => |token| {
-            if (pattern.fields.len != 0) {
+            if (pattern.fields.len != 0 or pattern.absent_fields.len != 0) {
                 ctx.fail("anonymous tokens cannot have child patterns");
                 return error.UnsupportedMatch;
             }
@@ -281,7 +281,7 @@ fn renderNode(
             try out.append(ctx.arena, '[');
             for (branches, 0..) |branch, i| {
                 if (i > 0) try out.append(ctx.arena, ' ');
-                try renderNode(ctx, out, try withSharedFields(ctx, branch, pattern.fields), emit_name, .one);
+                try renderNode(ctx, out, try withSharedFields(ctx, branch, pattern.fields, pattern.absent_fields), emit_name, .one);
             }
             try out.append(ctx.arena, ']');
         },
@@ -301,15 +301,20 @@ fn withSharedFields(
     ctx: *Compiler,
     branch: ast.NodePattern,
     shared: []const ast.FieldPattern,
+    shared_absent: []const []const u8,
 ) Error!ast.NodePattern {
-    if (shared.len == 0) return branch;
+    if (shared.len == 0 and shared_absent.len == 0) return branch;
     const fields = try ctx.arena.alloc(ast.FieldPattern, branch.fields.len + shared.len);
     @memcpy(fields[0..branch.fields.len], branch.fields);
     @memcpy(fields[branch.fields.len..], shared);
+    const absent = try ctx.arena.alloc([]const u8, branch.absent_fields.len + shared_absent.len);
+    @memcpy(absent[0..branch.absent_fields.len], branch.absent_fields);
+    @memcpy(absent[branch.absent_fields.len..], shared_absent);
     return .{
         .node_kind = branch.node_kind,
         .capture = branch.capture,
         .fields = fields,
+        .absent_fields = absent,
         .range = branch.range,
     };
 }
@@ -319,6 +324,7 @@ fn renderBranch(
     out: *std.ArrayList(u8),
     kind: []const u8,
     fields: []const ast.FieldPattern,
+    absent_fields: []const []const u8,
     emit_name: []const u8,
 ) Error!void {
     try out.append(ctx.arena, '(');
@@ -334,6 +340,10 @@ fn renderBranch(
         }
         const child_cardinality: Cardinality = if (field.relation == .children) .many else .one;
         try renderNode(ctx, out, field.pattern, emit_name, child_cardinality);
+    }
+    for (absent_fields) |name| {
+        try out.appendSlice(ctx.arena, " !");
+        try out.appendSlice(ctx.arena, name);
     }
     try out.append(ctx.arena, ')');
 }

@@ -345,6 +345,90 @@ test "parser: parses nested alternation matchers" {
     try std.testing.expectEqualStrings("exit", field.pattern.capture.?.name);
 }
 
+test "parser: parses negated field assertions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule no-return-type {
+        \\  lang go
+        \\  match function_declaration @match {
+        \\    name: identifier @name
+        \\    !result
+        \\  }
+        \\  emit @match { message "no return type" }
+        \\}
+    , &diag);
+
+    const node = file.rules[0].match.?.node;
+    try std.testing.expectEqual(@as(usize, 1), node.fields.len);
+    try std.testing.expectEqual(@as(usize, 1), node.absent_fields.len);
+    try std.testing.expectEqualStrings("result", node.absent_fields[0]);
+}
+
+test "parser: parses negated fields inside alternation branches" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule no-return-type {
+        \\  lang go
+        \\  match [function_declaration { !result }, method_declaration { !result }] @match
+        \\  emit @match { message "no return type" }
+        \\}
+    , &diag);
+
+    const branches = file.rules[0].match.?.node.node_kind.alternation;
+    try std.testing.expectEqualStrings("result", branches[0].absent_fields[0]);
+    try std.testing.expectEqualStrings("result", branches[1].absent_fields[0]);
+}
+
+test "parser: parses negated fields in nested matchers" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule has-untyped {
+        \\  lang go
+        \\  match source_file @match
+        \\  where {
+        \\    has @match function_declaration { !result }
+        \\  }
+        \\  emit @match { message "has an untyped function" }
+        \\}
+    , &diag);
+
+    const matcher = file.rules[0].where[0].composition.matcher;
+    try std.testing.expectEqual(@as(usize, 1), matcher.pattern.absent_fields.len);
+    try std.testing.expectEqualStrings("result", matcher.pattern.absent_fields[0]);
+}
+
+test "parser: rejects negated pseudo-relations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var child_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.InvalidNegatedField, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang go
+        \\  match function_declaration @match { !child }
+        \\  emit @match { message "bad" }
+        \\}
+    , &child_diag));
+
+    var children_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.InvalidNegatedField, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang go
+        \\  match function_declaration @match { !children }
+        \\  emit @match { message "bad" }
+        \\}
+    , &children_diag));
+}
+
 test "parser: parses subtree alternation branches" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

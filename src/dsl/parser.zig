@@ -23,6 +23,7 @@ pub const Error = tokenizer.Error || error{
     ExpectedRightParen,
     ExpectedColon,
     ExpectedMessage,
+    InvalidNegatedField,
     UnknownClause,
     DuplicateClause,
     EmptyWhere,
@@ -268,27 +269,45 @@ pub const Parser = struct {
         const node = try self.parseNodeKind(anonymous);
         const capture = try self.parseOptionalCapture();
         var fields: []const ast.FieldPattern = &.{};
+        var absent_fields: []const []const u8 = &.{};
         var end = node.range.end;
         if (capture) |value| end = value.range.end;
         if (try self.consume(.left_brace)) {
             var list: std.ArrayList(ast.FieldPattern) = .empty;
+            var absents: std.ArrayList([]const u8) = .empty;
             while (self.current.kind != .right_brace) {
                 if (self.current.kind == .eof) {
                     self.failAt(self.current);
                     return error.ExpectedRightBrace;
+                }
+                if (self.current.kind == .bang) {
+                    try absents.append(self.allocator, try self.parseAbsentField());
+                    continue;
                 }
                 try list.append(self.allocator, try self.parseFieldPattern());
             }
             end = self.current.range.end;
             try self.advance();
             fields = try list.toOwnedSlice(self.allocator);
+            absent_fields = try absents.toOwnedSlice(self.allocator);
         }
         return .{
             .node_kind = node.value,
             .capture = capture,
             .fields = fields,
+            .absent_fields = absent_fields,
             .range = .{ .start = node.range.start, .end = end },
         };
+    }
+
+    fn parseAbsentField(self: *Parser) Error![]const u8 {
+        _ = try self.expect(.bang, error.InvalidNegatedField);
+        const name = try self.expectSymbol(error.ExpectedSymbol);
+        if (patternRelation(name.lexeme) != .field) {
+            self.failAt(name);
+            return error.InvalidNegatedField;
+        }
+        return name.lexeme;
     }
 
     fn parseNodeKind(self: *Parser, anonymous: AnonymousNodeKind) Error!ParsedNodeKind {
@@ -410,16 +429,26 @@ pub const Parser = struct {
         const node = try self.parseNodeKind(.rejected);
         const capture = try self.parseOptionalCapture();
         var fields: []const ast.FieldPattern = &.{};
+        var absent_fields: []const []const u8 = &.{};
         var where: []const ast.Expression = &.{};
         var end = node.range.end;
         if (capture) |value| end = value.range.end;
         if (try self.consume(.left_brace)) {
             var list: std.ArrayList(ast.FieldPattern) = .empty;
+            var absents: std.ArrayList([]const u8) = .empty;
             var seen_where = false;
             while (self.current.kind != .right_brace) {
                 if (self.current.kind == .eof) {
                     self.failAt(self.current);
                     return error.ExpectedRightBrace;
+                }
+                if (self.current.kind == .bang) {
+                    if (seen_where) {
+                        self.failAt(self.current);
+                        return error.ExpectedRightBrace;
+                    }
+                    try absents.append(self.allocator, try self.parseAbsentField());
+                    continue;
                 }
                 const name = try self.expectSymbol(error.ExpectedSymbol);
                 if (isKeyword(name, .where) and self.current.kind == .left_brace) {
@@ -442,6 +471,7 @@ pub const Parser = struct {
             end = self.current.range.end;
             try self.advance();
             fields = try list.toOwnedSlice(self.allocator);
+            absent_fields = try absents.toOwnedSlice(self.allocator);
         }
         return .{
             .subject = subject,
@@ -449,6 +479,7 @@ pub const Parser = struct {
                 .node_kind = node.value,
                 .capture = capture,
                 .fields = fields,
+                .absent_fields = absent_fields,
                 .range = .{ .start = node.range.start, .end = end },
             },
             .where = where,

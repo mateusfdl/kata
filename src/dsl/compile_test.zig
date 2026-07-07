@@ -392,6 +392,128 @@ test "compile: distributes fields over an alternation inside a field pattern" {
     try std.testing.expectEqual(@as(u32, 1), diags[1].range.start.line);
 }
 
+test "compile: negated fields match nodes lacking the field" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule no-return-type {
+        \\  lang go
+        \\  match function_declaration @match {
+        \\    name: identifier @name
+        \\    !result
+        \\  }
+        \\  emit @match { message "function has no result" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const src =
+        "package main\n\n" ++
+        "func typed() int { return 1 }\n\n" ++
+        "func untyped() {}\n";
+    const diags = try runCompiled(gpa, &compiled, .go, src, null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(@as(u32, 4), diags[0].range.start.line);
+}
+
+test "compile: distributes negated fields over alternation branches" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule no-return-type {
+        \\  lang go
+        \\  match [function_declaration, method_declaration] @match {
+        \\    !result
+        \\  }
+        \\  emit @match { message "callable has no result" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const src =
+        "package main\n\n" ++
+        "type Svc struct{}\n\n" ++
+        "func typed() int { return 1 }\n\n" ++
+        "func untyped() {}\n\n" ++
+        "func (s Svc) Typed() int { return 1 }\n\n" ++
+        "func (s Svc) Untyped() {}\n";
+    const diags = try runCompiled(gpa, &compiled, .go, src, null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqual(@as(u32, 6), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 10), diags[1].range.start.line);
+}
+
+test "compile: negated fields work in nested matchers" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule has-untyped-function {
+        \\  lang go
+        \\  match source_file @match
+        \\  where {
+        \\    has @match function_declaration { !result }
+        \\  }
+        \\  emit @match { message "file has an untyped function" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const with_untyped = "package main\n\nfunc untyped() {}\n";
+    const flagged = try runCompiled(gpa, &compiled, .go, with_untyped, null);
+    defer gpa.free(flagged);
+    try std.testing.expectEqual(@as(usize, 1), flagged.len);
+
+    const all_typed = "package main\n\nfunc typed() int { return 1 }\n";
+    const clean = try runCompiled(gpa, &compiled, .go, all_typed, null);
+    defer gpa.free(clean);
+    try std.testing.expectEqual(@as(usize, 0), clean.len);
+}
+
+test "compile: rejects invalid negated field names" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang go
+        \\  match function_declaration @match { !not_a_field }
+        \\  emit @match { message "bad" }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.QueryCompileFailed, compile.compile(gpa, .go, file, &diag));
+    try std.testing.expectEqualStrings("bad", diag.rule_id);
+    try std.testing.expectEqualStrings("node kind or field is invalid for the grammar", diag.detail);
+}
+
+test "compile: rejects negated fields on anonymous tokens" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match binary_expression @match {
+        \\    operator: "&&" { !left }
+        \\  }
+        \\  emit @match { message "bad" }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.UnsupportedMatch, compile.compile(gpa, .ts, file, &diag));
+    try std.testing.expectEqualStrings("anonymous tokens cannot have child patterns", diag.detail);
+}
+
 test "compile: subtree alternation branches bind captures" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);

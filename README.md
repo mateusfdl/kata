@@ -338,6 +338,21 @@ even for negated forms like `!=`), and `capture(@x)` tests presence
 explicitly. When variants need different messages, repeated rule blocks
 remain the tool.
 
+A field block line may also assert a field's absence with `!name`:
+
+```kata
+match function_declaration @match {
+  name: identifier @name
+  !result
+}
+```
+
+matches only functions without a return type. Negated fields mix with
+positive fields in any order, distribute over alternation branches, and take
+grammar field names only - `!child` and `!children` are rejected at parse
+time, and a field name the grammar does not define fails compilation like any
+other invalid field.
+
 `where` blocks also take composition predicates - `inside`, `not inside`,
 `has`, `not has`, `parent`, `not parent`, and `count` - to express containment
 rules that a single query cannot:
