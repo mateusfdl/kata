@@ -33,6 +33,7 @@ pub fn build(b: *std.Build) void {
     const gen_exe = gen_dep.artifact("gen_embedded_rules");
 
     const run_gen = b.addRunArtifact(gen_exe);
+    run_gen.has_side_effects = true;
     run_gen.addDirectoryArg(b.path("rules"));
     _ = run_gen.step.addDirectoryWatchInput(b.path("rules")) catch @panic("failed to watch rules directory");
     const embedded_rules_zig = run_gen.addOutputFileArg("embedded_rules.zig");
