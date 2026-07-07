@@ -16,8 +16,8 @@ const RuleSet = @import("RuleSet.zig").RuleSet;
 
 const initial_diagnostic_capacity: usize = 16;
 
-/// Caches the outcome of DSL compilation per language. `none` (no kata-format
-/// rules exist) must be remembered too — leaving the slot empty would re-scan
+/// caches the outcome of DSL compilation per language. `none` (no kata-format
+/// rules exist) must be remembered too, leaving the slot empty would re-scan
 /// the raw rules on every lint call.
 const DslSlot = union(enum) {
     not_compiled,
@@ -129,8 +129,13 @@ pub const Engine = struct {
 
     /// prewarm and, on failure, write the compile diagnostic under `label`.
     /// returns true when rules are ready, false when compilation failed.
+    /// Every compile failure populates compile_diag before erroring, so an
+    /// empty diag means an infrastructure failure that must propagate:
+    /// reporting it would print a stale or empty diagnostic.
     pub fn prewarmOrReport(self: *Engine, label: []const u8, stderr: *std.Io.Writer) !bool {
-        self.prewarm() catch {
+        self.compile_diag = .{};
+        self.prewarm() catch |err| {
+            if (self.compile_diag.detail.len == 0) return err;
             try self.compile_diag.write(label, stderr);
             return false;
         };
