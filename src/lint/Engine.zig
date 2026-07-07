@@ -16,12 +16,21 @@ const RuleSet = @import("RuleSet.zig").RuleSet;
 
 const initial_diagnostic_capacity: usize = 16;
 
+/// Caches the outcome of DSL compilation per language. `none` (no kata-format
+/// rules exist) must be remembered too — leaving the slot empty would re-scan
+/// the raw rules on every lint call.
+const DslSlot = union(enum) {
+    not_compiled,
+    none,
+    compiled: rule.CompiledRule,
+};
+
 pub const Engine = struct {
     allocator: std.mem.Allocator,
     registry: *language.Registry,
     rules: *RuleSet,
     compiled: std.EnumArray(language.Name, ?rule.CompiledRule) = .initFill(null),
-    compiled_dsl: std.EnumArray(language.Name, ?rule.CompiledRule) = .initFill(null),
+    compiled_dsl: std.EnumArray(language.Name, DslSlot) = .initFill(.not_compiled),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
     metrics: metric.Set = metric.empty,
     metric_queries: std.EnumArray(language.Name, ?metric.Compiled) = .initFill(null),
@@ -57,7 +66,10 @@ pub const Engine = struct {
 
         var dit = self.compiled_dsl.iterator();
         while (dit.next()) |entry| {
-            if (entry.value.*) |*compiled| compiled.deinit();
+            switch (entry.value.*) {
+                .compiled => |*compiled| compiled.deinit(),
+                .not_compiled, .none => {},
+            }
         }
 
         var pit = self.parsers.iterator();
@@ -148,11 +160,19 @@ pub const Engine = struct {
 
     fn ensureCompiledDsl(self: *Engine, lang: language.Name) !?*rule.CompiledRule {
         const slot = self.compiled_dsl.getPtr(lang);
-        if (slot.*) |*cached| return cached;
+        switch (slot.*) {
+            .compiled => |*cached| return cached,
+            .none => return null,
+            .not_compiled => {},
+        }
 
-        slot.* = (try dsl_compile.compileRaws(self.allocator, self.registry, lang, self.rules.get(lang), &self.compile_diag)) orelse return null;
+        const compiled = (try dsl_compile.compileRaws(self.allocator, self.registry, lang, self.rules.get(lang), &self.compile_diag)) orelse {
+            slot.* = .none;
+            return null;
+        };
+        slot.* = .{ .compiled = compiled };
 
-        return &slot.*.?;
+        return &slot.compiled;
     }
 
     fn ensureMetricQuery(self: *Engine, lang: language.Name) !*metric.Compiled {
