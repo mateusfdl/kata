@@ -12,7 +12,7 @@ pub const message_property = "message";
 pub const exclude_paths_property = "exclude-paths";
 pub const severity_property = "severity";
 
-pub const invalid_capture_id: u32 = std.math.maxInt(u32);
+pub const invalid_capture_id = message_mod.invalid_capture_id;
 
 pub const Source = enum { embedded, user, project };
 
@@ -20,7 +20,6 @@ pub const Format = enum { scm, kata };
 
 pub const RawRule = struct {
     id: []const u8,
-    language: ?language.Name = null,
     source: []const u8,
     origin: Source = .embedded,
     format: Format = .scm,
@@ -146,7 +145,6 @@ pub const PatternMeta = struct {
 };
 
 pub const CompiledRule = struct {
-    language: language.Name,
     query: ?*ts.Query,
     patterns: []PatternMeta,
     match_capture_id: u32,
@@ -209,7 +207,6 @@ pub const Diagnostic = struct {
 
 pub fn compile(
     allocator: std.mem.Allocator,
-    registry: *language.Registry,
     lang: language.Name,
     raws: []const RawRule,
     diag: *Diagnostic,
@@ -227,7 +224,6 @@ pub fn compile(
 
     if (scm.items.len == 0) {
         return .{
-            .language = lang,
             .query = null,
             .patterns = &.{},
             .match_capture_id = invalid_capture_id,
@@ -236,8 +232,6 @@ pub fn compile(
             .allocator = allocator,
         };
     }
-
-    const ts_lang = registry.get(lang);
 
     var source: std.ArrayList(u8) = .empty;
     const rule_starts = try arena.alloc(u32, scm.items.len);
@@ -248,7 +242,7 @@ pub fn compile(
     }
 
     var error_offset: u32 = 0;
-    const query = ts.Query.create(ts_lang, source.items, &error_offset) catch {
+    const query = ts.Query.create(language.grammar(lang), source.items, &error_offset) catch {
         diag.* = .{ .lang = lang, .rule_id = ownerId(rule_starts, scm.items, error_offset), .detail = "query syntax error" };
         return error.RuleCompileFailed;
     };
@@ -271,7 +265,6 @@ pub fn compile(
     }
 
     return .{
-        .language = lang,
         .query = query,
         .patterns = patterns,
         .match_capture_id = match_capture_id,
@@ -329,15 +322,7 @@ fn ownerIndexForPattern(rule_starts: []const u32, pattern_start: u32) usize {
     return 0;
 }
 
-pub fn captureIdForName(query: *ts.Query, name: []const u8) u32 {
-    const count = query.captureCount();
-    var i: u32 = 0;
-    while (i < count) : (i += 1) {
-        const cap_name = query.captureNameForId(i) orelse continue;
-        if (std.mem.eql(u8, cap_name, name)) return i;
-    }
-    return invalid_capture_id;
-}
+pub const captureIdForName = message_mod.captureIdForName;
 
 const PredicateOpName = struct {
     name: []const u8,

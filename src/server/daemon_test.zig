@@ -600,7 +600,6 @@ const sources = @import("../sources.zig");
 const ProjectHarness = struct {
     tmp: std.testing.TmpDir,
     arena: std.heap.ArenaAllocator,
-    registry: lint.language.Registry,
     resolver: sources.context.Resolver,
     cache: sources.context.Cache,
 
@@ -610,14 +609,12 @@ const ProjectHarness = struct {
         self.* = .{
             .tmp = std.testing.tmpDir(.{}),
             .arena = .init(gpa),
-            .registry = .init(),
             .resolver = undefined,
             .cache = undefined,
         };
         self.resolver = .{
             .gpa = gpa,
             .io = std.testing.io,
-            .registry = &self.registry,
         };
         self.cache = sources.context.Cache.init(gpa, &self.resolver);
         return self;

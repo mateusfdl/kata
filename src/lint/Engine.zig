@@ -27,7 +27,6 @@ const DslSlot = union(enum) {
 
 pub const Engine = struct {
     allocator: std.mem.Allocator,
-    registry: *language.Registry,
     rules: *RuleSet,
     compiled: std.EnumArray(language.Name, ?rule.CompiledRule) = .initFill(null),
     compiled_dsl: std.EnumArray(language.Name, DslSlot) = .initFill(.not_compiled),
@@ -45,12 +44,10 @@ pub const Engine = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-        registry: *language.Registry,
         rules: *RuleSet,
     ) Engine {
         return .{
             .allocator = allocator,
-            .registry = registry,
             .rules = rules,
             .cursor = ts.QueryCursor.create(),
             .metric_cursor = ts.QueryCursor.create(),
@@ -144,7 +141,7 @@ pub const Engine = struct {
         if (self.parsers.get(lang)) |cached| return cached;
         const parser = ts.Parser.create();
         errdefer parser.destroy();
-        parser.setLanguage(self.registry.get(lang)) catch return error.SetLanguageFailed;
+        parser.setLanguage(language.grammar(lang)) catch return error.SetLanguageFailed;
         self.parsers.set(lang, parser);
         return parser;
     }
@@ -153,7 +150,7 @@ pub const Engine = struct {
         const slot = self.compiled.getPtr(lang);
         if (slot.*) |*cached| return cached;
 
-        slot.* = try rule.compile(self.allocator, self.registry, lang, self.rules.get(lang), &self.compile_diag);
+        slot.* = try rule.compile(self.allocator, lang, self.rules.get(lang), &self.compile_diag);
 
         return &slot.*.?;
     }
@@ -166,7 +163,7 @@ pub const Engine = struct {
             .not_compiled => {},
         }
 
-        const compiled = (try dsl_compile.compileRaws(self.allocator, self.registry, lang, self.rules.get(lang), &self.compile_diag)) orelse {
+        const compiled = (try dsl_compile.compileRaws(self.allocator, lang, self.rules.get(lang), &self.compile_diag)) orelse {
             slot.* = .none;
             return null;
         };
@@ -179,7 +176,7 @@ pub const Engine = struct {
         const slot = self.metric_queries.getPtr(lang);
         if (slot.*) |*cached| return cached;
 
-        slot.* = try metric.compile(self.allocator, self.registry.get(lang), lang);
+        slot.* = try metric.compile(self.allocator, language.grammar(lang), lang);
 
         return &slot.*.?;
     }
@@ -188,7 +185,7 @@ pub const Engine = struct {
         const slot = self.facts_queries.getPtr(lang);
         if (slot.*) |*cached| return cached;
 
-        slot.* = try facts.compile(self.allocator, self.registry.get(lang), lang);
+        slot.* = try facts.compile(self.allocator, language.grammar(lang), lang);
 
         return &slot.*.?;
     }

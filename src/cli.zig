@@ -159,8 +159,6 @@ pub fn main(init: std.process.Init) u8 {
             die(stderr, "new-rule", err);
     }
 
-    var registry = language.Registry.init();
-
     var diag: config.Diagnostic = .{};
     var cfg_opt = config.loadFromDisk(gpa, io, init.environ_map, &diag) catch |err| return dieConfig(stderr, diag, err);
     defer if (cfg_opt) |*cfg| cfg.deinit();
@@ -168,7 +166,6 @@ pub fn main(init: std.process.Init) u8 {
     var resolver: context_mod.Resolver = .{
         .gpa = gpa,
         .io = io,
-        .registry = &registry,
         .user_rules_dir = user_dir,
         .global_config = if (cfg_opt) |*cfg| cfg else null,
     };
@@ -344,7 +341,7 @@ fn runQuery(c: Command, q: query.Options) !u8 {
     var opts = q;
     opts.color = c.color;
 
-    return switch (try query.run(c.io, c.gpa, c.resolver.registry, opts, c.stdout, c.stderr)) {
+    return switch (try query.run(c.io, c.gpa, opts, c.stdout, c.stderr)) {
         .clean => exit_clean,
         .matches => exit_violations,
         .usage => exit_usage,

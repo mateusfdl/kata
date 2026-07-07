@@ -222,11 +222,11 @@ const RuleFixture = struct {
 
     fn build(self: *RuleFixture) !void {
         self.set = .{ .allocator = self.arena() };
-        try self.set.append(.ts, .{ .id = "no-console", .language = .ts, .source = "((call_expression) @match)" });
-        try self.set.append(.ts, .{ .id = "no-any", .language = .ts, .source = "((type_annotation) @match)" });
-        try self.set.append(.tsx, .{ .id = "no-any", .language = .tsx, .source = "((type_annotation) @match)" });
-        try self.set.append(.tsx, .{ .id = "no-console", .language = .tsx, .source = "((call_expression) @match)" });
-        try self.set.append(.go, .{ .id = "no-swallowed-errors", .language = .go, .source = "((short_var_declaration) @match)" });
+        try self.set.append(.ts, .{ .id = "no-console", .source = "((call_expression) @match)" });
+        try self.set.append(.ts, .{ .id = "no-any", .source = "((type_annotation) @match)" });
+        try self.set.append(.tsx, .{ .id = "no-any", .source = "((type_annotation) @match)" });
+        try self.set.append(.tsx, .{ .id = "no-console", .source = "((call_expression) @match)" });
+        try self.set.append(.go, .{ .id = "no-swallowed-errors", .source = "((short_var_declaration) @match)" });
     }
 
     fn deinit(self: *RuleFixture) void {

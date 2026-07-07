@@ -25,7 +25,6 @@ const rule_id = "query";
 pub fn run(
     io: std.Io,
     gpa: std.mem.Allocator,
-    registry: *language.Registry,
     opts: Options,
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
@@ -50,10 +49,10 @@ pub fn run(
     var rule_set: lint.RuleSet = .{ .allocator = gpa };
     defer rule_set.deinit();
     for (langs_buf[0..langs_len]) |lang| {
-        try rule_set.append(lang, .{ .id = rule_id, .language = lang, .source = opts.text });
+        try rule_set.append(lang, .{ .id = rule_id, .source = opts.text });
     }
 
-    var engine = Engine.init(gpa, registry, &rule_set);
+    var engine = Engine.init(gpa, &rule_set);
     defer engine.deinit();
 
     if (!try engine.prewarmOrReport("kata", stderr)) return .usage;

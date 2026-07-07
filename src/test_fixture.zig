@@ -23,7 +23,6 @@ pub fn relativeTmpPath(buf: []u8, sub_path: []const u8) ![]u8 {
 
 pub const Fixture = struct {
     allocator: std.mem.Allocator,
-    registry: language.Registry,
     rule_set: loader.RuleSet,
     engine: Engine,
 
@@ -46,13 +45,12 @@ pub const Fixture = struct {
         const self = try allocator.create(Fixture);
         self.* = .{
             .allocator = allocator,
-            .registry = .init(),
             .rule_set = .{ .allocator = allocator },
             .engine = undefined,
         };
         for (langs) |l| try self.add(l, id, source, format);
 
-        self.engine = Engine.init(allocator, &self.registry, &self.rule_set);
+        self.engine = Engine.init(allocator, &self.rule_set);
         return self;
     }
 
@@ -65,7 +63,6 @@ pub const Fixture = struct {
     ) !void {
         try self.rule_set.append(lang, .{
             .id = try self.allocator.dupe(u8, id),
-            .language = lang,
             .source = try self.allocator.dupe(u8, source),
             .format = format,
         });

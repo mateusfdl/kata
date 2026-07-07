@@ -3,7 +3,7 @@ const ts = @import("tree_sitter");
 
 const expr = @import("expr.zig");
 
-const invalid_capture_id: u32 = std.math.maxInt(u32);
+pub const invalid_capture_id: u32 = std.math.maxInt(u32);
 
 pub const Placeholder = struct {
     measure: expr.Measure,
@@ -94,7 +94,7 @@ fn parsePlaceholder(query: *ts.Query, inner: []const u8) CompileError!Placeholde
     return .{ .measure = measure, .capture_id = id };
 }
 
-fn captureIdForName(query: *ts.Query, name: []const u8) u32 {
+pub fn captureIdForName(query: *ts.Query, name: []const u8) u32 {
     const count = query.captureCount();
     var i: u32 = 0;
     while (i < count) : (i += 1) {

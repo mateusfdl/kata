@@ -11,7 +11,6 @@ const language = lint.language;
 const Setup = struct {
     tmp: std.testing.TmpDir,
     arena: std.heap.ArenaAllocator,
-    registry: language.Registry,
     root: []const u8,
 
     fn init(io: std.Io) !*Setup {
@@ -20,7 +19,6 @@ const Setup = struct {
         self.* = .{
             .tmp = std.testing.tmpDir(.{}),
             .arena = .init(gpa),
-            .registry = .init(),
             .root = undefined,
         };
         _ = io;
@@ -41,11 +39,10 @@ const Setup = struct {
         return std.fmt.allocPrint(self.arena.allocator(), "{s}/{s}", .{ self.root, sub });
     }
 
-    fn resolver(self: *Setup, user_dir: ?[]const u8, global: ?*const config.Config) context.Resolver {
+    fn resolver(_: *Setup, user_dir: ?[]const u8, global: ?*const config.Config) context.Resolver {
         return .{
             .gpa = std.testing.allocator,
             .io = std.testing.io,
-            .registry = &self.registry,
             .user_rules_dir = user_dir,
             .global_config = global,
         };

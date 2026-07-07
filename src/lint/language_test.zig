@@ -12,17 +12,15 @@ test "Name.fromString / toString round-trip" {
     try std.testing.expectEqualStrings("go", language.Name.toString(.go));
 }
 
-test "Registry resolves distinct grammar pointers per language" {
-    var r = language.Registry.init();
-
-    const a = r.get(.ts);
-    const b = r.get(.ts);
+test "grammar resolves distinct pointers per language" {
+    const a = language.grammar(.ts);
+    const b = language.grammar(.ts);
     try std.testing.expect(a == b);
 
-    const c = r.get(.tsx);
+    const c = language.grammar(.tsx);
     try std.testing.expect(a != c);
 
-    const d = r.get(.go);
+    const d = language.grammar(.go);
     try std.testing.expect(c != d);
 }
 

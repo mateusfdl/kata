@@ -30,7 +30,6 @@ pub fn run(
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
 ) !Outcome {
-    var registry = language.Registry.init();
     var rule_set = loader.load(arena, io, .{ .project_dir = rules_dir, .skip_embedded = true }) catch |err| {
         try stderr.print("kata test: cannot load rules from \"{s}\": {s}\n", .{ rules_dir, @errorName(err) });
         try stderr.flush();
@@ -38,7 +37,7 @@ pub fn run(
     };
     defer rule_set.deinit();
 
-    var engine = Engine.init(gpa, &registry, &rule_set);
+    var engine = Engine.init(gpa, &rule_set);
     defer engine.deinit();
     if (!try engine.prewarmOrReport("kata test", stderr)) return .invalid;
 

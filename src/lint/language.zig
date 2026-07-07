@@ -70,20 +70,13 @@ const infos: std.EnumArray(Name, Info) = .init(.{
     .go = .{ .canonical = "go", .extension = ".go" },
 });
 
-pub const Registry = struct {
-    pub fn init() Registry {
-        return .{};
-    }
-
-    pub fn get(self: *Registry, name: Name) *const ts.Language {
-        _ = self;
-        return switch (name) {
-            .ts => tree_sitter_typescript(),
-            .tsx => tree_sitter_tsx(),
-            .go => tree_sitter_go(),
-        };
-    }
-};
+pub fn grammar(name: Name) *const ts.Language {
+    return switch (name) {
+        .ts => tree_sitter_typescript(),
+        .tsx => tree_sitter_tsx(),
+        .go => tree_sitter_go(),
+    };
+}
 
 pub const Resolution = union(enum) {
     ok: Name,

@@ -38,7 +38,6 @@ const Compiler = struct {
     arena: std.mem.Allocator,
     lang: language.Name,
     diag: *rule.Diagnostic,
-    registry: *language.Registry,
     rule_id: []const u8 = "",
     query: *ts.Query = undefined,
     nested_queries: std.ArrayList(*ts.Query) = .empty,
@@ -50,7 +49,6 @@ const Compiler = struct {
 
 pub fn compileRaws(
     allocator: std.mem.Allocator,
-    registry: *language.Registry,
     lang: language.Name,
     raws: []const rule.RawRule,
     diag: *rule.Diagnostic,
@@ -66,7 +64,7 @@ pub fn compileRaws(
     }
     if (rules.items.len == 0) return null;
 
-    return try compile(allocator, registry, lang, .{ .rules = rules.items }, diag);
+    return try compile(allocator, lang, .{ .rules = rules.items }, diag);
 }
 
 fn parseRaw(
@@ -114,7 +112,6 @@ fn parseSource(
 
 pub fn compile(
     allocator: std.mem.Allocator,
-    registry: *language.Registry,
     lang: language.Name,
     file: ast.File,
     diag: *rule.Diagnostic,
@@ -125,7 +122,7 @@ pub fn compile(
     errdefer arena_ptr.deinit();
     const arena = arena_ptr.allocator();
 
-    var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag, .registry = registry };
+    var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag };
     errdefer for (ctx.nested_queries.items) |nested| nested.destroy();
 
     var selected: std.ArrayList(*const ast.Rule) = .empty;
@@ -144,7 +141,7 @@ pub fn compile(
     }
 
     var error_offset: u32 = 0;
-    const query = ts.Query.create(registry.get(lang), query_source.items, &error_offset) catch {
+    const query = ts.Query.create(language.grammar(lang), query_source.items, &error_offset) catch {
         ctx.rule_id = owningRuleId(starts.items, selected.items, error_offset);
         ctx.fail("node kind or field is invalid for the grammar");
         return error.QueryCompileFailed;
@@ -164,7 +161,6 @@ pub fn compile(
     }
 
     return .{
-        .language = lang,
         .query = query,
         .patterns = patterns,
         .match_capture_id = rule.captureIdForName(query, rule.match_capture),
@@ -378,7 +374,7 @@ fn compileNestedMatcher(ctx: *Compiler, matcher: ast.NestedMatcher) Error!*const
     }
 
     var error_offset: u32 = 0;
-    const query = ts.Query.create(ctx.registry.get(ctx.lang), source.items, &error_offset) catch {
+    const query = ts.Query.create(language.grammar(ctx.lang), source.items, &error_offset) catch {
         ctx.fail("node kind or field is invalid for the grammar");
         return error.QueryCompileFailed;
     };

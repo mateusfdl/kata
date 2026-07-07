@@ -12,7 +12,7 @@ test "upsert: first insertion appends without warning" {
     defer arena.deinit();
     var set: loader.RuleSet = .{ .allocator = arena.allocator() };
 
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "((x) @match)" }, .embedded);
+    try set.upsert(.ts, .{ .id = "no-any", .source = "((x) @match)" }, .embedded);
 
     try std.testing.expectEqual(@as(usize, 1), set.get(.ts).len);
     try std.testing.expectEqualStrings("no-any", set.get(.ts)[0].id);
@@ -24,8 +24,8 @@ test "upsert: same-tier collision replaces in place and emits one warning" {
     defer arena.deinit();
     var set: loader.RuleSet = .{ .allocator = arena.allocator() };
 
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "((first) @match)" }, .user);
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "((second) @match)" }, .user);
+    try set.upsert(.ts, .{ .id = "no-any", .source = "((first) @match)" }, .user);
+    try set.upsert(.ts, .{ .id = "no-any", .source = "((second) @match)" }, .user);
 
     try std.testing.expectEqual(@as(usize, 1), set.get(.ts).len);
     try std.testing.expectEqualStrings("((second) @match)", set.get(.ts)[0].source);
@@ -42,8 +42,8 @@ test "upsert: same tier same id across formats errors" {
     defer arena.deinit();
     var set: loader.RuleSet = .{ .allocator = arena.allocator() };
 
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "((x) @match)" }, .user);
-    const got = set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "rule no-any {}", .format = .kata }, .user);
+    try set.upsert(.ts, .{ .id = "no-any", .source = "((x) @match)" }, .user);
+    const got = set.upsert(.ts, .{ .id = "no-any", .source = "rule no-any {}", .format = .kata }, .user);
 
     try std.testing.expectError(error.DuplicateRuleFormats, got);
     const dup = set.duplicate.?;
@@ -57,8 +57,8 @@ test "upsert: cross-tier override across formats stays silent" {
     defer arena.deinit();
     var set: loader.RuleSet = .{ .allocator = arena.allocator() };
 
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "((x) @match)" }, .embedded);
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "rule no-any {}", .format = .kata }, .user);
+    try set.upsert(.ts, .{ .id = "no-any", .source = "((x) @match)" }, .embedded);
+    try set.upsert(.ts, .{ .id = "no-any", .source = "rule no-any {}", .format = .kata }, .user);
 
     try std.testing.expectEqual(@as(usize, 1), set.get(.ts).len);
     try std.testing.expectEqual(rule.Format.kata, set.get(.ts)[0].format);
@@ -71,9 +71,9 @@ test "upsert: user overrides embedded, then project overrides user, silently" {
     defer arena.deinit();
     var set: loader.RuleSet = .{ .allocator = arena.allocator() };
 
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "1" }, .embedded);
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "2" }, .user);
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "3" }, .project);
+    try set.upsert(.ts, .{ .id = "no-any", .source = "1" }, .embedded);
+    try set.upsert(.ts, .{ .id = "no-any", .source = "2" }, .user);
+    try set.upsert(.ts, .{ .id = "no-any", .source = "3" }, .project);
 
     try std.testing.expectEqual(@as(usize, 1), set.get(.ts).len);
     try std.testing.expectEqualStrings("3", set.get(.ts)[0].source);
@@ -85,8 +85,8 @@ test "upsert: different ids in same language coexist" {
     defer arena.deinit();
     var set: loader.RuleSet = .{ .allocator = arena.allocator() };
 
-    try set.upsert(.ts, .{ .id = "no-any", .language = .ts, .source = "a" }, .embedded);
-    try set.upsert(.ts, .{ .id = "no-console", .language = .ts, .source = "b" }, .embedded);
+    try set.upsert(.ts, .{ .id = "no-any", .source = "a" }, .embedded);
+    try set.upsert(.ts, .{ .id = "no-console", .source = "b" }, .embedded);
 
     try std.testing.expectEqual(@as(usize, 2), set.get(.ts).len);
     try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);

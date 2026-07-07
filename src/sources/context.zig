@@ -36,7 +36,6 @@ pub const Context = struct {
 pub const Resolver = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
-    registry: *language.Registry,
     user_rules_dir: ?[]const u8 = null,
     global_config: ?*const config.Config = null,
     diag: config.Diagnostic = .{},
@@ -110,7 +109,7 @@ pub const Resolver = struct {
             .rule_set = rule_set,
             .engine = undefined,
         };
-        ctx.engine = Engine.init(self.gpa, self.registry, &ctx.rule_set);
+        ctx.engine = Engine.init(self.gpa, &ctx.rule_set);
         ctx.engine.metrics = resolved.metrics;
         ctx.engine.warnings = resolved.warnings;
 

@@ -19,14 +19,13 @@ fn parseDsl(arena: std.mem.Allocator, source: []const u8) !ast.File {
 
 fn compileDsl(
     gpa: std.mem.Allocator,
-    registry: *language.Registry,
     arena: std.mem.Allocator,
     lang: language.Name,
     source: []const u8,
 ) !rule.CompiledRule {
     const file = try parseDsl(arena, source);
     var diag: rule.Diagnostic = .{};
-    return compile.compile(gpa, registry, lang, file, &diag);
+    return compile.compile(gpa, lang, file, &diag);
 }
 
 fn predicateArgs(predicate: rule.Predicate) []const rule.PredicateOperand {
@@ -69,7 +68,6 @@ fn wherePredicate(predicate: rule.Predicate) *const expr.Expr {
 
 fn runCompiled(
     gpa: std.mem.Allocator,
-    registry: *language.Registry,
     compiled: *const rule.CompiledRule,
     lang: language.Name,
     source: []const u8,
@@ -77,7 +75,7 @@ fn runCompiled(
 ) ![]diagnostic.Diagnostic {
     const parser = ts.Parser.create();
     defer parser.destroy();
-    try parser.setLanguage(registry.get(lang));
+    try parser.setLanguage(language.grammar(lang));
     const tree = parser.parseString(source, null) orelse return error.ParseFailed;
     defer tree.destroy();
     const cursor = ts.QueryCursor.create();
@@ -114,23 +112,21 @@ test "compile: dsl no-console matches scm diagnostics" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var kata_compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts, kata_no_console);
+    var kata_compiled = try compileDsl(gpa, arena.allocator(), .ts, kata_no_console);
     defer kata_compiled.deinit();
 
     var scm_diag: rule.Diagnostic = .{};
-    var scm_compiled = try rule.compile(gpa, &registry, .ts, &.{.{
+    var scm_compiled = try rule.compile(gpa, .ts, &.{.{
         .id = "no-console",
-        .language = .ts,
         .source = scm_no_console,
     }}, &scm_diag);
     defer scm_compiled.deinit();
 
     const source = "console.log(\"x\");\nfoo.bar(1);\n";
-    const kata_diags = try runCompiled(gpa, &registry, &kata_compiled, .ts, source, null);
+    const kata_diags = try runCompiled(gpa, &kata_compiled, .ts, source, null);
     defer gpa.free(kata_diags);
-    const scm_diags = try runCompiled(gpa, &registry, &scm_compiled, .ts, source, null);
+    const scm_diags = try runCompiled(gpa, &scm_compiled, .ts, source, null);
     defer gpa.free(scm_diags);
 
     try std.testing.expectEqual(@as(usize, 1), scm_diags.len);
@@ -141,9 +137,8 @@ test "compile: emits from a non-match capture" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule no-console {
         \\  lang ts
         \\  match call_expression @call {
@@ -158,7 +153,7 @@ test "compile: emits from a non-match capture" {
     );
     defer compiled.deinit();
 
-    const diags = try runCompiled(gpa, &registry, &compiled, .ts, "console.log(1);\n", null);
+    const diags = try runCompiled(gpa, &compiled, .ts, "console.log(1);\n", null);
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
@@ -170,9 +165,8 @@ test "compile: translates string predicates" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule strict-logging {
         \\  lang ts
         \\  match call_expression @match {
@@ -205,9 +199,8 @@ test "compile: translates numeric measures to where expressions" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule max-complexity {
         \\  lang ts
         \\  match function_declaration @match
@@ -231,9 +224,8 @@ test "compile: builds message segments from call placeholders" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule max-complexity {
         \\  lang ts
         \\  match function_declaration @match
@@ -254,9 +246,8 @@ test "compile: applies severity and exclude paths" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule no-console {
         \\  lang ts
         \\  severity warn
@@ -274,11 +265,11 @@ test "compile: applies severity and exclude paths" {
 
     try std.testing.expectEqual(diagnostic.Severity.warn, compiled.patterns[0].severity);
 
-    const excluded = try runCompiled(gpa, &registry, &compiled, .ts, "console.log(1);\n", "vendor/x.ts");
+    const excluded = try runCompiled(gpa, &compiled, .ts, "console.log(1);\n", "vendor/x.ts");
     defer gpa.free(excluded);
     try std.testing.expectEqual(@as(usize, 0), excluded.len);
 
-    const included = try runCompiled(gpa, &registry, &compiled, .ts, "console.log(1);\n", "src/x.ts");
+    const included = try runCompiled(gpa, &compiled, .ts, "console.log(1);\n", "src/x.ts");
     defer gpa.free(included);
     try std.testing.expectEqual(@as(usize, 1), included.len);
 }
@@ -287,9 +278,8 @@ test "compile: matches anonymous operator tokens" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule no-logical-and {
         \\  lang ts
         \\  match binary_expression @match {
@@ -300,7 +290,7 @@ test "compile: matches anonymous operator tokens" {
     );
     defer compiled.deinit();
 
-    const diags = try runCompiled(gpa, &registry, &compiled, .ts, "const x = a && b;\nconst y = a || b;\n", null);
+    const diags = try runCompiled(gpa, &compiled, .ts, "const x = a && b;\nconst y = a || b;\n", null);
     defer gpa.free(diags);
     try std.testing.expectEqual(@as(usize, 1), diags.len);
 }
@@ -309,9 +299,8 @@ test "compile: matches alternation node kinds" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule no-boolean-literal {
         \\  lang ts
         \\  match [true, false] @match
@@ -320,7 +309,7 @@ test "compile: matches alternation node kinds" {
     );
     defer compiled.deinit();
 
-    const diags = try runCompiled(gpa, &registry, &compiled, .ts, "const x = true;\nconst y = 1;\n", null);
+    const diags = try runCompiled(gpa, &compiled, .ts, "const x = true;\nconst y = 1;\n", null);
     defer gpa.free(diags);
     try std.testing.expectEqual(@as(usize, 1), diags.len);
 }
@@ -329,9 +318,8 @@ test "compile: distributes field patterns over alternation branches" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .go,
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
         \\rule ctx-first {
         \\  lang go
         \\  match [function_declaration, method_declaration] {
@@ -360,7 +348,7 @@ test "compile: distributes field patterns over alternation branches" {
         "func bad(id string, ctx context.Context) error { return nil }\n\n" ++
         "func (s Svc) alsoBad(id string, ctx context.Context) error { return nil }\n\n" ++
         "func clean(ctx context.Context) (Result, context.Context, error) { return Result{}, ctx, nil }\n";
-    const diags = try runCompiled(gpa, &registry, &compiled, .go, src, null);
+    const diags = try runCompiled(gpa, &compiled, .go, src, null);
     defer gpa.free(diags);
     try std.testing.expectEqual(@as(usize, 2), diags.len);
     try std.testing.expectEqualStrings("context must come first", diags[0].message);
@@ -372,9 +360,8 @@ test "compile: distributes fields over an alternation inside a field pattern" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule block-bodied-value {
         \\  lang ts
         \\  match variable_declarator @match {
@@ -392,7 +379,7 @@ test "compile: distributes fields over an alternation inside a field pattern" {
         "const g = function () { return 2; };\n" ++
         "const h = () => 3;\n" ++
         "const i = 4;\n";
-    const diags = try runCompiled(gpa, &registry, &compiled, .ts, src, null);
+    const diags = try runCompiled(gpa, &compiled, .ts, src, null);
     defer gpa.free(diags);
     try std.testing.expectEqual(@as(usize, 2), diags.len);
     try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
@@ -403,9 +390,8 @@ test "compile: nested matchers accept alternations with fields" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .go,
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
         \\rule has-function {
         \\  lang go
         \\  match source_file @match
@@ -430,9 +416,8 @@ test "compile: skips project rules and other languages" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule go-only {
         \\  lang go
         \\  match call_expression @match
@@ -459,7 +444,6 @@ test "compile: rejects invalid rules" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
     const cases = [_]struct { err: anyerror, source: []const u8 }{
         .{ .err = error.UnknownLanguage, .source =
@@ -548,7 +532,7 @@ test "compile: rejects invalid rules" {
     };
 
     for (cases) |case| {
-        try std.testing.expectError(case.err, compileDsl(gpa, &registry, arena.allocator(), .ts, case.source));
+        try std.testing.expectError(case.err, compileDsl(gpa, arena.allocator(), .ts, case.source));
     }
 }
 
@@ -556,9 +540,8 @@ test "compile: folds string disjunctions into any-of" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule no-weak-assertions {
         \\  lang ts
         \\  match call_expression @match {
@@ -587,9 +570,8 @@ test "compile: negated string disjunction becomes not-any-of" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule allowlist {
         \\  lang ts
         \\  match call_expression @match {
@@ -613,9 +595,8 @@ test "compile: disjunction across different captures is unsupported" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    const got = compileDsl(gpa, &registry, arena.allocator(), .ts,
+    const got = compileDsl(gpa, arena.allocator(), .ts,
         \\rule mixed {
         \\  lang ts
         \\  match call_expression @match {
@@ -638,9 +619,8 @@ test "compile: translates has composition to a nested matcher" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .go,
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
         \\rule has-panic {
         \\  lang go
         \\  match function_declaration @match
@@ -673,9 +653,8 @@ test "compile: reuses a bound nested root capture" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule outside-logger {
         \\  lang ts
         \\  match call_expression @match
@@ -702,9 +681,8 @@ test "compile: translates count with a comparison" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule too-many-returns {
         \\  lang ts
         \\  match function_declaration @match
@@ -727,7 +705,6 @@ test "compile: unknown subject capture in composition fails" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
     const file = try parseDsl(arena.allocator(),
         \\rule bad {
@@ -740,7 +717,7 @@ test "compile: unknown subject capture in composition fails" {
         \\}
     );
     var diag: rule.Diagnostic = .{};
-    try std.testing.expectError(error.UnknownCapture, compile.compile(gpa, &registry, .ts, file, &diag));
+    try std.testing.expectError(error.UnknownCapture, compile.compile(gpa, .ts, file, &diag));
     try std.testing.expectEqualStrings("bad", diag.rule_id);
     try std.testing.expectEqualStrings("unknown capture", diag.detail);
 }
@@ -749,7 +726,6 @@ test "compile: invalid node kind in a nested matcher fails" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
     const file = try parseDsl(arena.allocator(),
         \\rule bad {
@@ -762,7 +738,7 @@ test "compile: invalid node kind in a nested matcher fails" {
         \\}
     );
     var diag: rule.Diagnostic = .{};
-    try std.testing.expectError(error.QueryCompileFailed, compile.compile(gpa, &registry, .ts, file, &diag));
+    try std.testing.expectError(error.QueryCompileFailed, compile.compile(gpa, .ts, file, &diag));
     try std.testing.expectEqualStrings("bad", diag.rule_id);
     try std.testing.expectEqualStrings("node kind or field is invalid for the grammar", diag.detail);
 }
@@ -771,7 +747,6 @@ test "compile: reserved nested root capture fails" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
     const file = try parseDsl(arena.allocator(),
         \\rule bad {
@@ -784,7 +759,7 @@ test "compile: reserved nested root capture fails" {
         \\}
     );
     var diag: rule.Diagnostic = .{};
-    try std.testing.expectError(error.ReservedCapture, compile.compile(gpa, &registry, .ts, file, &diag));
+    try std.testing.expectError(error.ReservedCapture, compile.compile(gpa, .ts, file, &diag));
     try std.testing.expectEqualStrings("kata-nested-root is a reserved capture", diag.detail);
 }
 
@@ -792,9 +767,8 @@ test "compile: measures in a nested where set needs_measures" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule complex-methods {
         \\  lang ts
         \\  match class_declaration @match
@@ -817,9 +791,8 @@ test "compile: translates string helper predicates" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule hook-names {
         \\  lang ts
         \\  match call_expression @match {
@@ -852,7 +825,6 @@ test "compile: string helpers require two text arguments" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
     const file = try parseDsl(arena.allocator(),
         \\rule bad {
@@ -863,7 +835,7 @@ test "compile: string helpers require two text arguments" {
         \\}
     );
     var diag: rule.Diagnostic = .{};
-    try std.testing.expectError(error.UnsupportedPredicate, compile.compile(gpa, &registry, .ts, file, &diag));
+    try std.testing.expectError(error.UnsupportedPredicate, compile.compile(gpa, .ts, file, &diag));
     try std.testing.expectEqualStrings("startsWith, endsWith, and contains expect (value, text)", diag.detail);
 }
 
@@ -871,9 +843,8 @@ test "compile: translates glob predicates" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule no-internal-imports {
         \\  lang ts
         \\  match import_statement @match {
@@ -902,7 +873,6 @@ test "compile: glob requires a string literal pattern" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
     const file = try parseDsl(arena.allocator(),
         \\rule bad {
@@ -913,7 +883,7 @@ test "compile: glob requires a string literal pattern" {
         \\}
     );
     var diag: rule.Diagnostic = .{};
-    try std.testing.expectError(error.UnsupportedPredicate, compile.compile(gpa, &registry, .ts, file, &diag));
+    try std.testing.expectError(error.UnsupportedPredicate, compile.compile(gpa, .ts, file, &diag));
     try std.testing.expectEqualStrings("glob expects (value, \"pattern\")", diag.detail);
 }
 
@@ -921,9 +891,8 @@ test "compile: translates capture presence predicates" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
-    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
         \\rule has-returns {
         \\  lang ts
         \\  match function_declaration @match {
@@ -950,7 +919,6 @@ test "compile: capture predicate requires one capture argument" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var registry: language.Registry = .init();
 
     const file = try parseDsl(arena.allocator(),
         \\rule bad {
@@ -961,6 +929,6 @@ test "compile: capture predicate requires one capture argument" {
         \\}
     );
     var diag: rule.Diagnostic = .{};
-    try std.testing.expectError(error.UnsupportedPredicate, compile.compile(gpa, &registry, .ts, file, &diag));
+    try std.testing.expectError(error.UnsupportedPredicate, compile.compile(gpa, .ts, file, &diag));
     try std.testing.expectEqualStrings("capture expects one capture argument", diag.detail);
 }

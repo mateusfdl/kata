@@ -30,14 +30,12 @@ const Result = struct {
 };
 
 fn runQuery(allocator: std.mem.Allocator, opts: query.Options) !Result {
-    var registry = language.Registry.init();
-
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
     var err_out: std.Io.Writer.Allocating = .init(allocator);
     errdefer err_out.deinit();
 
-    const outcome = try query.run(std.testing.io, allocator, &registry, opts, &out.writer, &err_out.writer);
+    const outcome = try query.run(std.testing.io, allocator, opts, &out.writer, &err_out.writer);
 
     return .{
         .outcome = outcome,

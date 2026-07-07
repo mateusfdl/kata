@@ -52,7 +52,6 @@ fn addEmbedded(set: *RuleSet) !void {
             for (@field(embedded_rules, field_name)) |entry| {
                 try set.upsert(lang, .{
                     .id = entry.id,
-                    .language = lang,
                     .source = entry.source,
                     .format = switch (entry.format) {
                         .scm => .scm,
@@ -80,7 +79,6 @@ fn addRuleFiles(set: *RuleSet, diag: ?*Diagnostic, files: []const fs.rules.RuleF
         for (file.langs) |lang_name| {
             set.upsert(lang_name, .{
                 .id = id,
-                .language = lang_name,
                 .source = file.body,
                 .format = file.format,
             }, file.source) catch |err| {
