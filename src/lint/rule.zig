@@ -5,6 +5,7 @@ const mvzr = @import("mvzr");
 const diagnostic = @import("diagnostic.zig");
 const expr = @import("expr.zig");
 const language = @import("language.zig");
+const message_mod = @import("message.zig");
 
 pub const match_capture = "match";
 pub const message_property = "message";
@@ -100,20 +101,9 @@ pub const Predicate = struct {
     count: ?CountCompare = null,
 };
 
-pub const Placeholder = struct {
-    measure: expr.Measure,
-    capture_id: u32,
-};
-
-pub const MessageSegment = union(enum) {
-    literal: []const u8,
-    placeholder: Placeholder,
-};
-
-pub const Message = union(enum) {
-    plain: []const u8,
-    segments: []const MessageSegment,
-};
+pub const Placeholder = message_mod.Placeholder;
+pub const MessageSegment = message_mod.Segment;
+pub const Message = message_mod.Message;
 
 pub const PatternMeta = struct {
     predicates: []Predicate,
@@ -154,7 +144,7 @@ pub const CompileError = error{
     MalformedPlaceholder,
     UnknownPlaceholderMeasure,
     UnknownPlaceholderCapture,
-} || std.mem.Allocator.Error;
+} || message_mod.CompileError || std.mem.Allocator.Error;
 
 pub const Diagnostic = struct {
     lang: ?language.Name = null,
@@ -339,22 +329,11 @@ fn parsePattern(
 
     return .{
         .predicates = try predicates.toOwnedSlice(arena),
-        .message = if (message) |msg| try compileMessage(arena, query, msg) else null,
+        .message = if (message) |msg| try message_mod.compile(arena, query, msg) else null,
         .rule_id = "",
         .exclude_paths = exclude_paths,
         .severity = severity,
     };
-}
-
-fn compileMessage(
-    arena: std.mem.Allocator,
-    query: *ts.Query,
-    message: []const u8,
-) CompileError!Message {
-    const segments = (try compileMessageSegments(arena, query, message)) orelse
-        return .{ .plain = message };
-    if (segments.len == 1 and segments[0] == .literal) return .{ .plain = segments[0].literal };
-    return .{ .segments = segments };
 }
 
 fn compileDetail(err: anyerror) []const u8 {
@@ -372,61 +351,6 @@ fn compileDetail(err: anyerror) []const u8 {
         error.InvalidWhereExpression => "invalid where expression",
         else => "rule compile failed",
     };
-}
-
-fn compileMessageSegments(
-    arena: std.mem.Allocator,
-    query: *ts.Query,
-    message: []const u8,
-) CompileError!?[]const MessageSegment {
-    if (std.mem.indexOfAny(u8, message, "{}") == null) return null;
-
-    var segments: std.ArrayList(MessageSegment) = .empty;
-    var literal: std.ArrayList(u8) = .empty;
-    var i: usize = 0;
-    while (i < message.len) {
-        const c = message[i];
-        if (c == '{') {
-            if (i + 1 < message.len and message[i + 1] == '{') {
-                try literal.append(arena, '{');
-                i += 2;
-                continue;
-            }
-            const close = std.mem.indexOfScalarPos(u8, message, i + 1, '}') orelse
-                return error.UnclosedPlaceholder;
-            if (literal.items.len > 0)
-                try segments.append(arena, .{ .literal = try literal.toOwnedSlice(arena) });
-            try segments.append(arena, .{ .placeholder = try parsePlaceholder(query, message[i + 1 .. close]) });
-            i = close + 1;
-            continue;
-        }
-        if (c == '}') {
-            if (i + 1 < message.len and message[i + 1] == '}') {
-                try literal.append(arena, '}');
-                i += 2;
-                continue;
-            }
-            return error.StrayBraceInMessage;
-        }
-        try literal.append(arena, c);
-        i += 1;
-    }
-    if (literal.items.len > 0)
-        try segments.append(arena, .{ .literal = try literal.toOwnedSlice(arena) });
-    return try segments.toOwnedSlice(arena);
-}
-
-fn parsePlaceholder(query: *ts.Query, inner: []const u8) CompileError!Placeholder {
-    var it = std.mem.tokenizeScalar(u8, inner, ' ');
-    const measure_name = it.next() orelse return error.MalformedPlaceholder;
-    const capture = it.next() orelse return error.MalformedPlaceholder;
-    if (it.next() != null) return error.MalformedPlaceholder;
-
-    const measure = expr.Measure.fromString(measure_name) orelse return error.UnknownPlaceholderMeasure;
-    if (capture.len < 2 or capture[0] != '@') return error.MalformedPlaceholder;
-    const resolver: QueryResolver = .{ .query = query };
-    const id = resolver.captureId(capture[1..]) orelse return error.UnknownPlaceholderCapture;
-    return .{ .measure = measure, .capture_id = id };
 }
 
 fn parsePredicateGroup(
