@@ -241,23 +241,7 @@ fn renderNode(
     cardinality: Cardinality,
 ) Error!void {
     switch (pattern.node_kind) {
-        .symbol => |kind| {
-            try out.append(ctx.arena, '(');
-            try out.appendSlice(ctx.arena, kind);
-            for (pattern.fields) |field| {
-                try out.append(ctx.arena, ' ');
-                switch (field.relation) {
-                    .field => |name| {
-                        try out.appendSlice(ctx.arena, name);
-                        try out.appendSlice(ctx.arena, ": ");
-                    },
-                    .child, .children => {},
-                }
-                const child_cardinality: Cardinality = if (field.relation == .children) .many else .one;
-                try renderNode(ctx, out, field.pattern, emit_name, child_cardinality);
-            }
-            try out.append(ctx.arena, ')');
-        },
+        .symbol => |kind| try renderBranch(ctx, out, kind, pattern.fields, emit_name),
         .anonymous => |token| {
             if (pattern.fields.len != 0) {
                 ctx.fail("anonymous tokens cannot have child patterns");
@@ -271,16 +255,10 @@ fn renderNode(
             try out.append(ctx.arena, '"');
         },
         .alternation => |kinds| {
-            if (pattern.fields.len != 0) {
-                ctx.fail("alternations cannot have child patterns");
-                return error.UnsupportedMatch;
-            }
             try out.append(ctx.arena, '[');
             for (kinds, 0..) |kind, i| {
                 if (i > 0) try out.append(ctx.arena, ' ');
-                try out.append(ctx.arena, '(');
-                try out.appendSlice(ctx.arena, kind);
-                try out.append(ctx.arena, ')');
+                try renderBranch(ctx, out, kind, pattern.fields, emit_name);
             }
             try out.append(ctx.arena, ']');
         },
@@ -294,6 +272,30 @@ fn renderNode(
             try out.appendSlice(ctx.arena, rule.match_capture);
         }
     }
+}
+
+fn renderBranch(
+    ctx: *Compiler,
+    out: *std.ArrayList(u8),
+    kind: []const u8,
+    fields: []const ast.FieldPattern,
+    emit_name: []const u8,
+) Error!void {
+    try out.append(ctx.arena, '(');
+    try out.appendSlice(ctx.arena, kind);
+    for (fields) |field| {
+        try out.append(ctx.arena, ' ');
+        switch (field.relation) {
+            .field => |name| {
+                try out.appendSlice(ctx.arena, name);
+                try out.appendSlice(ctx.arena, ": ");
+            },
+            .child, .children => {},
+        }
+        const child_cardinality: Cardinality = if (field.relation == .children) .many else .one;
+        try renderNode(ctx, out, field.pattern, emit_name, child_cardinality);
+    }
+    try out.append(ctx.arena, ')');
 }
 
 fn compilePattern(ctx: *Compiler, r: ast.Rule) Error!rule.PatternMeta {

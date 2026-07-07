@@ -287,6 +287,107 @@ test "compile: matches alternation node kinds" {
     try std.testing.expectEqual(@as(usize, 1), diags.len);
 }
 
+test "compile: distributes field patterns over alternation branches" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .go,
+        \\rule ctx-first {
+        \\  lang go
+        \\  match [function_declaration, method_declaration] {
+        \\    parameters: parameter_list {
+        \\      child: parameter_declaration
+        \\      child: parameter_declaration @match {
+        \\        type: qualified_type {
+        \\          package: package_identifier @pkg
+        \\          name: type_identifier @typ
+        \\        }
+        \\      }
+        \\    }
+        \\  }
+        \\  where {
+        \\    text(@pkg) == "context"
+        \\    text(@typ) == "Context"
+        \\  }
+        \\  emit @match { message "context must come first" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const src =
+        "package main\n\n" ++
+        "import \"context\"\n\n" ++
+        "func bad(id string, ctx context.Context) error { return nil }\n\n" ++
+        "func (s Svc) alsoBad(id string, ctx context.Context) error { return nil }\n\n" ++
+        "func clean(ctx context.Context) (Result, context.Context, error) { return Result{}, ctx, nil }\n";
+    const diags = try runCompiled(gpa, &registry, &compiled, .go, src, null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqualStrings("context must come first", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 4), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 6), diags[1].range.start.line);
+}
+
+test "compile: distributes fields over an alternation inside a field pattern" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .ts,
+        \\rule block-bodied-value {
+        \\  lang ts
+        \\  match variable_declarator @match {
+        \\    value: [arrow_function, function_expression] {
+        \\      body: statement_block @body
+        \\    }
+        \\  }
+        \\  emit @match { message "function value" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const src =
+        "const f = () => { return 1; };\n" ++
+        "const g = function () { return 2; };\n" ++
+        "const h = () => 3;\n" ++
+        "const i = 4;\n";
+    const diags = try runCompiled(gpa, &registry, &compiled, .ts, src, null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 1), diags[1].range.start.line);
+}
+
+test "compile: nested matchers accept alternations with fields" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var registry: language.Registry = .init();
+
+    var compiled = try compileDsl(gpa, &registry, arena.allocator(), .go,
+        \\rule has-function {
+        \\  lang go
+        \\  match source_file @match
+        \\  where {
+        \\    has @match [function_declaration, func_literal] {
+        \\      body: block @body
+        \\    }
+        \\  }
+        \\  emit @match { message "has a function" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 1), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.has, predicates[0].op);
+    try std.testing.expect(predicates[0].nested != null);
+    try std.testing.expectEqual(@as(usize, 1), compiled.nested_queries.len);
+}
+
 test "compile: skips project rules and other languages" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
