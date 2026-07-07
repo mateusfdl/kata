@@ -4,30 +4,7 @@ rule simple-repositories {
   match method_declaration @match {
     receiver: parameter_list {
       child: parameter_declaration {
-        type: type_identifier @recv
-      }
-    }
-  }
-
-  where {
-    matches(text(@recv), "Repository$")
-    complexity(@match) > 5
-  }
-
-  emit @match {
-    message "repository method complexity {complexity(@match)} exceeds 5 - repositories must stay simple"
-  }
-}
-
-rule simple-repositories {
-  lang go
-
-  match method_declaration @match {
-    receiver: parameter_list {
-      child: parameter_declaration {
-        type: pointer_type {
-          child: type_identifier @recv
-        }
+        type: [type_identifier @recv, pointer_type { child: type_identifier @recv }]
       }
     }
   }
