@@ -115,11 +115,16 @@ const Context = struct {
     class_names: *const std.StringHashMapUnmanaged(void),
 };
 
+/// Evaluate fact rules against the index. `path_filter` restricts the output
+/// to violations in that file while still using the whole index for
+/// cross-file context (class names) — a violation is always attributed to the
+/// file containing the fact, so other files never need per-fact evaluation.
 pub fn evaluate(
     allocator: std.mem.Allocator,
     rules: []const CompiledFactRule,
     warnings: []const ScopedId,
     index: *const ProjectIndex,
+    path_filter: ?[]const u8,
 ) ![]Violation {
     var out: std.ArrayList(Violation) = .empty;
     errdefer out.deinit(allocator);
@@ -128,11 +133,18 @@ pub fn evaluate(
     defer class_names.deinit(allocator);
     if (needsClassIndex(rules)) try collectClassNames(allocator, index, &class_names);
 
-    for (rules) |r| {
-        var files = index.files.valueIterator();
-        while (files.next()) |file| {
+    if (path_filter) |path| {
+        if (index.get(path)) |file| {
             const ctx: Context = .{ .allocator = allocator, .file = file, .class_names = &class_names };
-            try evaluateFile(&out, allocator, r, ctx);
+            for (rules) |r| try evaluateFile(&out, allocator, r, ctx);
+        }
+    } else {
+        for (rules) |r| {
+            var files = index.files.valueIterator();
+            while (files.next()) |file| {
+                const ctx: Context = .{ .allocator = allocator, .file = file, .class_names = &class_names };
+                try evaluateFile(&out, allocator, r, ctx);
+            }
         }
     }
 

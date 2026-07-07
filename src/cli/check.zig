@@ -119,8 +119,8 @@ fn reportProjectViolations(
 ) !reports.Counts {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    const yaml_violations = try lint.project_rule.evaluate(arena.allocator(), project_rules, engine.warnings, index);
-    const fact_violations = try lint.fact_rule.evaluate(arena.allocator(), fact_rules, engine.warnings, index);
+    const yaml_violations = try lint.project_rule.evaluate(arena.allocator(), project_rules, engine.warnings, index, null);
+    const fact_violations = try lint.fact_rule.evaluate(arena.allocator(), fact_rules, engine.warnings, index, null);
     const violations = try std.mem.concat(arena.allocator(), lint.project_rule.Violation, &.{ yaml_violations, fact_violations });
     std.mem.sort(lint.project_rule.Violation, violations, {}, lint.project_rule.violationLessThan);
 

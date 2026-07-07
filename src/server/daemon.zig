@@ -238,17 +238,13 @@ fn appendProjectDiagnostics(
     try project.index.put(try engine.extractFacts(project.index.allocator, source, lang, path));
 
     const fact_rules = try engine.ensureCompiledFact();
-    const violations = try project_rule.evaluate(arena, project.rules, engine.warnings, &project.index);
-    const fact_violations = try lint.fact_rule.evaluate(arena, fact_rules, engine.warnings, &project.index);
+    const violations = try project_rule.evaluate(arena, project.rules, engine.warnings, &project.index, path);
+    const fact_violations = try lint.fact_rule.evaluate(arena, fact_rules, engine.warnings, &project.index, path);
     var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
     try out.appendSlice(arena, diagnostics);
 
-    for (violations) |v| {
-        if (std.mem.eql(u8, v.path, path)) try out.append(arena, v.diagnostic);
-    }
-    for (fact_violations) |v| {
-        if (std.mem.eql(u8, v.path, path)) try out.append(arena, v.diagnostic);
-    }
+    for (violations) |v| try out.append(arena, v.diagnostic);
+    for (fact_violations) |v| try out.append(arena, v.diagnostic);
 
     return out.toOwnedSlice(arena);
 }

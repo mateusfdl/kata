@@ -74,7 +74,7 @@ test "fact rule: repository isolation flags service and top-level callers" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index);
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index, null);
 
     try std.testing.expectEqual(@as(usize, 2), violations.len);
     try std.testing.expectEqualStrings("scripts/seed.ts", violations[0].path);
@@ -94,6 +94,29 @@ test "fact rule: repository isolation flags service and top-level callers" {
     );
     try std.testing.expectEqual(@as(u32, 4), violations[1].diagnostic.range.start.line);
     try std.testing.expectEqual(@as(u32, 4), violations[1].diagnostic.range.start.column);
+}
+
+test "fact rule: path filter keeps cross-file context but reports one file" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+    try index.put(try f.engine.extractFacts(gpa, user_repository_ts, .ts, "src/user-repository.ts"));
+    try index.put(try f.engine.extractFacts(gpa, order_service_ts, .ts, "src/order-service.ts"));
+    try index.put(try f.engine.extractFacts(gpa, seed_script_ts, .ts, "scripts/seed.ts"));
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index, "src/order-service.ts");
+
+    try std.testing.expectEqual(@as(usize, 1), violations.len);
+    try std.testing.expectEqualStrings("src/order-service.ts", violations[0].path);
+
+    const missing = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index, "src/unknown.ts");
+    try std.testing.expectEqual(@as(usize, 0), missing.len);
 }
 
 test "fact rule: ambiguous receivers emit nothing" {
@@ -119,7 +142,7 @@ test "fact rule: ambiguous receivers emit nothing" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index);
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index, null);
 
     try std.testing.expectEqual(@as(usize, 0), violations.len);
 }
@@ -145,7 +168,7 @@ test "fact rule: receiver types not defined in the project emit nothing" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index);
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index, null);
 
     try std.testing.expectEqual(@as(usize, 0), violations.len);
 }
@@ -185,7 +208,7 @@ test "fact rule: import boundary resolves relative specifiers" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &.{}, &index);
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &.{}, &index, null);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     try std.testing.expectEqualStrings("src/domain/user.ts", violations[0].path);
@@ -223,7 +246,7 @@ test "fact rule: go import specifiers pass through verbatim" {
         },
         .message = &.{.{ .literal = "infra import from domain" }},
     };
-    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{boundary}, &.{}, &index);
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{boundary}, &.{}, &index, null);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     try std.testing.expectEqualStrings("internal/domain/order.go", violations[0].path);
@@ -247,7 +270,7 @@ test "fact rule: relative imports escaping the root emit nothing" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &.{}, &index);
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &.{}, &index, null);
 
     try std.testing.expectEqual(@as(usize, 0), violations.len);
 }
@@ -273,7 +296,7 @@ test "fact rule: empty fields compare as empty strings" {
         },
         .message = &.{.{ .literal = "top-level call" }},
     };
-    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{top_level_calls}, &.{}, &index);
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{top_level_calls}, &.{}, &index, null);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     try std.testing.expectEqualStrings("scripts/seed.ts", violations[0].path);
@@ -305,7 +328,7 @@ test "fact rule: class facts expose name and range" {
             .{ .literal = " is a repository" },
         },
     };
-    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{repository_classes}, &.{}, &index);
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{repository_classes}, &.{}, &index, null);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     try std.testing.expectEqualStrings("src/user-repository.ts", violations[0].path);
@@ -344,7 +367,7 @@ test "fact rule: regex and any-of predicates filter facts" {
         },
         .message = &.{.{ .literal = "finder call" }},
     };
-    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{finders}, &.{}, &index);
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{finders}, &.{}, &index, null);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     try std.testing.expectEqualStrings("src/order-service.ts", violations[0].path);
@@ -377,7 +400,7 @@ test "fact rule: missing message operands render as question marks" {
         },
         .severity = .warn,
     };
-    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{all_calls}, &.{}, &index);
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{all_calls}, &.{}, &index, null);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     try std.testing.expectEqualStrings("receiver type is ?", violations[0].diagnostic.message);
@@ -404,7 +427,7 @@ test "fact rule: exclude paths skip matching files" {
         .message = &.{.{ .literal = "call" }},
         .exclude_paths = &.{"src/generated/**"},
     };
-    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{all_calls}, &.{}, &index);
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{all_calls}, &.{}, &index, null);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     try std.testing.expectEqualStrings("src/order-service.ts", violations[0].path);
@@ -424,15 +447,15 @@ test "fact rule: warnings demote violations to warn severity" {
     defer arena_state.deinit();
 
     const bare = [_]fact_rule.ScopedId{.{ .lang = null, .id = "repository-isolation" }};
-    const demoted = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &bare, &index);
+    const demoted = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &bare, &index, null);
     try std.testing.expectEqual(@as(usize, 1), demoted.len);
     try std.testing.expectEqual(lint_diagnostic.Severity.warn, demoted[0].diagnostic.severity);
 
     const project_scoped = [_]fact_rule.ScopedId{.{ .lang = null, .id = "repository-isolation", .project = true }};
-    const also_demoted = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &project_scoped, &index);
+    const also_demoted = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &project_scoped, &index, null);
     try std.testing.expectEqual(lint_diagnostic.Severity.warn, also_demoted[0].diagnostic.severity);
 
     const lang_scoped = [_]fact_rule.ScopedId{.{ .lang = .ts, .id = "repository-isolation" }};
-    const untouched = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &lang_scoped, &index);
+    const untouched = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &lang_scoped, &index, null);
     try std.testing.expectEqual(lint_diagnostic.Severity.@"error", untouched[0].diagnostic.severity);
 }
