@@ -125,7 +125,7 @@ pub const PatternMeta = struct {
 
 pub const CompiledRule = struct {
     language: language.Name,
-    query: *ts.Query,
+    query: ?*ts.Query,
     patterns: []PatternMeta,
     match_capture_id: u32,
     needs_measures: bool,
@@ -135,7 +135,7 @@ pub const CompiledRule = struct {
 
     pub fn deinit(self: *CompiledRule) void {
         for (self.nested_queries) |query| query.destroy();
-        self.query.destroy();
+        if (self.query) |query| query.destroy();
         self.arena.deinit();
         self.allocator.destroy(self.arena);
     }
@@ -165,34 +165,21 @@ pub const Diagnostic = struct {
 
     pub fn write(self: Diagnostic, prefix: []const u8, out: *std.Io.Writer) !void {
         if (self.lang) |lang| {
-            if (self.line > 0) {
-                try out.print("{s}: rule {s}/{s}: line {d}, column {d}: {s}\n", .{
-                    prefix,
-                    lang.toString(),
-                    self.rule_id,
-                    self.line,
-                    self.column,
-                    self.detail,
-                });
-            } else {
-                try out.print("{s}: rule {s}/{s}: {s}\n", .{ prefix, lang.toString(), self.rule_id, self.detail });
-            }
+            try self.writeScoped(prefix, out, lang.toString(), self.rule_id);
         } else if (self.rule_id.len > 0) {
-            if (self.line > 0) {
-                try out.print("{s}: rule project/{s}: line {d}, column {d}: {s}\n", .{
-                    prefix,
-                    self.rule_id,
-                    self.line,
-                    self.column,
-                    self.detail,
-                });
-            } else {
-                try out.print("{s}: rule project/{s}: {s}\n", .{ prefix, self.rule_id, self.detail });
-            }
+            try self.writeScoped(prefix, out, "project", self.rule_id);
         } else {
             try out.print("{s}: rule compilation failed\n", .{prefix});
         }
         try out.flush();
+    }
+
+    fn writeScoped(self: Diagnostic, prefix: []const u8, out: *std.Io.Writer, scope: []const u8, id: []const u8) !void {
+        if (self.line > 0) {
+            try out.print("{s}: rule {s}/{s}: line {d}, column {d}: {s}\n", .{ prefix, scope, id, self.line, self.column, self.detail });
+        } else {
+            try out.print("{s}: rule {s}/{s}: {s}\n", .{ prefix, scope, id, self.detail });
+        }
     }
 };
 
@@ -203,8 +190,6 @@ pub fn compile(
     raws: []const RawRule,
     diag: *Diagnostic,
 ) CompileError!CompiledRule {
-    const ts_lang = registry.get(lang);
-
     const arena_ptr = try allocator.create(std.heap.ArenaAllocator);
     errdefer allocator.destroy(arena_ptr);
     arena_ptr.* = std.heap.ArenaAllocator.init(allocator);
@@ -215,6 +200,20 @@ pub fn compile(
     for (raws) |raw| {
         if (raw.format == .scm) try scm.append(arena, raw);
     }
+
+    if (scm.items.len == 0) {
+        return .{
+            .language = lang,
+            .query = null,
+            .patterns = &.{},
+            .match_capture_id = invalid_capture_id,
+            .needs_measures = false,
+            .arena = arena_ptr,
+            .allocator = allocator,
+        };
+    }
+
+    const ts_lang = registry.get(lang);
 
     var source: std.ArrayList(u8) = .empty;
     const rule_starts = try arena.alloc(u32, scm.items.len);
@@ -296,14 +295,25 @@ pub fn captureIdForName(query: *ts.Query, name: []const u8) u32 {
     return invalid_capture_id;
 }
 
+const PredicateOpName = struct {
+    name: []const u8,
+    op: PredicateOp,
+};
+
+const predicate_op_names = [_]PredicateOpName{
+    .{ .name = "eq?", .op = .eq },
+    .{ .name = "not-eq?", .op = .not_eq },
+    .{ .name = "any-of?", .op = .any_of },
+    .{ .name = "not-any-of?", .op = .not_any_of },
+    .{ .name = "match?", .op = .match },
+    .{ .name = "not-match?", .op = .not_match },
+    .{ .name = "where?", .op = .where },
+};
+
 fn predicateOpFromName(name: []const u8) ?PredicateOp {
-    if (std.mem.eql(u8, name, "eq?")) return .eq;
-    if (std.mem.eql(u8, name, "not-eq?")) return .not_eq;
-    if (std.mem.eql(u8, name, "any-of?")) return .any_of;
-    if (std.mem.eql(u8, name, "not-any-of?")) return .not_any_of;
-    if (std.mem.eql(u8, name, "match?")) return .match;
-    if (std.mem.eql(u8, name, "not-match?")) return .not_match;
-    if (std.mem.eql(u8, name, "where?")) return .where;
+    for (predicate_op_names) |entry| {
+        if (std.mem.eql(u8, name, entry.name)) return entry.op;
+    }
     return null;
 }
 

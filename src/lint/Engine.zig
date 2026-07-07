@@ -267,8 +267,9 @@ pub fn runRule(
     out: *std.ArrayList(diagnostic.Diagnostic),
 ) !void {
     if (r.match_capture_id == rule.invalid_capture_id) return;
+    const query = r.query orelse return;
 
-    cursor.exec(r.query, ctx.root);
+    cursor.exec(query, ctx.root);
     const lang_str = lang.toString();
 
     while (cursor.nextMatch()) |match| {
