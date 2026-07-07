@@ -64,6 +64,14 @@ const todo_comments_rule =
     \\
 ;
 
+const cross_grammar_print_rule =
+    \\((call_expression
+    \\  function: (identifier) @name) @match
+    \\ (#eq? @name "print")
+    \\ (#set! message "print calls are not allowed"))
+    \\
+;
+
 const Fixture = test_fixture.Fixture;
 
 fn newFixture(allocator: std.mem.Allocator, langs: []const language.Name) !*Fixture {
@@ -183,6 +191,22 @@ test "engine: per-language rule filtering" {
     const tsx_diags = try f.engine.lint(gpa, src, .tsx, null);
     defer gpa.free(tsx_diags);
     try std.testing.expectEqual(@as(usize, 0), tsx_diags.len);
+}
+
+test "engine: ts rules never evaluate go sources" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-print-call", cross_grammar_print_rule);
+    defer f.deinit();
+
+    const ts_diags = try f.engine.lint(gpa, "print(\"x\");", .ts, null);
+    defer gpa.free(ts_diags);
+    try std.testing.expectEqual(@as(usize, 1), ts_diags.len);
+    try std.testing.expectEqualStrings("ts", ts_diags[0].language);
+
+    const go_src = "package main\n\nfunc run() {\n\tprint(\"x\")\n}\n";
+    const go_diags = try f.engine.lint(gpa, go_src, .go, null);
+    defer gpa.free(go_diags);
+    try std.testing.expectEqual(@as(usize, 0), go_diags.len);
 }
 
 test "engine: weak assertions only match expect chains" {
