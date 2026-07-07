@@ -29,6 +29,44 @@ fn compileDsl(
     return compile.compile(gpa, registry, lang, file, &diag);
 }
 
+fn predicateArgs(predicate: rule.Predicate) []const rule.PredicateOperand {
+    return switch (predicate) {
+        .eq, .not_eq, .any_of, .not_any_of, .starts_with, .not_starts_with, .ends_with, .not_ends_with, .contains, .not_contains, .glob, .not_glob, .captured, .not_captured => |args| args,
+        .match, .not_match => |p| p.args,
+        .has, .not_has, .inside, .not_inside => |p| p.args,
+        .count => |p| p.args,
+        .where => unreachable,
+    };
+}
+
+fn regexPredicate(predicate: rule.Predicate) rule.RegexPredicate {
+    return switch (predicate) {
+        .match, .not_match => |p| p,
+        else => unreachable,
+    };
+}
+
+fn nestedPredicate(predicate: rule.Predicate) rule.NestedPredicate {
+    return switch (predicate) {
+        .has, .not_has, .inside, .not_inside => |p| p,
+        else => unreachable,
+    };
+}
+
+fn countPredicate(predicate: rule.Predicate) rule.CountPredicate {
+    return switch (predicate) {
+        .count => |p| p,
+        else => unreachable,
+    };
+}
+
+fn wherePredicate(predicate: rule.Predicate) *const expr.Expr {
+    return switch (predicate) {
+        .where => |p| p,
+        else => unreachable,
+    };
+}
+
 fn runCompiled(
     gpa: std.mem.Allocator,
     registry: *language.Registry,
@@ -155,12 +193,12 @@ test "compile: translates string predicates" {
 
     const predicates = compiled.patterns[0].predicates;
     try std.testing.expectEqual(@as(usize, 3), predicates.len);
-    try std.testing.expectEqual(rule.PredicateOp.not_eq, predicates[0].op);
-    try std.testing.expectEqual(rule.PredicateOp.match, predicates[1].op);
-    try std.testing.expectEqual(rule.PredicateOp.not_match, predicates[2].op);
-    try std.testing.expect(predicates[1].regex != null);
-    try std.testing.expect(predicates[2].regex != null);
-    try std.testing.expectEqualStrings("logger", predicates[0].args[1].string);
+    try std.testing.expectEqual(rule.PredicateOp.not_eq, std.meta.activeTag(predicates[0]));
+    try std.testing.expectEqual(rule.PredicateOp.match, std.meta.activeTag(predicates[1]));
+    try std.testing.expectEqual(rule.PredicateOp.not_match, std.meta.activeTag(predicates[2]));
+    _ = regexPredicate(predicates[1]);
+    _ = regexPredicate(predicates[2]);
+    try std.testing.expectEqualStrings("logger", predicateArgs(predicates[0])[1].string);
 }
 
 test "compile: translates numeric measures to where expressions" {
@@ -181,8 +219,8 @@ test "compile: translates numeric measures to where expressions" {
 
     const predicates = compiled.patterns[0].predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
-    try std.testing.expectEqual(rule.PredicateOp.where, predicates[0].op);
-    const where_expr = predicates[0].where.?;
+    try std.testing.expectEqual(rule.PredicateOp.where, std.meta.activeTag(predicates[0]));
+    const where_expr = wherePredicate(predicates[0]);
     try std.testing.expectEqual(@as(usize, 2), where_expr.any.len);
     try std.testing.expectEqual(@as(u32, 10), where_expr.any[0].compare.right.number);
     try std.testing.expectEqual(@as(u32, 3), where_expr.any[1].compare.right.number);
@@ -383,8 +421,8 @@ test "compile: nested matchers accept alternations with fields" {
 
     const predicates = compiled.patterns[0].predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
-    try std.testing.expectEqual(rule.PredicateOp.has, predicates[0].op);
-    try std.testing.expect(predicates[0].nested != null);
+    try std.testing.expectEqual(rule.PredicateOp.has, std.meta.activeTag(predicates[0]));
+    try std.testing.expect(std.meta.activeTag(predicates[0]) == .has or std.meta.activeTag(predicates[0]) == .count);
     try std.testing.expectEqual(@as(usize, 1), compiled.nested_queries.len);
 }
 
@@ -538,11 +576,11 @@ test "compile: folds string disjunctions into any-of" {
 
     const predicates = compiled.patterns[0].predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
-    try std.testing.expectEqual(rule.PredicateOp.any_of, predicates[0].op);
-    try std.testing.expectEqual(@as(usize, 4), predicates[0].args.len);
-    try std.testing.expectEqualStrings("toBeDefined", predicates[0].args[1].string);
-    try std.testing.expectEqualStrings("toBeNull", predicates[0].args[2].string);
-    try std.testing.expectEqualStrings("toBeTruthy", predicates[0].args[3].string);
+    try std.testing.expectEqual(rule.PredicateOp.any_of, std.meta.activeTag(predicates[0]));
+    try std.testing.expectEqual(@as(usize, 4), predicateArgs(predicates[0]).len);
+    try std.testing.expectEqualStrings("toBeDefined", predicateArgs(predicates[0])[1].string);
+    try std.testing.expectEqualStrings("toBeNull", predicateArgs(predicates[0])[2].string);
+    try std.testing.expectEqualStrings("toBeTruthy", predicateArgs(predicates[0])[3].string);
 }
 
 test "compile: negated string disjunction becomes not-any-of" {
@@ -567,8 +605,8 @@ test "compile: negated string disjunction becomes not-any-of" {
 
     const predicates = compiled.patterns[0].predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
-    try std.testing.expectEqual(rule.PredicateOp.not_any_of, predicates[0].op);
-    try std.testing.expectEqual(@as(usize, 3), predicates[0].args.len);
+    try std.testing.expectEqual(rule.PredicateOp.not_any_of, std.meta.activeTag(predicates[0]));
+    try std.testing.expectEqual(@as(usize, 3), predicateArgs(predicates[0]).len);
 }
 
 test "compile: disjunction across different captures is unsupported" {
@@ -621,12 +659,12 @@ test "compile: translates has composition to a nested matcher" {
 
     const predicates = compiled.patterns[0].predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
-    try std.testing.expectEqual(rule.PredicateOp.has, predicates[0].op);
-    const nested = predicates[0].nested.?;
+    try std.testing.expectEqual(rule.PredicateOp.has, std.meta.activeTag(predicates[0]));
+    const nested = nestedPredicate(predicates[0]).matcher;
     try std.testing.expect(nested.root_capture_id != rule.invalid_capture_id);
     try std.testing.expectEqual(@as(usize, 1), nested.predicates.len);
-    try std.testing.expectEqual(rule.PredicateOp.eq, nested.predicates[0].op);
-    try std.testing.expectEqualStrings("panic", nested.predicates[0].args[1].string);
+    try std.testing.expectEqual(rule.PredicateOp.eq, std.meta.activeTag(nested.predicates[0]));
+    try std.testing.expectEqualStrings("panic", predicateArgs(nested.predicates[0])[1].string);
     try std.testing.expectEqual(@as(usize, 1), compiled.nested_queries.len);
     try std.testing.expect(!compiled.needs_measures);
 }
@@ -655,8 +693,8 @@ test "compile: reuses a bound nested root capture" {
     defer compiled.deinit();
 
     const predicates = compiled.patterns[0].predicates;
-    try std.testing.expectEqual(rule.PredicateOp.not_inside, predicates[0].op);
-    const nested = predicates[0].nested.?;
+    try std.testing.expectEqual(rule.PredicateOp.not_inside, std.meta.activeTag(predicates[0]));
+    const nested = nestedPredicate(predicates[0]).matcher;
     try std.testing.expectEqual(rule.captureIdForName(nested.query, "cls"), nested.root_capture_id);
 }
 
@@ -679,10 +717,10 @@ test "compile: translates count with a comparison" {
     defer compiled.deinit();
 
     const predicates = compiled.patterns[0].predicates;
-    try std.testing.expectEqual(rule.PredicateOp.count, predicates[0].op);
-    try std.testing.expect(predicates[0].nested != null);
-    try std.testing.expectEqual(expr.Compare.gt, predicates[0].count.?.op);
-    try std.testing.expectEqual(@as(u32, 3), predicates[0].count.?.value);
+    try std.testing.expectEqual(rule.PredicateOp.count, std.meta.activeTag(predicates[0]));
+    try std.testing.expect(std.meta.activeTag(predicates[0]) == .has or std.meta.activeTag(predicates[0]) == .count);
+    try std.testing.expectEqual(expr.Compare.gt, countPredicate(predicates[0]).compare.op);
+    try std.testing.expectEqual(@as(u32, 3), countPredicate(predicates[0]).compare.value);
 }
 
 test "compile: unknown subject capture in composition fails" {
@@ -800,14 +838,14 @@ test "compile: translates string helper predicates" {
 
     const predicates = compiled.patterns[0].predicates;
     try std.testing.expectEqual(@as(usize, 4), predicates.len);
-    try std.testing.expectEqual(rule.PredicateOp.starts_with, predicates[0].op);
-    try std.testing.expectEqual(rule.PredicateOp.not_ends_with, predicates[1].op);
-    try std.testing.expectEqual(rule.PredicateOp.contains, predicates[2].op);
-    try std.testing.expectEqual(rule.PredicateOp.not_contains, predicates[3].op);
-    try std.testing.expectEqualStrings("use", predicates[0].args[1].string);
-    try std.testing.expectEqualStrings("Deprecated", predicates[1].args[1].string);
-    try std.testing.expectEqualStrings("Effect", predicates[2].args[1].string);
-    try std.testing.expectEqualStrings("Legacy", predicates[3].args[1].string);
+    try std.testing.expectEqual(rule.PredicateOp.starts_with, std.meta.activeTag(predicates[0]));
+    try std.testing.expectEqual(rule.PredicateOp.not_ends_with, std.meta.activeTag(predicates[1]));
+    try std.testing.expectEqual(rule.PredicateOp.contains, std.meta.activeTag(predicates[2]));
+    try std.testing.expectEqual(rule.PredicateOp.not_contains, std.meta.activeTag(predicates[3]));
+    try std.testing.expectEqualStrings("use", predicateArgs(predicates[0])[1].string);
+    try std.testing.expectEqualStrings("Deprecated", predicateArgs(predicates[1])[1].string);
+    try std.testing.expectEqualStrings("Effect", predicateArgs(predicates[2])[1].string);
+    try std.testing.expectEqualStrings("Legacy", predicateArgs(predicates[3])[1].string);
 }
 
 test "compile: string helpers require two text arguments" {
@@ -854,10 +892,10 @@ test "compile: translates glob predicates" {
 
     const predicates = compiled.patterns[0].predicates;
     try std.testing.expectEqual(@as(usize, 2), predicates.len);
-    try std.testing.expectEqual(rule.PredicateOp.glob, predicates[0].op);
-    try std.testing.expectEqual(rule.PredicateOp.not_glob, predicates[1].op);
-    try std.testing.expectEqualStrings("**/internal/**", predicates[0].args[1].string);
-    try std.testing.expectEqualStrings("**/public/**", predicates[1].args[1].string);
+    try std.testing.expectEqual(rule.PredicateOp.glob, std.meta.activeTag(predicates[0]));
+    try std.testing.expectEqual(rule.PredicateOp.not_glob, std.meta.activeTag(predicates[1]));
+    try std.testing.expectEqualStrings("**/internal/**", predicateArgs(predicates[0])[1].string);
+    try std.testing.expectEqualStrings("**/public/**", predicateArgs(predicates[1])[1].string);
 }
 
 test "compile: glob requires a string literal pattern" {
@@ -904,8 +942,8 @@ test "compile: translates capture presence predicates" {
 
     const predicates = compiled.patterns[0].predicates;
     try std.testing.expectEqual(@as(usize, 2), predicates.len);
-    try std.testing.expectEqual(rule.PredicateOp.captured, predicates[0].op);
-    try std.testing.expectEqual(rule.PredicateOp.not_captured, predicates[1].op);
+    try std.testing.expectEqual(rule.PredicateOp.captured, std.meta.activeTag(predicates[0]));
+    try std.testing.expectEqual(rule.PredicateOp.not_captured, std.meta.activeTag(predicates[1]));
 }
 
 test "compile: capture predicate requires one capture argument" {

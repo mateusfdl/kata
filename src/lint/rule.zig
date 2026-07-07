@@ -92,13 +92,45 @@ pub const CountCompare = struct {
     value: u32,
 };
 
-pub const Predicate = struct {
-    op: PredicateOp,
+pub const RegexPredicate = struct {
     args: []PredicateOperand,
-    regex: ?mvzr.Regex = null,
-    where: ?*const expr.Expr = null,
-    nested: ?*const NestedMatcher = null,
-    count: ?CountCompare = null,
+    regex: mvzr.Regex,
+};
+
+pub const NestedPredicate = struct {
+    args: []PredicateOperand,
+    matcher: *const NestedMatcher,
+};
+
+pub const CountPredicate = struct {
+    args: []PredicateOperand,
+    matcher: *const NestedMatcher,
+    compare: CountCompare,
+};
+
+pub const Predicate = union(PredicateOp) {
+    eq: []PredicateOperand,
+    not_eq: []PredicateOperand,
+    any_of: []PredicateOperand,
+    not_any_of: []PredicateOperand,
+    match: RegexPredicate,
+    not_match: RegexPredicate,
+    starts_with: []PredicateOperand,
+    not_starts_with: []PredicateOperand,
+    ends_with: []PredicateOperand,
+    not_ends_with: []PredicateOperand,
+    contains: []PredicateOperand,
+    not_contains: []PredicateOperand,
+    glob: []PredicateOperand,
+    not_glob: []PredicateOperand,
+    captured: []PredicateOperand,
+    not_captured: []PredicateOperand,
+    where: *const expr.Expr,
+    has: NestedPredicate,
+    not_has: NestedPredicate,
+    inside: NestedPredicate,
+    not_inside: NestedPredicate,
+    count: CountPredicate,
 };
 
 pub const Placeholder = message_mod.Placeholder;
@@ -253,8 +285,15 @@ pub fn needsMeasures(patterns: []const PatternMeta) bool {
 }
 
 fn predicateNeedsMeasures(pred: Predicate) bool {
-    if (pred.op == .where) return true;
-    const nested = pred.nested orelse return false;
+    return switch (pred) {
+        .where => true,
+        .has, .not_has, .inside, .not_inside => |nested| nestedMatcherNeedsMeasures(nested.matcher),
+        .count => |count| nestedMatcherNeedsMeasures(count.matcher),
+        else => false,
+    };
+}
+
+fn nestedMatcherNeedsMeasures(nested: *const NestedMatcher) bool {
     for (nested.predicates) |inner| {
         if (predicateNeedsMeasures(inner)) return true;
     }
@@ -438,21 +477,23 @@ fn buildPredicate(
         args[j] = try operandFromStep(query, arg_step);
     }
 
-    return .{
-        .op = op,
-        .args = args,
-        .regex = try compileRegexArg(op, args),
-        .where = try compileWhereArg(arena, query, op, args),
+    return switch (op) {
+        .eq => .{ .eq = args },
+        .not_eq => .{ .not_eq = args },
+        .any_of => .{ .any_of = args },
+        .not_any_of => .{ .not_any_of = args },
+        .match => .{ .match = .{ .args = args, .regex = try compileRegexArg(args) } },
+        .not_match => .{ .not_match = .{ .args = args, .regex = try compileRegexArg(args) } },
+        .where => .{ .where = try compileWhereArg(arena, query, args) },
+        else => error.UnknownPredicate,
     };
 }
 
 fn compileWhereArg(
     arena: std.mem.Allocator,
     query: *ts.Query,
-    op: PredicateOp,
     args: []const PredicateOperand,
-) !?*const expr.Expr {
-    if (op != .where) return null;
+) !*const expr.Expr {
     if (args.len != 1) return error.InvalidWhereExpression;
 
     const source = switch (args[0]) {
@@ -476,8 +517,7 @@ const QueryResolver = struct {
     }
 };
 
-fn compileRegexArg(op: PredicateOp, args: []const PredicateOperand) !?mvzr.Regex {
-    if (op != .match and op != .not_match) return null;
+fn compileRegexArg(args: []const PredicateOperand) !mvzr.Regex {
     if (args.len != 2) return error.InvalidRegex;
 
     const pattern = switch (args[1]) {

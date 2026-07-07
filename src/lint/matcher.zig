@@ -27,40 +27,39 @@ pub fn evaluate(
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
     for (predicates) |pred| {
-        switch (pred.op) {
-            .eq => if (!evalEq(pred, match, ctx.source, false)) return false,
-            .not_eq => if (!evalEq(pred, match, ctx.source, true)) return false,
-            .any_of => if (!evalAnyOf(pred, match, ctx.source, false)) return false,
-            .not_any_of => if (!evalAnyOf(pred, match, ctx.source, true)) return false,
-            .match => if (!evalMatch(pred, match, ctx.source, false)) return false,
-            .not_match => if (!evalMatch(pred, match, ctx.source, true)) return false,
-            .starts_with => if (!evalStringHelper(pred, match, ctx.source, .starts_with, false)) return false,
-            .not_starts_with => if (!evalStringHelper(pred, match, ctx.source, .starts_with, true)) return false,
-            .ends_with => if (!evalStringHelper(pred, match, ctx.source, .ends_with, false)) return false,
-            .not_ends_with => if (!evalStringHelper(pred, match, ctx.source, .ends_with, true)) return false,
-            .contains => if (!evalStringHelper(pred, match, ctx.source, .contains, false)) return false,
-            .not_contains => if (!evalStringHelper(pred, match, ctx.source, .contains, true)) return false,
-            .glob => if (!evalStringHelper(pred, match, ctx.source, .glob, false)) return false,
-            .not_glob => if (!evalStringHelper(pred, match, ctx.source, .glob, true)) return false,
-            .captured => if (!evalCaptured(pred, match, false)) return false,
-            .not_captured => if (!evalCaptured(pred, match, true)) return false,
-            .where => if (!try evalWhere(pred, match, ctx)) return false,
-            .has => if (!try evalHas(pred, match, ctx, false)) return false,
-            .not_has => if (!try evalHas(pred, match, ctx, true)) return false,
-            .inside => if (!try evalInside(pred, match, ctx, false)) return false,
-            .not_inside => if (!try evalInside(pred, match, ctx, true)) return false,
-            .count => if (!try evalCount(pred, match, ctx)) return false,
+        switch (pred) {
+            .eq => |args| if (!evalEq(args, match, ctx.source, false)) return false,
+            .not_eq => |args| if (!evalEq(args, match, ctx.source, true)) return false,
+            .any_of => |args| if (!evalAnyOf(args, match, ctx.source, false)) return false,
+            .not_any_of => |args| if (!evalAnyOf(args, match, ctx.source, true)) return false,
+            .match => |p| if (!evalMatch(p, match, ctx.source, false)) return false,
+            .not_match => |p| if (!evalMatch(p, match, ctx.source, true)) return false,
+            .starts_with => |args| if (!evalStringHelper(args, match, ctx.source, .starts_with, false)) return false,
+            .not_starts_with => |args| if (!evalStringHelper(args, match, ctx.source, .starts_with, true)) return false,
+            .ends_with => |args| if (!evalStringHelper(args, match, ctx.source, .ends_with, false)) return false,
+            .not_ends_with => |args| if (!evalStringHelper(args, match, ctx.source, .ends_with, true)) return false,
+            .contains => |args| if (!evalStringHelper(args, match, ctx.source, .contains, false)) return false,
+            .not_contains => |args| if (!evalStringHelper(args, match, ctx.source, .contains, true)) return false,
+            .glob => |args| if (!evalStringHelper(args, match, ctx.source, .glob, false)) return false,
+            .not_glob => |args| if (!evalStringHelper(args, match, ctx.source, .glob, true)) return false,
+            .captured => |args| if (!evalCaptured(args, match, false)) return false,
+            .not_captured => |args| if (!evalCaptured(args, match, true)) return false,
+            .where => |where| if (!try evalWhere(where, match, ctx)) return false,
+            .has => |p| if (!try evalHas(p, match, ctx, false)) return false,
+            .not_has => |p| if (!try evalHas(p, match, ctx, true)) return false,
+            .inside => |p| if (!try evalInside(p, match, ctx, false)) return false,
+            .not_inside => |p| if (!try evalInside(p, match, ctx, true)) return false,
+            .count => |p| if (!try evalCount(p, match, ctx)) return false,
         }
     }
     return true;
 }
 
 fn evalWhere(
-    pred: rule.Predicate,
+    parsed: *const expr.Expr,
     match: ts.Query.Match,
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
-    const parsed = pred.where orelse return false;
     const metric_ctx = ctx.metric orelse return false;
     const measures: NodeMeasures = .{ .ctx = metric_ctx, .match = match, .source = ctx.source };
 
@@ -68,60 +67,56 @@ fn evalWhere(
 }
 
 fn evalHas(
-    pred: rule.Predicate,
+    pred: rule.NestedPredicate,
     match: ts.Query.Match,
     ctx: EvalContext,
     negate: bool,
 ) std.mem.Allocator.Error!bool {
-    const nested = pred.nested orelse return false;
     const cursor = ctx.nested_cursor orelse return false;
-    const subject = subjectNode(pred, match) orelse return false;
+    const subject = subjectNode(pred.args, match) orelse return false;
 
-    cursor.exec(nested.query, subject);
+    cursor.exec(pred.matcher.query, subject);
     while (cursor.nextMatch()) |nested_match| {
-        if (try nestedMatchPasses(nested, nested_match, subject, ctx)) return !negate;
+        if (try nestedMatchPasses(pred.matcher, nested_match, subject, ctx)) return !negate;
     }
 
     return negate;
 }
 
 fn evalInside(
-    pred: rule.Predicate,
+    pred: rule.NestedPredicate,
     match: ts.Query.Match,
     ctx: EvalContext,
     negate: bool,
 ) std.mem.Allocator.Error!bool {
-    const nested = pred.nested orelse return false;
     const cursor = ctx.nested_cursor orelse return false;
-    const subject = subjectNode(pred, match) orelse return false;
+    const subject = subjectNode(pred.args, match) orelse return false;
 
-    cursor.exec(nested.query, ctx.root);
+    cursor.exec(pred.matcher.query, ctx.root);
     while (cursor.nextMatch()) |nested_match| {
-        const enclosing = findCaptureNode(nested.root_capture_id, nested_match) orelse continue;
+        const enclosing = findCaptureNode(pred.matcher.root_capture_id, nested_match) orelse continue;
         if (!strictlyContains(enclosing, subject)) continue;
-        if (try evaluate(nested.predicates, nested_match, ctx)) return !negate;
+        if (try evaluate(pred.matcher.predicates, nested_match, ctx)) return !negate;
     }
 
     return negate;
 }
 
 fn evalCount(
-    pred: rule.Predicate,
+    pred: rule.CountPredicate,
     match: ts.Query.Match,
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
-    const compare = pred.count orelse return false;
-    const nested = pred.nested orelse return false;
     const cursor = ctx.nested_cursor orelse return false;
-    const subject = subjectNode(pred, match) orelse return false;
+    const subject = subjectNode(pred.args, match) orelse return false;
 
-    cursor.exec(nested.query, subject);
+    cursor.exec(pred.matcher.query, subject);
     var total: u32 = 0;
     while (cursor.nextMatch()) |nested_match| {
-        if (try nestedMatchPasses(nested, nested_match, subject, ctx)) total += 1;
+        if (try nestedMatchPasses(pred.matcher, nested_match, subject, ctx)) total += 1;
     }
 
-    return compareCount(compare.op, total, compare.value);
+    return compareCount(pred.compare.op, total, pred.compare.value);
 }
 
 fn nestedMatchPasses(
@@ -136,10 +131,10 @@ fn nestedMatchPasses(
     return evaluate(nested.predicates, nested_match, ctx);
 }
 
-fn subjectNode(pred: rule.Predicate, match: ts.Query.Match) ?ts.Node {
-    if (pred.args.len != 1) return null;
+fn subjectNode(args: []const rule.PredicateOperand, match: ts.Query.Match) ?ts.Node {
+    if (args.len != 1) return null;
 
-    return switch (pred.args[0]) {
+    return switch (args[0]) {
         .capture => |id| findCaptureNode(id, match),
         .string => null,
     };
@@ -241,30 +236,30 @@ fn renderPlaceholder(
 }
 
 fn evalEq(
-    pred: rule.Predicate,
+    args: []const rule.PredicateOperand,
     match: ts.Query.Match,
     source: []const u8,
     negate: bool,
 ) bool {
-    if (pred.args.len != 2) return false;
+    if (args.len != 2) return false;
 
-    const left_text = resolveText(pred.args[0], match, source) orelse return false;
-    const right_text = resolveText(pred.args[1], match, source) orelse return false;
+    const left_text = resolveText(args[0], match, source) orelse return false;
+    const right_text = resolveText(args[1], match, source) orelse return false;
 
     return std.mem.eql(u8, left_text, right_text) != negate;
 }
 
 fn evalAnyOf(
-    pred: rule.Predicate,
+    args: []const rule.PredicateOperand,
     match: ts.Query.Match,
     source: []const u8,
     negate: bool,
 ) bool {
-    if (pred.args.len < 2) return false;
+    if (args.len < 2) return false;
 
-    const left_text = resolveText(pred.args[0], match, source) orelse return false;
+    const left_text = resolveText(args[0], match, source) orelse return false;
 
-    for (pred.args[1..]) |arg| {
+    for (args[1..]) |arg| {
         const candidate = resolveText(arg, match, source) orelse continue;
         if (std.mem.eql(u8, left_text, candidate)) return !negate;
     }
@@ -272,10 +267,10 @@ fn evalAnyOf(
     return negate;
 }
 
-fn evalCaptured(pred: rule.Predicate, match: ts.Query.Match, negate: bool) bool {
-    if (pred.args.len != 1) return false;
+fn evalCaptured(args: []const rule.PredicateOperand, match: ts.Query.Match, negate: bool) bool {
+    if (args.len != 1) return false;
 
-    const present = switch (pred.args[0]) {
+    const present = switch (args[0]) {
         .capture => |id| findCaptureNode(id, match) != null,
         .string => false,
     };
@@ -286,16 +281,16 @@ fn evalCaptured(pred: rule.Predicate, match: ts.Query.Match, negate: bool) bool 
 const StringHelper = enum { starts_with, ends_with, contains, glob };
 
 fn evalStringHelper(
-    pred: rule.Predicate,
+    args: []const rule.PredicateOperand,
     match: ts.Query.Match,
     source: []const u8,
     helper: StringHelper,
     negate: bool,
 ) bool {
-    if (pred.args.len != 2) return false;
+    if (args.len != 2) return false;
 
-    const subject = resolveText(pred.args[0], match, source) orelse return false;
-    const candidate = resolveText(pred.args[1], match, source) orelse return false;
+    const subject = resolveText(args[0], match, source) orelse return false;
+    const candidate = resolveText(args[1], match, source) orelse return false;
     const found = switch (helper) {
         .starts_with => std.mem.startsWith(u8, subject, candidate),
         .ends_with => std.mem.endsWith(u8, subject, candidate),
@@ -307,15 +302,14 @@ fn evalStringHelper(
 }
 
 fn evalMatch(
-    pred: rule.Predicate,
+    pred: rule.RegexPredicate,
     match: ts.Query.Match,
     source: []const u8,
     negate: bool,
 ) bool {
-    const re = pred.regex orelse return false;
     const text = resolveText(pred.args[0], match, source) orelse return false;
 
-    return re.isMatch(text) != negate;
+    return pred.regex.isMatch(text) != negate;
 }
 
 fn resolveText(

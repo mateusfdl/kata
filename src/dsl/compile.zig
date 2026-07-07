@@ -338,20 +338,25 @@ fn compositionPredicate(ctx: *Compiler, composition: ast.Composition) Error!rule
         .inside => if (composition.negated) .not_inside else .inside,
         .has => if (composition.negated) .not_has else .has,
     };
-    return .{
-        .op = op,
+    const pred: rule.NestedPredicate = .{
         .args = try subjectArgs(ctx, composition.matcher),
-        .nested = try compileNestedMatcher(ctx, composition.matcher),
+        .matcher = try compileNestedMatcher(ctx, composition.matcher),
+    };
+    return switch (op) {
+        .inside => .{ .inside = pred },
+        .not_inside => .{ .not_inside = pred },
+        .has => .{ .has = pred },
+        .not_has => .{ .not_has = pred },
+        else => unreachable,
     };
 }
 
 fn countPredicate(ctx: *Compiler, count: ast.CountPredicate) Error!rule.Predicate {
-    return .{
-        .op = .count,
+    return .{ .count = .{
         .args = try subjectArgs(ctx, count.matcher),
-        .nested = try compileNestedMatcher(ctx, count.matcher),
-        .count = .{ .op = compareOp(count.op), .value = count.value },
-    };
+        .matcher = try compileNestedMatcher(ctx, count.matcher),
+        .compare = .{ .op = compareOp(count.op), .value = count.value },
+    } };
 }
 
 fn subjectArgs(ctx: *Compiler, matcher: ast.NestedMatcher) Error![]rule.PredicateOperand {
@@ -414,11 +419,7 @@ fn translateExpression(
     if (try numericExpression(ctx, expression)) |value| {
         const pointer = try ctx.arena.create(expr.Expr);
         pointer.* = value;
-        try out.append(ctx.arena, .{
-            .op = .where,
-            .args = try ctx.arena.alloc(rule.PredicateOperand, 0),
-            .where = pointer,
-        });
+        try out.append(ctx.arena, .{ .where = pointer });
         return;
     }
     ctx.fail("unsupported where expression");
@@ -443,7 +444,7 @@ fn anyOfPredicate(ctx: *Compiler, expression: ast.Expression, negated: bool) Err
     const args = try ctx.arena.alloc(rule.PredicateOperand, strings.items.len + 1);
     args[0] = .{ .capture = capture.? };
     for (strings.items, args[1..]) |s, *slot| slot.* = .{ .string = s };
-    return .{ .op = if (negated) .not_any_of else .any_of, .args = args };
+    return if (negated) .{ .not_any_of = args } else .{ .any_of = args };
 }
 
 fn collectDisjunction(
@@ -509,7 +510,7 @@ fn globPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Pred
     const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
     args[0] = subject;
     args[1] = .{ .string = try ctx.arena.dupe(u8, call.args[1].string.value) };
-    return .{ .op = if (negated) .not_glob else .glob, .args = args };
+    return if (negated) .{ .not_glob = args } else .{ .glob = args };
 }
 
 fn capturedPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
@@ -519,7 +520,7 @@ fn capturedPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.
     }
     const args = try ctx.arena.alloc(rule.PredicateOperand, 1);
     args[0] = .{ .capture = try resolveCapture(ctx, call.args[0].capture.name) };
-    return .{ .op = if (negated) .not_captured else .captured, .args = args };
+    return if (negated) .{ .not_captured = args } else .{ .captured = args };
 }
 
 fn stringHelperOp(name: []const u8, negated: bool) ?rule.PredicateOp {
@@ -545,7 +546,15 @@ fn stringHelperPredicate(ctx: *Compiler, call: ast.Call, op: rule.PredicateOp) E
     const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
     args[0] = subject;
     args[1] = candidate;
-    return .{ .op = op, .args = args };
+    return switch (op) {
+        .starts_with => .{ .starts_with = args },
+        .not_starts_with => .{ .not_starts_with = args },
+        .ends_with => .{ .ends_with = args },
+        .not_ends_with => .{ .not_ends_with = args },
+        .contains => .{ .contains = args },
+        .not_contains => .{ .not_contains = args },
+        else => unreachable,
+    };
 }
 
 fn matchesPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
@@ -572,11 +581,8 @@ fn matchesPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.P
     const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
     args[0] = subject;
     args[1] = .{ .string = pattern };
-    return .{
-        .op = if (negated) .not_match else .match,
-        .args = args,
-        .regex = regex,
-    };
+    const pred: rule.RegexPredicate = .{ .args = args, .regex = regex };
+    return if (negated) .{ .not_match = pred } else .{ .match = pred };
 }
 
 fn comparePredicate(ctx: *Compiler, c: ast.Compare, negated: bool) Error!?rule.Predicate {
@@ -589,7 +595,7 @@ fn comparePredicate(ctx: *Compiler, c: ast.Compare, negated: bool) Error!?rule.P
         const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
         args[0] = resolved_left;
         args[1] = resolved_right;
-        return .{ .op = if (wants_eq) .eq else .not_eq, .args = args };
+        return if (wants_eq) .{ .eq = args } else .{ .not_eq = args };
     }
     if (left != null or right != null) {
         ctx.fail("strings compare with == and != only");
