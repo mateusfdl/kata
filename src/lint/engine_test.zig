@@ -361,6 +361,33 @@ test "engine: duplicate set directives are a hard error" {
     try std.testing.expectEqualStrings("duplicate #set! directive", f.engine.compile_diag.detail);
 }
 
+test "engine: pattern without @match is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @typo (#set! message \"m\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.MissingMatchCapture, f.engine.lint(gpa, "// hi\n", .go, null));
+    try std.testing.expectEqualStrings("pattern never captures @match", f.engine.compile_diag.detail);
+}
+
+test "engine: predicate with wrong arity is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#eq? @match) (#set! message \"m\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.InvalidPredicateArity, f.engine.lint(gpa, "// hi\n", .go, null));
+    try std.testing.expectEqualStrings("wrong number of predicate arguments", f.engine.compile_diag.detail);
+}
+
+test "engine: match predicate without a pattern is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#match? @match) (#set! message \"m\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.InvalidPredicateArity, f.engine.lint(gpa, "// hi\n", .go, null));
+    try std.testing.expectEqualStrings("wrong number of predicate arguments", f.engine.compile_diag.detail);
+}
+
 test "engine: go detects console output" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.go}, "no-console", go_no_console_rule);

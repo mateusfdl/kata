@@ -167,6 +167,8 @@ pub const CompileError = error{
     RuleCompileFailed,
     UnknownPredicate,
     InvalidPredicateOperand,
+    InvalidPredicateArity,
+    MissingMatchCapture,
     InvalidSetDirective,
     DuplicateSetDirective,
     InvalidRegex,
@@ -252,9 +254,15 @@ pub fn compile(
     };
     errdefer query.destroy();
 
+    const match_capture_id = captureIdForName(query, match_capture);
+
     const patterns = try arena.alloc(PatternMeta, query.patternCount());
     for (patterns, 0..) |*pattern, idx| {
         const owner_id = ownerId(rule_starts, scm.items, query.startByteForPattern(@intCast(idx)));
+        if (!patternCapturesMatch(query, @intCast(idx), match_capture_id)) {
+            diag.* = .{ .lang = lang, .rule_id = owner_id, .detail = "pattern never captures @" ++ match_capture };
+            return error.MissingMatchCapture;
+        }
         pattern.* = parsePattern(arena, query, @intCast(idx)) catch |err| {
             diag.* = .{ .lang = lang, .rule_id = owner_id, .detail = compileDetail(err) };
             return err;
@@ -266,11 +274,18 @@ pub fn compile(
         .language = lang,
         .query = query,
         .patterns = patterns,
-        .match_capture_id = captureIdForName(query, match_capture),
+        .match_capture_id = match_capture_id,
         .needs_measures = needsMeasures(patterns),
         .arena = arena_ptr,
         .allocator = allocator,
     };
+}
+
+/// A pattern that never binds @match can never emit a diagnostic; reject it
+/// at compile time instead of letting the rule silently do nothing.
+fn patternCapturesMatch(query: *ts.Query, pattern_index: u32, match_capture_id: u32) bool {
+    const quantifier = query.captureQuantifierForId(pattern_index, match_capture_id) orelse return false;
+    return quantifier != .zero;
 }
 
 pub fn needsMeasures(patterns: []const PatternMeta) bool {
@@ -384,6 +399,7 @@ fn compileDetail(err: anyerror) []const u8 {
         error.UnknownPlaceholderCapture => "unknown capture in message placeholder",
         error.UnknownPredicate => "unknown predicate",
         error.InvalidPredicateOperand => "invalid predicate operand",
+        error.InvalidPredicateArity => "wrong number of predicate arguments",
         error.InvalidSetDirective => "invalid #set! directive",
         error.DuplicateSetDirective => "duplicate #set! directive",
         error.InvalidRegex => "invalid regex",
@@ -478,15 +494,25 @@ fn buildPredicate(
     }
 
     return switch (op) {
-        .eq => .{ .eq = args },
-        .not_eq => .{ .not_eq = args },
-        .any_of => .{ .any_of = args },
-        .not_any_of => .{ .not_any_of = args },
+        .eq => .{ .eq = try exactArgs(args, 2) },
+        .not_eq => .{ .not_eq = try exactArgs(args, 2) },
+        .any_of => .{ .any_of = try minArgs(args, 2) },
+        .not_any_of => .{ .not_any_of = try minArgs(args, 2) },
         .match => .{ .match = .{ .args = args, .regex = try compileRegexArg(args) } },
         .not_match => .{ .not_match = .{ .args = args, .regex = try compileRegexArg(args) } },
         .where => .{ .where = try compileWhereArg(arena, query, args) },
         else => error.UnknownPredicate,
     };
+}
+
+fn exactArgs(args: []PredicateOperand, count: usize) CompileError![]PredicateOperand {
+    if (args.len != count) return error.InvalidPredicateArity;
+    return args;
+}
+
+fn minArgs(args: []PredicateOperand, count: usize) CompileError![]PredicateOperand {
+    if (args.len < count) return error.InvalidPredicateArity;
+    return args;
 }
 
 fn compileWhereArg(
@@ -518,7 +544,7 @@ const QueryResolver = struct {
 };
 
 fn compileRegexArg(args: []const PredicateOperand) !mvzr.Regex {
-    if (args.len != 2) return error.InvalidRegex;
+    if (args.len != 2) return error.InvalidPredicateArity;
 
     const pattern = switch (args[1]) {
         .string => |s| s,
