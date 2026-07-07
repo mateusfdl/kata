@@ -357,15 +357,27 @@ and path-like text against `*`/`**` patterns:
 where { glob(text(@src), "**/internal/**") }
 ```
 
-Set membership - "is one of these literals" - is spelled with the `anyOf` and
-`noneOf` helpers, which lower to the same `#any-of?` predicate that a chain of
-`text(@x) == "a" || text(@x) == "b"` folds into:
+Set membership - "is one of these literals" - has two interchangeable
+spellings, both lowering to the same `#any-of?` predicate that a chain of
+`text(@x) == "a" || text(@x) == "b"` folds into. The `anyOf`/`noneOf` helpers
+follow the function-call style; the `in`/`not in` infix operator reuses the
+`[...]` any-of bracket from node-kind alternation and reads best for long,
+multi-line lists:
 
 ```kata
 where { anyOf(text(@name), "toBeNull", "toBeTruthy", "toContain") }
+where {
+  text(@name) in [
+    "toBeNull",
+    "toBeTruthy",
+    "toContain",
+  ]
+}
 ```
 
-`noneOf(...)` (equivalently `!anyOf(...)`) is the negated form.
+The left side of `in` is any text expression (`text(@x)`); the right side is a
+bracketed list of string literals and tolerates a trailing comma. `noneOf(...)`,
+`text(@name) not in [...]`, and `!anyOf(...)` are the negated forms.
 
 Syntax and compile errors fail at startup with the rule id and position:
 

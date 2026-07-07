@@ -431,8 +431,25 @@ fn stringPredicate(ctx: *Compiler, expression: ast.Expression, negated: bool) Er
         .call => |call| callPredicate(ctx, call, negated),
         .compare => |c| comparePredicate(ctx, c, negated),
         .logical => |logical| if (logical.op == .@"or") anyOfPredicate(ctx, expression, negated) else null,
+        .membership => |m| membershipPredicate(ctx, m, negated),
         else => null,
     };
+}
+
+fn membershipPredicate(ctx: *Compiler, m: ast.Membership, negated: bool) Error!?rule.Predicate {
+    const subject = (try textOperand(ctx, m.subject.*)) orelse {
+        ctx.fail("in expects text(@capture) on the left");
+        return error.UnsupportedPredicate;
+    };
+    if (subject != .capture) {
+        ctx.fail("in expects text(@capture) on the left");
+        return error.UnsupportedPredicate;
+    }
+    const args = try ctx.arena.alloc(rule.PredicateOperand, m.values.len + 1);
+    args[0] = subject;
+    for (m.values, args[1..]) |value, *slot| slot.* = .{ .string = try ctx.arena.dupe(u8, value.value) };
+    const effective = m.negated != negated;
+    return if (effective) .{ .not_any_of = args } else .{ .any_of = args };
 }
 
 fn anyOfPredicate(ctx: *Compiler, expression: ast.Expression, negated: bool) Error!?rule.Predicate {

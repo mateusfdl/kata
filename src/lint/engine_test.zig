@@ -1267,6 +1267,71 @@ test "engine: anyOf helper flags any listed matcher and nothing else" {
     try std.testing.expectEqual(@as(u32, 1), diags[1].range.start.line);
 }
 
+const kata_in_operator =
+    \\rule no-weak-assertions {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: member_expression {
+    \\      property: property_identifier @name
+    \\    }
+    \\  }
+    \\  where {
+    \\    text(@name) in ["toBeNull", "toBeTruthy"]
+    \\  }
+    \\  emit @match { message "weak assertion" }
+    \\}
+;
+
+test "engine: in operator flags any listed matcher and nothing else" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-weak-assertions", kata_in_operator, .kata);
+    defer f.deinit();
+
+    const src =
+        "expect(a).toBeNull();\n" ++
+        "expect(b).toBeTruthy();\n" ++
+        "expect(c).toEqual(1);\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqualStrings("weak assertion", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 1), diags[1].range.start.line);
+}
+
+const kata_not_in_operator =
+    \\rule allowlist {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: member_expression {
+    \\      property: property_identifier @name
+    \\    }
+    \\  }
+    \\  where {
+    \\    text(@name) not in ["toEqual", "toStrictEqual"]
+    \\  }
+    \\  emit @match { message "not allowlisted" }
+    \\}
+;
+
+test "engine: not in operator flags everything outside the set" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "allowlist", kata_not_in_operator, .kata);
+    defer f.deinit();
+
+    const src =
+        "expect(a).toBeNull();\n" ++
+        "expect(b).toEqual(1);\n" ++
+        "expect(c).toContain(2);\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 2), diags[1].range.start.line);
+}
+
 const kata_too_many_returns =
     \\rule too-many-returns {
     \\  lang ts

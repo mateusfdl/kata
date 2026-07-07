@@ -218,8 +218,25 @@ fn predicateFrom(ctx: *Compiler, expression: ast.Expression, negated: bool) Erro
         .call => |call| callPredicate(ctx, call, negated),
         .compare => |c| comparePredicate(ctx, c, negated),
         .logical => |logical| if (logical.op == .@"or") anyOfPredicate(ctx, expression, negated) else null,
+        .membership => |m| membershipPredicate(ctx, m, negated),
         else => null,
     };
+}
+
+fn membershipPredicate(ctx: *Compiler, m: ast.Membership, negated: bool) Error!?fact_rule.Predicate {
+    const subject = (try textOperand(ctx, m.subject.*)) orelse {
+        ctx.failAt("in expects field(@fact, name) on the left", m.range);
+        return error.UnsupportedPredicate;
+    };
+    if (subject == .literal) {
+        ctx.failAt("in expects field(@fact, name) on the left", m.range);
+        return error.UnsupportedPredicate;
+    }
+    const args = try ctx.arena.alloc(fact_rule.Operand, m.values.len + 1);
+    args[0] = subject;
+    for (m.values, args[1..]) |value, *slot| slot.* = .{ .literal = try ctx.arena.dupe(u8, value.value) };
+    const effective = m.negated != negated;
+    return .{ .op = if (effective) .not_any_of else .any_of, .args = args };
 }
 
 fn callPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?fact_rule.Predicate {

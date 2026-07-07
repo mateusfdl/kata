@@ -17,7 +17,9 @@ pub const Error = tokenizer.Error || error{
     ExpectedCapture,
     ExpectedLeftBrace,
     ExpectedRightBrace,
+    ExpectedLeftBracket,
     ExpectedRightBracket,
+    EmptySetLiteral,
     ExpectedRightParen,
     ExpectedColon,
     ExpectedMessage,
@@ -56,6 +58,7 @@ const Keyword = enum {
     parent,
     count,
     not,
+    in,
 };
 
 const ParsedNodeKind = struct {
@@ -501,12 +504,51 @@ pub const Parser = struct {
     }
 
     fn parseAnd(self: *Parser) Error!ast.Expression {
-        var left = try self.parseCompare();
+        var left = try self.parseMembership();
         while (self.current.kind == .amp_amp) {
             try self.advance();
-            left = try self.logical(.@"and", left, try self.parseCompare());
+            left = try self.logical(.@"and", left, try self.parseMembership());
         }
         return left;
+    }
+
+    fn parseMembership(self: *Parser) Error!ast.Expression {
+        const left = try self.parseCompare();
+        var negated = false;
+        if (isKeyword(self.current, .not)) {
+            if (!isKeyword(try self.peek(), .in)) return left;
+            try self.advance();
+            negated = true;
+        } else if (!isKeyword(self.current, .in)) {
+            return left;
+        }
+        try self.advance();
+        const values = try self.parseSetLiteral();
+        return .{ .membership = .{
+            .subject = try self.createExpression(left),
+            .values = values.items,
+            .negated = negated,
+            .range = .{ .start = expressionStart(left), .end = values.end },
+        } };
+    }
+
+    fn parseSetLiteral(self: *Parser) Error!struct { items: []const ast.StringLiteral, end: tokenizer.Position } {
+        _ = try self.expect(.left_bracket, error.ExpectedLeftBracket);
+        var items: std.ArrayList(ast.StringLiteral) = .empty;
+        while (self.current.kind != .right_bracket) {
+            if (self.current.kind == .eof) {
+                self.failAt(self.current);
+                return error.ExpectedRightBracket;
+            }
+            try items.append(self.allocator, try self.parseStringLiteral());
+            if (!try self.consume(.comma)) break;
+        }
+        const end = try self.expect(.right_bracket, error.ExpectedRightBracket);
+        if (items.items.len == 0) {
+            self.failAt(end);
+            return error.EmptySetLiteral;
+        }
+        return .{ .items = try items.toOwnedSlice(self.allocator), .end = end.range.end };
     }
 
     fn parseCompare(self: *Parser) Error!ast.Expression {
@@ -658,6 +700,11 @@ pub const Parser = struct {
         self.current = try self.tokenizer.next();
     }
 
+    fn peek(self: *Parser) Error!Token {
+        var ahead = self.tokenizer;
+        return ahead.next();
+    }
+
     fn rejectDuplicate(self: *Parser, token: Token, seen: *bool) Error!void {
         if (seen.*) {
             self.failAt(token);
@@ -759,6 +806,7 @@ fn expressionStart(expression: ast.Expression) tokenizer.Position {
         .compare => |value| value.range.start,
         .logical => |value| value.range.start,
         .negate => |value| value.range.start,
+        .membership => |value| value.range.start,
     };
 }
 
@@ -772,5 +820,6 @@ fn expressionEnd(expression: ast.Expression) tokenizer.Position {
         .compare => |value| value.range.end,
         .logical => |value| value.range.end,
         .negate => |value| value.range.end,
+        .membership => |value| value.range.end,
     };
 }

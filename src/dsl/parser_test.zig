@@ -883,6 +883,80 @@ test "parser: parses not parent composition" {
     try std.testing.expectEqual(@as(usize, 0), composition.matcher.pattern.fields.len);
 }
 
+test "parser: parses in membership with a trailing comma" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule no-weak-assertions {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: member_expression {
+        \\      property: property_identifier @name
+        \\    }
+        \\  }
+        \\  where {
+        \\    text(@name) in [
+        \\      "toBeNull",
+        \\      "toBeTruthy",
+        \\    ]
+        \\  }
+        \\  emit @match { message "weak assertion" }
+        \\}
+    , &diag);
+
+    const membership = file.rules[0].where[0].expression.membership;
+    try std.testing.expectEqual(false, membership.negated);
+    try std.testing.expectEqualStrings("text", membership.subject.*.call.name);
+    try std.testing.expectEqual(@as(usize, 2), membership.values.len);
+    try std.testing.expectEqualStrings("toBeNull", membership.values[0].value);
+    try std.testing.expectEqualStrings("toBeTruthy", membership.values[1].value);
+}
+
+test "parser: parses not in membership" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule allowlist {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: identifier @name
+        \\  }
+        \\  where {
+        \\    text(@name) not in ["toEqual", "toStrictEqual"]
+        \\  }
+        \\  emit @match { message "not allowlisted" }
+        \\}
+    , &diag);
+
+    const membership = file.rules[0].where[0].expression.membership;
+    try std.testing.expectEqual(true, membership.negated);
+    try std.testing.expectEqual(@as(usize, 2), membership.values.len);
+    try std.testing.expectEqualStrings("toEqual", membership.values[0].value);
+}
+
+test "parser: rejects an empty set literal" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.EmptySetLiteral, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: identifier @name
+        \\  }
+        \\  where {
+        \\    text(@name) in []
+        \\  }
+        \\  emit @match { message "bad" }
+        \\}
+    , &diag));
+}
+
 test "parser: parses count with a comparison" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

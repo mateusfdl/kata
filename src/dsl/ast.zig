@@ -102,6 +102,14 @@ pub const Expression = union(enum) {
     compare: Compare,
     logical: Logical,
     negate: Negate,
+    membership: Membership,
+};
+
+pub const Membership = struct {
+    subject: *const Expression,
+    values: []const StringLiteral,
+    negated: bool,
+    range: tokenizer.Range,
 };
 
 pub const SymbolLiteral = struct {
