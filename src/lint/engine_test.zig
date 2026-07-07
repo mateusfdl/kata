@@ -1234,6 +1234,39 @@ test "engine: no-void flags sub-expression void and exempts statements and void 
     try std.testing.expectEqual(@as(u32, 8), diags[2].range.start.line);
 }
 
+const kata_any_of_helper =
+    \\rule no-weak-assertions {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: member_expression {
+    \\      property: property_identifier @name
+    \\    }
+    \\  }
+    \\  where {
+    \\    anyOf(text(@name), "toBeNull", "toBeTruthy")
+    \\  }
+    \\  emit @match { message "weak assertion" }
+    \\}
+;
+
+test "engine: anyOf helper flags any listed matcher and nothing else" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-weak-assertions", kata_any_of_helper, .kata);
+    defer f.deinit();
+
+    const src =
+        "expect(a).toBeNull();\n" ++
+        "expect(b).toBeTruthy();\n" ++
+        "expect(c).toEqual(1);\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqualStrings("weak assertion", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 1), diags[1].range.start.line);
+}
+
 const kata_too_many_returns =
     \\rule too-many-returns {
     \\  lang ts

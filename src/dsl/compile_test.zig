@@ -591,6 +591,81 @@ test "compile: negated string disjunction becomes not-any-of" {
     try std.testing.expectEqual(@as(usize, 3), predicateArgs(predicates[0]).len);
 }
 
+test "compile: anyOf helper lowers to the any-of predicate" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule no-weak-assertions {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: member_expression {
+        \\      property: property_identifier @name
+        \\    }
+        \\  }
+        \\  where {
+        \\    anyOf(text(@name), "toBeDefined", "toBeNull", "toBeTruthy")
+        \\  }
+        \\  emit @match { message "weak assertion" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 1), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.any_of, std.meta.activeTag(predicates[0]));
+    try std.testing.expectEqual(@as(usize, 4), predicateArgs(predicates[0]).len);
+    try std.testing.expectEqualStrings("toBeDefined", predicateArgs(predicates[0])[1].string);
+    try std.testing.expectEqualStrings("toBeNull", predicateArgs(predicates[0])[2].string);
+    try std.testing.expectEqualStrings("toBeTruthy", predicateArgs(predicates[0])[3].string);
+}
+
+test "compile: noneOf helper lowers to the not-any-of predicate" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule allowlist {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: identifier @name
+        \\  }
+        \\  where {
+        \\    noneOf(text(@name), "info", "warn")
+        \\  }
+        \\  emit @match { message "not allowlisted" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 1), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.not_any_of, std.meta.activeTag(predicates[0]));
+    try std.testing.expectEqual(@as(usize, 3), predicateArgs(predicates[0]).len);
+}
+
+test "compile: anyOf without any values is rejected" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const got = compileDsl(gpa, arena.allocator(), .ts,
+        \\rule bad {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: identifier @name
+        \\  }
+        \\  where {
+        \\    anyOf(text(@name))
+        \\  }
+        \\  emit @match { message "bad" }
+        \\}
+    );
+    try std.testing.expectError(error.UnsupportedPredicate, got);
+}
+
 test "compile: disjunction across different captures is unsupported" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);

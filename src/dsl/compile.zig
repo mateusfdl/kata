@@ -492,8 +492,36 @@ fn callPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Pred
     if (std.mem.eql(u8, call.name, "matches")) return matchesPredicate(ctx, call, negated);
     if (std.mem.eql(u8, call.name, "capture")) return capturedPredicate(ctx, call, negated);
     if (std.mem.eql(u8, call.name, "glob")) return globPredicate(ctx, call, negated);
+    if (std.mem.eql(u8, call.name, "anyOf")) return anyOfHelperPredicate(ctx, call, negated);
+    if (std.mem.eql(u8, call.name, "noneOf")) return anyOfHelperPredicate(ctx, call, !negated);
     if (stringHelperOp(call.name, negated)) |op| return stringHelperPredicate(ctx, call, op);
     return null;
+}
+
+fn anyOfHelperPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
+    const fail_detail = "anyOf and noneOf expect (text(@capture), \"a\", \"b\", ...)";
+    if (call.args.len < 2) {
+        ctx.fail(fail_detail);
+        return error.UnsupportedPredicate;
+    }
+    const subject = (try textOperand(ctx, call.args[0])) orelse {
+        ctx.fail(fail_detail);
+        return error.UnsupportedPredicate;
+    };
+    if (subject != .capture) {
+        ctx.fail(fail_detail);
+        return error.UnsupportedPredicate;
+    }
+    const args = try ctx.arena.alloc(rule.PredicateOperand, call.args.len);
+    args[0] = subject;
+    for (call.args[1..], args[1..]) |arg, *slot| {
+        if (arg != .string) {
+            ctx.fail(fail_detail);
+            return error.UnsupportedPredicate;
+        }
+        slot.* = .{ .string = try ctx.arena.dupe(u8, arg.string.value) };
+    }
+    return if (negated) .{ .not_any_of = args } else .{ .any_of = args };
 }
 
 fn globPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {

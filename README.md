@@ -357,6 +357,16 @@ and path-like text against `*`/`**` patterns:
 where { glob(text(@src), "**/internal/**") }
 ```
 
+Set membership - "is one of these literals" - is spelled with the `anyOf` and
+`noneOf` helpers, which lower to the same `#any-of?` predicate that a chain of
+`text(@x) == "a" || text(@x) == "b"` folds into:
+
+```kata
+where { anyOf(text(@name), "toBeNull", "toBeTruthy", "toContain") }
+```
+
+`noneOf(...)` (equivalently `!anyOf(...)`) is the negated form.
+
 Syntax and compile errors fail at startup with the rule id and position:
 
 ```
