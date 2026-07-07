@@ -168,7 +168,7 @@ pub fn compile(
         .query = query,
         .patterns = patterns,
         .match_capture_id = rule.captureIdForName(query, rule.match_capture),
-        .needs_measures = needsMeasures(patterns),
+        .needs_measures = rule.needsMeasures(patterns),
         .nested_queries = ctx.nested_queries.items,
         .arena = arena_ptr,
         .allocator = allocator,
@@ -313,27 +313,6 @@ fn compilePattern(ctx: *Compiler, r: ast.Rule) Error!rule.PatternMeta {
             .warn => .warn,
         },
     };
-}
-
-fn needsMeasures(patterns: []const rule.PatternMeta) bool {
-    for (patterns) |pattern| {
-        for (pattern.predicates) |pred| {
-            if (predicateNeedsMeasures(pred)) return true;
-        }
-        if (pattern.message) |message| {
-            if (message == .segments) return true;
-        }
-    }
-    return false;
-}
-
-fn predicateNeedsMeasures(pred: rule.Predicate) bool {
-    if (pred.op == .where) return true;
-    const nested = pred.nested orelse return false;
-    for (nested.predicates) |inner| {
-        if (predicateNeedsMeasures(inner)) return true;
-    }
-    return false;
 }
 
 fn dupeAll(arena: std.mem.Allocator, items: []const []const u8) Error![]const []const u8 {

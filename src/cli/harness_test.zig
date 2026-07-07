@@ -127,7 +127,7 @@ test "harness: rule that fails to compile is invalid" {
 
     try std.testing.expectEqual(harness.Outcome.invalid, outcome);
     try std.testing.expectEqualStrings(
-        "kata test: rule ts/broken: unsupported predicate, #set! key, regex, or where expression\n",
+        "kata test: rule ts/broken: unknown predicate\n",
         s.err.written(),
     );
 }

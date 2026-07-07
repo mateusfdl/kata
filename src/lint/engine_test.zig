@@ -330,7 +330,8 @@ test "engine: unknown predicate is a hard error" {
     var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#nope? @match \"x\") (#set! message \"m\"))\n");
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "// hi\n", .go, null));
+    try std.testing.expectError(error.UnknownPredicate, f.engine.lint(gpa, "// hi\n", .go, null));
+    try std.testing.expectEqualStrings("unknown predicate", f.engine.compile_diag.detail);
 }
 
 test "engine: unknown set directive key is a hard error" {
@@ -338,7 +339,26 @@ test "engine: unknown set directive key is a hard error" {
     var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! mesage \"typo\"))\n");
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "// hi\n", .go, null));
+    try std.testing.expectError(error.InvalidSetDirective, f.engine.lint(gpa, "// hi\n", .go, null));
+    try std.testing.expectEqualStrings("invalid #set! directive", f.engine.compile_diag.detail);
+}
+
+test "engine: set directive with extra operands is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! message \"first\" \"second\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.InvalidSetDirective, f.engine.lint(gpa, "// hi\n", .go, null));
+    try std.testing.expectEqualStrings("invalid #set! directive", f.engine.compile_diag.detail);
+}
+
+test "engine: duplicate set directives are a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! message \"first\") (#set! message \"second\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.DuplicateSetDirective, f.engine.lint(gpa, "// hi\n", .go, null));
+    try std.testing.expectEqualStrings("duplicate #set! directive", f.engine.compile_diag.detail);
 }
 
 test "engine: go detects console output" {
@@ -544,7 +564,8 @@ test "engine: malformed where expression is a hard error" {
     var f = try Fixture.init(gpa, &.{.ts}, "bad", "((method_definition) @match (#where? \"(> (complexity @match) lots)\") (#set! message \"m\"))\n");
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
+    try std.testing.expectError(error.InvalidWhereExpression, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
+    try std.testing.expectEqualStrings("invalid where expression", f.engine.compile_diag.detail);
 }
 
 test "engine: where expression referencing unknown capture is a hard error" {
@@ -552,7 +573,8 @@ test "engine: where expression referencing unknown capture is a hard error" {
     var f = try Fixture.init(gpa, &.{.ts}, "bad", "((method_definition) @match (#where? \"(> (complexity @nope) 1)\") (#set! message \"m\"))\n");
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
+    try std.testing.expectError(error.InvalidWhereExpression, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
+    try std.testing.expectEqualStrings("invalid where expression", f.engine.compile_diag.detail);
 }
 
 test "engine: where without exactly one string argument is a hard error" {
@@ -560,7 +582,8 @@ test "engine: where without exactly one string argument is a hard error" {
     var f = try Fixture.init(gpa, &.{.ts}, "bad", "((method_definition) @match (#where? @match \"(> 1 0)\") (#set! message \"m\"))\n");
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
+    try std.testing.expectError(error.InvalidWhereExpression, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
+    try std.testing.expectEqualStrings("invalid where expression", f.engine.compile_diag.detail);
 }
 
 test "engine: severity defaults to error" {
@@ -609,7 +632,17 @@ test "engine: unknown severity value is a hard error" {
     var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! severity \"info\") (#set! message \"m\"))\n");
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleCompileFailed, f.engine.lint(gpa, "// hi\n", .go, null));
+    try std.testing.expectError(error.InvalidSetDirective, f.engine.lint(gpa, "// hi\n", .go, null));
+    try std.testing.expectEqualStrings("invalid #set! directive", f.engine.compile_diag.detail);
+}
+
+test "engine: duplicate severity directive is a hard error" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! severity \"warn\") (#set! severity \"error\") (#set! message \"m\"))\n");
+    defer f.deinit();
+
+    try std.testing.expectError(error.DuplicateSetDirective, f.engine.lint(gpa, "// hi\n", .go, null));
+    try std.testing.expectEqualStrings("duplicate #set! directive", f.engine.compile_diag.detail);
 }
 
 test "engine: warnings list demotes matching rule to warn" {

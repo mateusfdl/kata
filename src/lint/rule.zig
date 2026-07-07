@@ -143,6 +143,12 @@ pub const CompiledRule = struct {
 
 pub const CompileError = error{
     RuleCompileFailed,
+    UnknownPredicate,
+    InvalidPredicateOperand,
+    InvalidSetDirective,
+    DuplicateSetDirective,
+    InvalidRegex,
+    InvalidWhereExpression,
     UnclosedPlaceholder,
     StrayBraceInMessage,
     MalformedPlaceholder,
@@ -240,25 +246,28 @@ pub fn compile(
         .query = query,
         .patterns = patterns,
         .match_capture_id = captureIdForName(query, match_capture),
-        .needs_measures = anyWherePredicate(patterns) or anyMessageSegments(patterns),
+        .needs_measures = needsMeasures(patterns),
         .arena = arena_ptr,
         .allocator = allocator,
     };
 }
 
-fn anyWherePredicate(patterns: []const PatternMeta) bool {
+pub fn needsMeasures(patterns: []const PatternMeta) bool {
     for (patterns) |pattern| {
         for (pattern.predicates) |pred| {
-            if (pred.op == .where) return true;
+            if (predicateNeedsMeasures(pred)) return true;
         }
+        const message = pattern.message orelse continue;
+        if (message == .segments) return true;
     }
     return false;
 }
 
-fn anyMessageSegments(patterns: []const PatternMeta) bool {
-    for (patterns) |pattern| {
-        const message = pattern.message orelse continue;
-        if (message == .segments) return true;
+fn predicateNeedsMeasures(pred: Predicate) bool {
+    if (pred.op == .where) return true;
+    const nested = pred.nested orelse return false;
+    for (nested.predicates) |inner| {
+        if (predicateNeedsMeasures(inner)) return true;
     }
     return false;
 }
@@ -309,11 +318,12 @@ fn parsePattern(
     var message: ?[]const u8 = null;
     var exclude_paths: []const []const u8 = &.{};
     var severity: diagnostic.Severity = .@"error";
+    var severity_set = false;
 
     var start: usize = 0;
     for (steps, 0..) |step, idx| {
         if (step.type != .done) continue;
-        try parsePredicateGroup(arena, query, steps[start..idx], &predicates, &message, &exclude_paths, &severity);
+        try parsePredicateGroup(arena, query, steps[start..idx], &predicates, &message, &exclude_paths, &severity, &severity_set);
         start = idx + 1;
     }
 
@@ -344,7 +354,13 @@ fn compileDetail(err: anyerror) []const u8 {
         error.MalformedPlaceholder => "message placeholder must be {<measure> @capture}",
         error.UnknownPlaceholderMeasure => "unknown measure in message placeholder",
         error.UnknownPlaceholderCapture => "unknown capture in message placeholder",
-        else => "unsupported predicate, #set! key, regex, or where expression",
+        error.UnknownPredicate => "unknown predicate",
+        error.InvalidPredicateOperand => "invalid predicate operand",
+        error.InvalidSetDirective => "invalid #set! directive",
+        error.DuplicateSetDirective => "duplicate #set! directive",
+        error.InvalidRegex => "invalid regex",
+        error.InvalidWhereExpression => "invalid where expression",
+        else => "rule compile failed",
     };
 }
 
@@ -411,11 +427,12 @@ fn parsePredicateGroup(
     message: *?[]const u8,
     exclude_paths: *[]const []const u8,
     severity: *diagnostic.Severity,
+    severity_set: *bool,
 ) !void {
-    const op_name = opNameFromGroup(query, group) orelse return;
+    const op_name = opNameFromGroup(query, group) orelse return error.RuleCompileFailed;
 
     if (std.mem.eql(u8, op_name, "set!")) {
-        try absorbSetDirective(arena, query, group, message, exclude_paths, severity);
+        try absorbSetDirective(arena, query, group, message, exclude_paths, severity, severity_set);
         return;
     }
 
@@ -436,28 +453,33 @@ fn absorbSetDirective(
     message: *?[]const u8,
     exclude_paths: *[]const []const u8,
     severity: *diagnostic.Severity,
+    severity_set: *bool,
 ) !void {
-    if (group.len < 3) return error.RuleCompileFailed;
+    if (group.len != 3) return error.InvalidSetDirective;
 
-    const key = resolveStepText(query, group[1]) orelse return error.RuleCompileFailed;
-    const value = resolveStepText(query, group[2]) orelse return error.RuleCompileFailed;
+    const key = resolveStepText(query, group[1]) orelse return error.InvalidSetDirective;
+    const value = resolveStepText(query, group[2]) orelse return error.InvalidSetDirective;
 
     if (std.mem.eql(u8, key, message_property)) {
-        if (message.* == null) message.* = value;
+        if (message.* != null) return error.DuplicateSetDirective;
+        message.* = value;
         return;
     }
 
     if (std.mem.eql(u8, key, exclude_paths_property)) {
-        if (exclude_paths.*.len == 0) exclude_paths.* = try splitFields(arena, value);
+        if (exclude_paths.*.len != 0) return error.DuplicateSetDirective;
+        exclude_paths.* = try splitFields(arena, value);
         return;
     }
 
     if (std.mem.eql(u8, key, severity_property)) {
-        severity.* = std.meta.stringToEnum(diagnostic.Severity, value) orelse return error.RuleCompileFailed;
+        if (severity_set.*) return error.DuplicateSetDirective;
+        severity.* = std.meta.stringToEnum(diagnostic.Severity, value) orelse return error.InvalidSetDirective;
+        severity_set.* = true;
         return;
     }
 
-    return error.RuleCompileFailed;
+    return error.InvalidSetDirective;
 }
 
 fn splitFields(arena: std.mem.Allocator, value: []const u8) ![]const []const u8 {
@@ -475,12 +497,12 @@ fn buildPredicate(
     op_name: []const u8,
     group: []const ts.Query.PredicateStep,
 ) !Predicate {
+    const op = predicateOpFromName(op_name) orelse return error.UnknownPredicate;
     var args = try arena.alloc(PredicateOperand, group.len - 1);
 
     for (group[1..], 0..) |arg_step, j| {
-        args[j] = operandFromStep(query, arg_step);
+        args[j] = try operandFromStep(query, arg_step);
     }
-    const op = predicateOpFromName(op_name) orelse return error.RuleCompileFailed;
 
     return .{
         .op = op,
@@ -497,17 +519,17 @@ fn compileWhereArg(
     args: []const PredicateOperand,
 ) !?*const expr.Expr {
     if (op != .where) return null;
-    if (args.len != 1) return error.RuleCompileFailed;
+    if (args.len != 1) return error.InvalidWhereExpression;
 
     const source = switch (args[0]) {
         .string => |s| s,
-        .capture => return error.RuleCompileFailed,
+        .capture => return error.InvalidWhereExpression,
     };
     const resolver: QueryResolver = .{ .query = query };
 
     return expr.parse(arena, source, resolver) catch |err| switch (err) {
         error.OutOfMemory => error.OutOfMemory,
-        else => error.RuleCompileFailed,
+        else => error.InvalidWhereExpression,
     };
 }
 
@@ -522,21 +544,21 @@ const QueryResolver = struct {
 
 fn compileRegexArg(op: PredicateOp, args: []const PredicateOperand) !?mvzr.Regex {
     if (op != .match and op != .not_match) return null;
-    if (args.len != 2) return error.RuleCompileFailed;
+    if (args.len != 2) return error.InvalidRegex;
 
     const pattern = switch (args[1]) {
         .string => |s| s,
-        .capture => return error.RuleCompileFailed,
+        .capture => return error.InvalidRegex,
     };
 
-    return mvzr.compile(pattern) orelse error.RuleCompileFailed;
+    return mvzr.compile(pattern) orelse error.InvalidRegex;
 }
 
-fn operandFromStep(query: *ts.Query, step: ts.Query.PredicateStep) PredicateOperand {
+fn operandFromStep(query: *ts.Query, step: ts.Query.PredicateStep) CompileError!PredicateOperand {
     return switch (step.type) {
         .capture => .{ .capture = step.value_id },
-        .string => .{ .string = query.stringValueForId(step.value_id) orelse "" },
-        .done => .{ .string = "" },
+        .string => .{ .string = query.stringValueForId(step.value_id) orelse return error.InvalidPredicateOperand },
+        .done => error.InvalidPredicateOperand,
     };
 }
 
