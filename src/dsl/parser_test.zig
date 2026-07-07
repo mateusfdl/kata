@@ -857,6 +857,32 @@ test "parser: parses has without negation alongside expressions" {
     try std.testing.expectEqualStrings("panic", composition.matcher.where[0].compare.right.*.string.value);
 }
 
+test "parser: parses not parent composition" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule no-void {
+        \\  lang ts
+        \\  match unary_expression @match {
+        \\    operator: "void"
+        \\  }
+        \\  where {
+        \\    not parent @match expression_statement
+        \\  }
+        \\  emit @match { message "void is not allowed" }
+        \\}
+    , &diag);
+
+    const composition = file.rules[0].where[0].composition;
+    try std.testing.expectEqual(ast.CompositionOp.parent, composition.op);
+    try std.testing.expectEqual(true, composition.negated);
+    try std.testing.expectEqualStrings("match", composition.matcher.subject.name);
+    try std.testing.expectEqualStrings("expression_statement", composition.matcher.pattern.node_kind.symbol);
+    try std.testing.expectEqual(@as(usize, 0), composition.matcher.pattern.fields.len);
+}
+
 test "parser: parses count with a comparison" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

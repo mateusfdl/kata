@@ -49,6 +49,8 @@ pub fn evaluate(
             .not_has => |p| if (!try evalHas(p, match, ctx, true)) return false,
             .inside => |p| if (!try evalInside(p, match, ctx, false)) return false,
             .not_inside => |p| if (!try evalInside(p, match, ctx, true)) return false,
+            .parent => |p| if (!try evalParent(p, match, ctx, false)) return false,
+            .not_parent => |p| if (!try evalParent(p, match, ctx, true)) return false,
             .count => |p| if (!try evalCount(p, match, ctx)) return false,
         }
     }
@@ -100,6 +102,30 @@ fn evalInside(
     }
 
     return negate;
+}
+
+fn evalParent(
+    pred: rule.NestedPredicate,
+    match: ts.Query.Match,
+    ctx: EvalContext,
+    negate: bool,
+) std.mem.Allocator.Error!bool {
+    const cursor = ctx.nested_cursor orelse return false;
+    const subject = subjectNode(pred.args, match) orelse return false;
+
+    cursor.exec(pred.matcher.query, ctx.root);
+    while (cursor.nextMatch()) |nested_match| {
+        const candidate = findCaptureNode(pred.matcher.root_capture_id, nested_match) orelse continue;
+        if (!isDirectParent(candidate, subject)) continue;
+        if (try evaluate(pred.matcher.predicates, nested_match, ctx)) return !negate;
+    }
+
+    return negate;
+}
+
+fn isDirectParent(candidate: ts.Node, subject: ts.Node) bool {
+    const p = subject.parent() orelse return false;
+    return p.eql(candidate);
 }
 
 fn evalCount(

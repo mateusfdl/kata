@@ -32,7 +32,7 @@ fn predicateArgs(predicate: rule.Predicate) []const rule.PredicateOperand {
     return switch (predicate) {
         .eq, .not_eq, .any_of, .not_any_of, .starts_with, .not_starts_with, .ends_with, .not_ends_with, .contains, .not_contains, .glob, .not_glob, .captured, .not_captured => |args| args,
         .match, .not_match => |p| p.args,
-        .has, .not_has, .inside, .not_inside => |p| p.args,
+        .has, .not_has, .inside, .not_inside, .parent, .not_parent => |p| p.args,
         .count => |p| p.args,
         .where => unreachable,
     };
@@ -47,7 +47,7 @@ fn regexPredicate(predicate: rule.Predicate) rule.RegexPredicate {
 
 fn nestedPredicate(predicate: rule.Predicate) rule.NestedPredicate {
     return switch (predicate) {
-        .has, .not_has, .inside, .not_inside => |p| p,
+        .has, .not_has, .inside, .not_inside, .parent, .not_parent => |p| p,
         else => unreachable,
     };
 }
@@ -675,6 +675,34 @@ test "compile: reuses a bound nested root capture" {
     try std.testing.expectEqual(rule.PredicateOp.not_inside, std.meta.activeTag(predicates[0]));
     const nested = nestedPredicate(predicates[0]).matcher;
     try std.testing.expectEqual(rule.captureIdForName(nested.query, "cls"), nested.root_capture_id);
+}
+
+test "compile: translates not parent composition to a nested matcher" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule no-void {
+        \\  lang ts
+        \\  match unary_expression @match {
+        \\    operator: "void"
+        \\  }
+        \\  where {
+        \\    not parent @match expression_statement
+        \\  }
+        \\  emit @match { message "void is not allowed" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 1), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.not_parent, std.meta.activeTag(predicates[0]));
+    const nested = nestedPredicate(predicates[0]).matcher;
+    try std.testing.expect(nested.root_capture_id != rule.invalid_capture_id);
+    try std.testing.expectEqual(@as(usize, 1), compiled.nested_queries.len);
+    try std.testing.expect(!compiled.needs_measures);
 }
 
 test "compile: translates count with a comparison" {

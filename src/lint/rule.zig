@@ -72,6 +72,8 @@ pub const PredicateOp = enum {
     not_has,
     inside,
     not_inside,
+    parent,
+    not_parent,
     count,
 
     pub fn scmName(self: PredicateOp) ?[]const u8 {
@@ -153,6 +155,8 @@ pub const Predicate = union(PredicateOp) {
     not_has: NestedPredicate,
     inside: NestedPredicate,
     not_inside: NestedPredicate,
+    parent: NestedPredicate,
+    not_parent: NestedPredicate,
     count: CountPredicate,
 };
 
@@ -319,7 +323,7 @@ pub fn needsMeasures(patterns: []const PatternMeta) bool {
 fn predicateNeedsMeasures(pred: Predicate) bool {
     return switch (pred) {
         .where => true,
-        .has, .not_has, .inside, .not_inside => |nested| nestedMatcherNeedsMeasures(nested.matcher),
+        .has, .not_has, .inside, .not_inside, .parent, .not_parent => |nested| nestedMatcherNeedsMeasures(nested.matcher),
         .count => |count| nestedMatcherNeedsMeasures(count.matcher),
         else => false,
     };

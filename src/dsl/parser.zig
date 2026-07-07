@@ -53,6 +53,7 @@ const Keyword = enum {
     message,
     inside,
     has,
+    parent,
     count,
     not,
 };
@@ -381,7 +382,7 @@ pub const Parser = struct {
                 self.failAt(inner);
                 return error.ExpectedComposition;
             };
-            if (op != .inside and op != .has) {
+            if (op != .inside and op != .has and op != .parent) {
                 self.failAt(inner);
                 return error.ExpectedComposition;
             }
@@ -389,7 +390,12 @@ pub const Parser = struct {
         }
 
         return .{ .composition = .{
-            .op = if (op == .inside) .inside else .has,
+            .op = switch (op) {
+                .inside => .inside,
+                .has => .has,
+                .parent => .parent,
+                else => unreachable,
+            },
             .negated = negated,
             .matcher = try self.parseNestedMatcher(),
         } };
@@ -693,6 +699,7 @@ fn compositionKeyword(token: Token) ?Keyword {
     if (token.kind != .symbol) return null;
     if (isKeyword(token, .inside)) return .inside;
     if (isKeyword(token, .has)) return .has;
+    if (isKeyword(token, .parent)) return .parent;
     if (isKeyword(token, .count)) return .count;
     if (isKeyword(token, .not)) return .not;
     return null;

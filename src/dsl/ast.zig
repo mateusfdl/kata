@@ -77,6 +77,7 @@ pub const Composition = struct {
 pub const CompositionOp = enum {
     inside,
     has,
+    parent,
 };
 
 pub const CountPredicate = struct {

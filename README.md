@@ -318,8 +318,8 @@ fields and captures; when variants need different fields or messages, repeated
 rule blocks remain the tool.
 
 `where` blocks also take composition predicates - `inside`, `not inside`,
-`has`, `not has`, and `count` - to express containment rules that a single
-query cannot:
+`has`, `not has`, `parent`, `not parent`, and `count` - to express containment
+rules that a single query cannot:
 
 ```kata
 rule no-empty-catch {
@@ -336,6 +336,12 @@ rule no-empty-catch {
   emit @match { message "catch block must handle or rethrow the error" }
 }
 ```
+
+`inside` and `has` search the whole ancestor and descendant chains; `parent`
+is the direct-parent form, true only when the subject's immediate parent
+matches. `not parent @match expression_statement`, for example, keeps a `void`
+operator flagged as a sub-expression while exempting one used as a bare
+statement, which `not inside` (transitive) could not express.
 
 A nested matcher may bind its own captures and filter them with a trailing
 `where` block; those captures stay scoped to the nested matcher. `count`

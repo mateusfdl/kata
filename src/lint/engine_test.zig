@@ -1164,6 +1164,36 @@ test "engine: not has fires only when the subtree lacks a match" {
     try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
 }
 
+const kata_statement_call =
+    \\rule statement-call {
+    \\  lang ts
+    \\  match call_expression @match
+    \\  where {
+    \\    parent @match expression_statement
+    \\  }
+    \\  emit @match { message "call is a bare statement" }
+    \\}
+;
+
+test "engine: parent matches the direct parent, not any ancestor" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "statement-call", kata_statement_call, .kata);
+    defer f.deinit();
+
+    const src =
+        "foo();\n" ++
+        "bar(baz());\n" ++
+        "const x = qux();\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqualStrings("call is a bare statement", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 1), diags[1].range.start.line);
+    try std.testing.expectEqual(@as(u32, 0), diags[1].range.start.column);
+}
+
 const kata_too_many_returns =
     \\rule too-many-returns {
     \\  lang ts

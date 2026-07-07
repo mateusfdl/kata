@@ -333,6 +333,7 @@ fn compositionPredicate(ctx: *Compiler, composition: ast.Composition) Error!rule
     const op: rule.PredicateOp = switch (composition.op) {
         .inside => if (composition.negated) .not_inside else .inside,
         .has => if (composition.negated) .not_has else .has,
+        .parent => if (composition.negated) .not_parent else .parent,
     };
     const pred: rule.NestedPredicate = .{
         .args = try subjectArgs(ctx, composition.matcher),
@@ -343,6 +344,8 @@ fn compositionPredicate(ctx: *Compiler, composition: ast.Composition) Error!rule
         .not_inside => .{ .not_inside = pred },
         .has => .{ .has = pred },
         .not_has => .{ .not_has = pred },
+        .parent => .{ .parent = pred },
+        .not_parent => .{ .not_parent = pred },
         else => unreachable,
     };
 }
