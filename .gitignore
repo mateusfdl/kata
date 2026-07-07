@@ -6,3 +6,4 @@ zig-pkg/
 bin/
 dist/
 node_modules/
+.pi/
