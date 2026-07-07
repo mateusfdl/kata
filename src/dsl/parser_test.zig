@@ -988,6 +988,87 @@ test "parser: parses inside composition with a nested where" {
     try std.testing.expectEqualStrings("Logger", nested.right.*.string.value);
 }
 
+test "parser: parses any groups of composition predicates" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule contextual {
+        \\  lang go
+        \\  match call_expression @match {
+        \\    function: identifier @fn
+        \\  }
+        \\  where {
+        \\    any {
+        \\      inside @match if_statement
+        \\      inside @match for_statement
+        \\    }
+        \\  }
+        \\  emit @match { message "contextual" }
+        \\}
+    , &diag);
+
+    const group = file.rules[0].where[0].group;
+    try std.testing.expectEqual(ast.GroupOp.any, group.op);
+    try std.testing.expectEqual(@as(usize, 2), group.predicates.len);
+    try std.testing.expectEqual(ast.CompositionOp.inside, group.predicates[0].composition.op);
+    try std.testing.expectEqual(ast.CompositionOp.inside, group.predicates[1].composition.op);
+    try std.testing.expectEqualStrings("if_statement", group.predicates[0].composition.matcher.pattern.node_kind.symbol);
+}
+
+test "parser: parses all groups nested inside any" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule contextual {
+        \\  lang go
+        \\  match call_expression @match {
+        \\    function: identifier @fn
+        \\  }
+        \\  where {
+        \\    any {
+        \\      all {
+        \\        inside @match if_statement
+        \\        text(@fn) == "panic"
+        \\      }
+        \\      text(@fn) == "log"
+        \\    }
+        \\  }
+        \\  emit @match { message "contextual" }
+        \\}
+    , &diag);
+
+    const group = file.rules[0].where[0].group;
+    try std.testing.expectEqual(ast.GroupOp.any, group.op);
+    try std.testing.expectEqual(@as(usize, 2), group.predicates.len);
+    const inner = group.predicates[0].group;
+    try std.testing.expectEqual(ast.GroupOp.all, inner.op);
+    try std.testing.expectEqual(@as(usize, 2), inner.predicates.len);
+    try std.testing.expectEqual(ast.CompositionOp.inside, inner.predicates[0].composition.op);
+    try std.testing.expectEqual(ast.CompareOp.eq, inner.predicates[1].expression.compare.op);
+    try std.testing.expectEqual(ast.CompareOp.eq, group.predicates[1].expression.compare.op);
+}
+
+test "parser: rejects empty predicate groups" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.EmptyWhere, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang go
+        \\  match call_expression @match
+        \\  where {
+        \\    any { }
+        \\  }
+        \\  emit @match { message "bad" }
+        \\}
+    , &diag));
+}
+
 test "parser: parses has with an alternation matcher" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

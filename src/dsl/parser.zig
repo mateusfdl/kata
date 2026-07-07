@@ -60,6 +60,8 @@ const Keyword = enum {
     count,
     not,
     in,
+    any,
+    all,
 };
 
 const ParsedNodeKind = struct {
@@ -377,10 +379,45 @@ pub const Parser = struct {
     }
 
     fn parsePredicate(self: *Parser) Error!ast.Predicate {
+        if (try self.groupOp()) |op| return self.parseGroupPredicate(op);
         if (compositionKeyword(self.current)) |keyword| {
             return self.parseCompositionPredicate(keyword);
         }
         return .{ .expression = try self.parseExpression() };
+    }
+
+    fn groupOp(self: *Parser) Error!?ast.GroupOp {
+        if (self.current.kind != .symbol) return null;
+        const op: ast.GroupOp = if (isKeyword(self.current, .any))
+            .any
+        else if (isKeyword(self.current, .all))
+            .all
+        else
+            return null;
+        if ((try self.peek()).kind != .left_brace) return null;
+        return op;
+    }
+
+    fn parseGroupPredicate(self: *Parser, op: ast.GroupOp) Error!ast.Predicate {
+        try self.advance();
+        const start = try self.expect(.left_brace, error.ExpectedLeftBrace);
+        var predicates: std.ArrayList(ast.Predicate) = .empty;
+        while (self.current.kind != .right_brace) {
+            if (self.current.kind == .eof) {
+                self.failAt(self.current);
+                return error.ExpectedRightBrace;
+            }
+            try predicates.append(self.allocator, try self.parsePredicate());
+        }
+        try self.advance();
+        if (predicates.items.len == 0) {
+            self.failAt(start);
+            return error.EmptyWhere;
+        }
+        return .{ .group = .{
+            .op = op,
+            .predicates = try predicates.toOwnedSlice(self.allocator),
+        } };
     }
 
     fn parseCompositionPredicate(self: *Parser, keyword: Keyword) Error!ast.Predicate {

@@ -75,6 +75,8 @@ pub const PredicateOp = enum {
     parent,
     not_parent,
     count,
+    any_group,
+    all_group,
 
     pub fn scmName(self: PredicateOp) ?[]const u8 {
         return switch (self) {
@@ -158,6 +160,8 @@ pub const Predicate = union(PredicateOp) {
     parent: NestedPredicate,
     not_parent: NestedPredicate,
     count: CountPredicate,
+    any_group: []Predicate,
+    all_group: []Predicate,
 };
 
 pub const Placeholder = message_mod.Placeholder;
@@ -325,8 +329,16 @@ fn predicateNeedsMeasures(pred: Predicate) bool {
         .where => true,
         .has, .not_has, .inside, .not_inside, .parent, .not_parent => |nested| nestedMatcherNeedsMeasures(nested.matcher),
         .count => |count| nestedMatcherNeedsMeasures(count.matcher),
+        .any_group, .all_group => |members| groupNeedsMeasures(members),
         else => false,
     };
+}
+
+fn groupNeedsMeasures(members: []const Predicate) bool {
+    for (members) |member| {
+        if (predicateNeedsMeasures(member)) return true;
+    }
+    return false;
 }
 
 fn nestedMatcherNeedsMeasures(nested: *const NestedMatcher) bool {

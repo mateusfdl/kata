@@ -67,6 +67,17 @@ pub const Predicate = union(enum) {
     expression: Expression,
     composition: Composition,
     count: CountPredicate,
+    group: Group,
+};
+
+pub const Group = struct {
+    op: GroupOp,
+    predicates: []const Predicate,
+};
+
+pub const GroupOp = enum {
+    any,
+    all,
 };
 
 pub const Composition = struct {

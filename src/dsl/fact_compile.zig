@@ -190,6 +190,10 @@ fn translatePredicate(
             ctx.fail("composition predicates are not supported in project rules");
             return error.UnsupportedPredicate;
         },
+        .group => {
+            ctx.fail("predicate groups are not supported in project rules");
+            return error.UnsupportedPredicate;
+        },
     }
 }
 

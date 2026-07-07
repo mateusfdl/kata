@@ -380,7 +380,28 @@ fn translatePredicate(
         .expression => |expression| try translateExpression(ctx, expression, out),
         .composition => |composition| try out.append(ctx.arena, try compositionPredicate(ctx, composition)),
         .count => |count| try out.append(ctx.arena, try countPredicate(ctx, count)),
+        .group => |group| try out.append(ctx.arena, try groupPredicate(ctx, group)),
     }
+}
+
+fn groupPredicate(ctx: *Compiler, group: ast.Group) Error!rule.Predicate {
+    var members: std.ArrayList(rule.Predicate) = .empty;
+    if (group.op == .all) {
+        for (group.predicates) |member| {
+            try translatePredicate(ctx, member, &members);
+        }
+        return .{ .all_group = try members.toOwnedSlice(ctx.arena) };
+    }
+    for (group.predicates) |member| {
+        var conjuncts: std.ArrayList(rule.Predicate) = .empty;
+        try translatePredicate(ctx, member, &conjuncts);
+        if (conjuncts.items.len == 1) {
+            try members.append(ctx.arena, conjuncts.items[0]);
+        } else {
+            try members.append(ctx.arena, .{ .all_group = try conjuncts.toOwnedSlice(ctx.arena) });
+        }
+    }
+    return .{ .any_group = try members.toOwnedSlice(ctx.arena) };
 }
 
 fn compositionPredicate(ctx: *Compiler, composition: ast.Composition) Error!rule.Predicate {

@@ -34,7 +34,14 @@ fn predicateArgs(predicate: rule.Predicate) []const rule.PredicateOperand {
         .match, .not_match => |p| p.args,
         .has, .not_has, .inside, .not_inside, .parent, .not_parent => |p| p.args,
         .count => |p| p.args,
-        .where => unreachable,
+        .where, .any_group, .all_group => unreachable,
+    };
+}
+
+fn groupMembers(predicate: rule.Predicate) []const rule.Predicate {
+    return switch (predicate) {
+        .any_group, .all_group => |members| members,
+        else => unreachable,
     };
 }
 
@@ -713,6 +720,178 @@ test "compile: nested matchers accept alternations with fields" {
     try std.testing.expectEqual(rule.PredicateOp.has, std.meta.activeTag(predicates[0]));
     try std.testing.expect(std.meta.activeTag(predicates[0]) == .has or std.meta.activeTag(predicates[0]) == .count);
     try std.testing.expectEqual(@as(usize, 1), compiled.nested_queries.len);
+}
+
+test "compile: any groups lower to any_group predicates" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule contextual-panic {
+        \\  lang go
+        \\  match call_expression @match {
+        \\    function: identifier @fn
+        \\  }
+        \\  where {
+        \\    text(@fn) == "panic"
+        \\    any {
+        \\      inside @match if_statement
+        \\      inside @match for_statement
+        \\    }
+        \\  }
+        \\  emit @match { message "contextual panic" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 2), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.eq, std.meta.activeTag(predicates[0]));
+    try std.testing.expectEqual(rule.PredicateOp.any_group, std.meta.activeTag(predicates[1]));
+    const members = groupMembers(predicates[1]);
+    try std.testing.expectEqual(@as(usize, 2), members.len);
+    try std.testing.expectEqual(rule.PredicateOp.inside, std.meta.activeTag(members[0]));
+    try std.testing.expectEqual(rule.PredicateOp.inside, std.meta.activeTag(members[1]));
+}
+
+test "compile: conjunction members stay atomic inside any groups" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule paired-names {
+        \\  lang go
+        \\  match binary_expression @match {
+        \\    left: identifier @left
+        \\    right: identifier @right
+        \\  }
+        \\  where {
+        \\    any {
+        \\      text(@left) == "a" && text(@right) == "b"
+        \\      text(@left) == "c"
+        \\    }
+        \\  }
+        \\  emit @match { message "paired names" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 1), predicates.len);
+    const members = groupMembers(predicates[0]);
+    try std.testing.expectEqual(@as(usize, 2), members.len);
+    try std.testing.expectEqual(rule.PredicateOp.all_group, std.meta.activeTag(members[0]));
+    try std.testing.expectEqual(@as(usize, 2), groupMembers(members[0]).len);
+    try std.testing.expectEqual(rule.PredicateOp.eq, std.meta.activeTag(members[1]));
+}
+
+test "compile: any group matches when either composition holds" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule contextual-panic {
+        \\  lang go
+        \\  match call_expression @match {
+        \\    function: identifier @fn
+        \\  }
+        \\  where {
+        \\    text(@fn) == "panic"
+        \\    any {
+        \\      inside @match if_statement
+        \\      inside @match for_statement
+        \\    }
+        \\  }
+        \\  emit @match { message "contextual panic" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const src =
+        "package main\n\n" ++
+        "func a(x bool) {\n" ++
+        "\tif x {\n" ++
+        "\t\tpanic(\"in if\")\n" ++
+        "\t}\n" ++
+        "\tfor {\n" ++
+        "\t\tpanic(\"in for\")\n" ++
+        "\t}\n" ++
+        "\tpanic(\"bare\")\n" ++
+        "}\n";
+    const diags = try runCompiled(gpa, &compiled, .go, src, null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqual(@as(u32, 4), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 7), diags[1].range.start.line);
+}
+
+test "compile: all groups nested in any evaluate as conjunctions" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule guarded-calls {
+        \\  lang go
+        \\  match call_expression @match {
+        \\    function: identifier @fn
+        \\  }
+        \\  where {
+        \\    any {
+        \\      all {
+        \\        inside @match if_statement
+        \\        text(@fn) == "panic"
+        \\      }
+        \\      text(@fn) == "recover"
+        \\    }
+        \\  }
+        \\  emit @match { message "guarded call" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const src =
+        "package main\n\n" ++
+        "func a(x bool) {\n" ++
+        "\tif x {\n" ++
+        "\t\tpanic(\"guarded\")\n" ++
+        "\t}\n" ++
+        "\tpanic(\"bare\")\n" ++
+        "\trecover()\n" ++
+        "}\n";
+    const diags = try runCompiled(gpa, &compiled, .go, src, null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqual(@as(u32, 4), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 7), diags[1].range.start.line);
+}
+
+test "compile: measures inside groups set needs_measures" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule complex-or-named {
+        \\  lang go
+        \\  match function_declaration @match {
+        \\    name: identifier @name
+        \\  }
+        \\  where {
+        \\    any {
+        \\      complexity(@match) > 5
+        \\      text(@name) == "legacy"
+        \\    }
+        \\  }
+        \\  emit @match { message "complex or named" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    try std.testing.expectEqual(true, compiled.needs_measures);
 }
 
 test "compile: skips project rules and other languages" {

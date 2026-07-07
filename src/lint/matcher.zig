@@ -27,34 +27,55 @@ pub fn evaluate(
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
     for (predicates) |pred| {
-        switch (pred) {
-            .eq => |args| if (!evalEq(args, match, ctx.source, false)) return false,
-            .not_eq => |args| if (!evalEq(args, match, ctx.source, true)) return false,
-            .any_of => |args| if (!evalAnyOf(args, match, ctx.source, false)) return false,
-            .not_any_of => |args| if (!evalAnyOf(args, match, ctx.source, true)) return false,
-            .match => |p| if (!evalMatch(p, match, ctx.source, false)) return false,
-            .not_match => |p| if (!evalMatch(p, match, ctx.source, true)) return false,
-            .starts_with => |args| if (!evalStringHelper(args, match, ctx.source, .starts_with, false)) return false,
-            .not_starts_with => |args| if (!evalStringHelper(args, match, ctx.source, .starts_with, true)) return false,
-            .ends_with => |args| if (!evalStringHelper(args, match, ctx.source, .ends_with, false)) return false,
-            .not_ends_with => |args| if (!evalStringHelper(args, match, ctx.source, .ends_with, true)) return false,
-            .contains => |args| if (!evalStringHelper(args, match, ctx.source, .contains, false)) return false,
-            .not_contains => |args| if (!evalStringHelper(args, match, ctx.source, .contains, true)) return false,
-            .glob => |args| if (!evalStringHelper(args, match, ctx.source, .glob, false)) return false,
-            .not_glob => |args| if (!evalStringHelper(args, match, ctx.source, .glob, true)) return false,
-            .captured => |args| if (!evalCaptured(args, match, false)) return false,
-            .not_captured => |args| if (!evalCaptured(args, match, true)) return false,
-            .where => |where| if (!try evalWhere(where, match, ctx)) return false,
-            .has => |p| if (!try evalHas(p, match, ctx, false)) return false,
-            .not_has => |p| if (!try evalHas(p, match, ctx, true)) return false,
-            .inside => |p| if (!try evalInside(p, match, ctx, false)) return false,
-            .not_inside => |p| if (!try evalInside(p, match, ctx, true)) return false,
-            .parent => |p| if (!try evalParent(p, match, ctx, false)) return false,
-            .not_parent => |p| if (!try evalParent(p, match, ctx, true)) return false,
-            .count => |p| if (!try evalCount(p, match, ctx)) return false,
-        }
+        if (!try evalOne(pred, match, ctx)) return false;
     }
     return true;
+}
+
+fn evalOne(
+    pred: rule.Predicate,
+    match: ts.Query.Match,
+    ctx: EvalContext,
+) std.mem.Allocator.Error!bool {
+    return switch (pred) {
+        .eq => |args| evalEq(args, match, ctx.source, false),
+        .not_eq => |args| evalEq(args, match, ctx.source, true),
+        .any_of => |args| evalAnyOf(args, match, ctx.source, false),
+        .not_any_of => |args| evalAnyOf(args, match, ctx.source, true),
+        .match => |p| evalMatch(p, match, ctx.source, false),
+        .not_match => |p| evalMatch(p, match, ctx.source, true),
+        .starts_with => |args| evalStringHelper(args, match, ctx.source, .starts_with, false),
+        .not_starts_with => |args| evalStringHelper(args, match, ctx.source, .starts_with, true),
+        .ends_with => |args| evalStringHelper(args, match, ctx.source, .ends_with, false),
+        .not_ends_with => |args| evalStringHelper(args, match, ctx.source, .ends_with, true),
+        .contains => |args| evalStringHelper(args, match, ctx.source, .contains, false),
+        .not_contains => |args| evalStringHelper(args, match, ctx.source, .contains, true),
+        .glob => |args| evalStringHelper(args, match, ctx.source, .glob, false),
+        .not_glob => |args| evalStringHelper(args, match, ctx.source, .glob, true),
+        .captured => |args| evalCaptured(args, match, false),
+        .not_captured => |args| evalCaptured(args, match, true),
+        .where => |where| evalWhere(where, match, ctx),
+        .has => |p| evalHas(p, match, ctx, false),
+        .not_has => |p| evalHas(p, match, ctx, true),
+        .inside => |p| evalInside(p, match, ctx, false),
+        .not_inside => |p| evalInside(p, match, ctx, true),
+        .parent => |p| evalParent(p, match, ctx, false),
+        .not_parent => |p| evalParent(p, match, ctx, true),
+        .count => |p| evalCount(p, match, ctx),
+        .any_group => |members| evalAnyGroup(members, match, ctx),
+        .all_group => |members| evaluate(members, match, ctx),
+    };
+}
+
+fn evalAnyGroup(
+    members: []const rule.Predicate,
+    match: ts.Query.Match,
+    ctx: EvalContext,
+) std.mem.Allocator.Error!bool {
+    for (members) |member| {
+        if (try evalOne(member, match, ctx)) return true;
+    }
+    return false;
 }
 
 fn evalWhere(

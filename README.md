@@ -385,6 +385,27 @@ compares the number of nested matches: `count @match return_statement > 3`.
 A node never contains itself: matches spanning exactly the subject node's
 range do not count for `inside`, `has`, or `count`.
 
+Predicates in a `where` block are conjoined. `any { }` groups predicates into
+a disjunction - the match survives when at least one member passes - and
+`all { }` groups them back into a conjunction, useful inside an `any`. Groups
+nest, take any predicate as a member (expressions, compositions, `count`, or
+other groups), and are the only way composition predicates participate in an
+OR:
+
+```kata
+where {
+  text(@fn) == "panic"
+  any {
+    inside @match if_statement
+    inside @match for_statement
+  }
+}
+```
+
+flags a `panic` call under an `if` or a `for`, but not a bare one. An `&&`
+expression as a member of `any` stays one disjunct. Empty groups are
+rejected at parse time.
+
 String predicates cover exact and pattern matching: `==`, `!=`, `matches`
 (regex), `startsWith`, `endsWith`, `contains`, and `glob`, which matches paths
 and path-like text against `*`/`**` patterns:
