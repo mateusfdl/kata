@@ -1194,6 +1194,46 @@ test "engine: parent matches the direct parent, not any ancestor" {
     try std.testing.expectEqual(@as(u32, 0), diags[1].range.start.column);
 }
 
+const kata_no_void =
+    \\rule no-void {
+    \\  lang ts
+    \\  match unary_expression @match {
+    \\    operator: "void"
+    \\  }
+    \\  where {
+    \\    text(@match) != "void 0"
+    \\    text(@match) != "void(0)"
+    \\    not parent @match expression_statement
+    \\  }
+    \\  emit @match { message "void operator is not allowed - use undefined or remove it" }
+    \\}
+;
+
+test "engine: no-void flags sub-expression void and exempts statements and void 0" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-void", kata_no_void, .kata);
+    defer f.deinit();
+
+    const src =
+        "if (x === void 42) {\n" ++
+        "}\n" ++
+        "doSomethingElse(void doSomething());\n" ++
+        "const a = void 0;\n" ++
+        "const b = void(0);\n" ++
+        "void function () { return 1; }();\n" ++
+        "void (async () => {})();\n" ++
+        "void runPromise();\n" ++
+        "const c = void promiseThing;\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 3), diags.len);
+    try std.testing.expectEqualStrings("void operator is not allowed - use undefined or remove it", diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 2), diags[1].range.start.line);
+    try std.testing.expectEqual(@as(u32, 8), diags[2].range.start.line);
+}
+
 const kata_too_many_returns =
     \\rule too-many-returns {
     \\  lang ts
