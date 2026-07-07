@@ -35,6 +35,7 @@ pub fn run(
     if (index_ptr) |idx| counts.add(try reportProjectViolations(gpa, engine, project_rules, fact_rules, idx, reporter));
 
     try reporter.finish(counts);
+
     return if (counts.violations > 0) .violations else .clean;
 }
 
@@ -80,6 +81,7 @@ fn checkDir(
     };
 
     _ = try fs.source.walkFiles(io, gpa, target, visit, visitFile);
+
     return counts;
 }
 
@@ -105,7 +107,9 @@ fn reportFile(
     try reporter.file(path, source, diagnostics);
 
     var counts: reports.Counts = .{ .files = 1 };
+
     tally(&counts, diagnostics);
+
     return counts;
 }
 
@@ -122,12 +126,14 @@ fn reportProjectViolations(
     const yaml_violations = try lint.project_rule.evaluate(arena.allocator(), project_rules, engine.warnings, index, null);
     const fact_violations = try lint.fact_rule.evaluate(arena.allocator(), fact_rules, engine.warnings, index, null);
     const violations = try std.mem.concat(arena.allocator(), lint.project_rule.Violation, &.{ yaml_violations, fact_violations });
+
     std.mem.sort(lint.project_rule.Violation, violations, {}, lint.project_rule.violationLessThan);
 
     try reporter.project(violations);
 
     var counts: reports.Counts = .{};
     for (violations) |v| tally(&counts, &.{v.diagnostic});
+
     return counts;
 }
 

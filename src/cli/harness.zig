@@ -47,6 +47,7 @@ pub fn run(
         try stderr.flush();
         return .invalid;
     };
+
     for (fixtures) |fixture| {
         totals.fixtures += 1;
         totals.failures += try checkFixture(arena, &engine, fixture.lang, fixture.source, fixture.path, stdout);
@@ -54,6 +55,7 @@ pub fn run(
 
     try stdout.print("tested {d} fixtures, {d} failures\n", .{ totals.fixtures, totals.failures });
     try stdout.flush();
+
     return if (totals.failures > 0) .failures else .pass;
 }
 
@@ -73,16 +75,23 @@ fn checkFixture(
 
     for (diagnostics) |d| {
         const line = d.range.start.line;
+
         if (containsLine(annotation_lines.items, line)) continue;
         if (claimExpectation(expectations.items, line, d.rule_id)) continue;
+
         try stdout.print("{s}:{d} unexpected [{s}]\n", .{ path, line + 1, d.rule_id });
+
         failures += 1;
     }
+
     for (expectations.items) |e| {
         if (e.matched) continue;
+
         try stdout.print("{s}:{d} missing [{s}]\n", .{ path, e.line + 1, e.rule_id });
+
         failures += 1;
     }
+
     return failures;
 }
 
@@ -101,14 +110,20 @@ fn parseAnnotations(
 ) !usize {
     var annotations: std.ArrayList(Annotation) = .empty;
     var line_no: u32 = 0;
+
     var lines = std.mem.splitScalar(u8, source, '\n');
     while (lines.next()) |raw_line| : (line_no += 1) {
         const line = std.mem.trim(u8, raw_line, " \t\r");
+
         if (!std.mem.startsWith(u8, line, expect_marker)) continue;
+
         try annotation_lines.append(arena, line_no);
+
         var collected: std.ArrayList([]const u8) = .empty;
         var ids = std.mem.tokenizeAny(u8, line[expect_marker.len..], ", \t");
+
         while (ids.next()) |id| try collected.append(arena, id);
+
         try annotations.append(arena, .{ .line = line_no, .ids = try collected.toOwnedSlice(arena) });
     }
 
@@ -119,20 +134,28 @@ fn parseAnnotations(
     for (annotations.items) |annotation| {
         if (annotation.ids.len == 0) {
             try stdout.print("{s}:{d} empty kata-expect annotation\n", .{ path, annotation.line + 1 });
+
             failures += 1;
+
             continue;
         }
+
         var target = annotation.line + 1;
         while (containsLine(annotation_lines.items, target)) target += 1;
+
         if (target >= total) {
             try stdout.print("{s}:{d} dangling kata-expect annotation\n", .{ path, annotation.line + 1 });
+
             failures += 1;
+
             continue;
         }
+
         for (annotation.ids) |id| {
             try expectations.append(arena, .{ .line = target, .rule_id = id });
         }
     }
+
     return failures;
 }
 
@@ -140,6 +163,7 @@ fn containsLine(lines: []const u32, line: u32) bool {
     for (lines) |l| {
         if (l == line) return true;
     }
+
     return false;
 }
 
@@ -147,8 +171,11 @@ fn claimExpectation(expectations: []Expectation, line: u32, rule_id: []const u8)
     for (expectations) |*e| {
         if (e.matched or e.line != line) continue;
         if (!std.mem.eql(u8, e.rule_id, rule_id)) continue;
+
         e.matched = true;
+
         return true;
     }
+
     return false;
 }

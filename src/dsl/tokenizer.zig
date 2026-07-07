@@ -23,9 +23,11 @@ pub const TokenKind = enum {
     colon,
     comma,
     capture,
+    fragment,
     symbol,
     string,
     number,
+    equal,
     equal_equal,
     bang_equal,
     greater,
@@ -52,6 +54,7 @@ pub const Diagnostic = struct {
 pub const Error = error{
     InvalidCharacter,
     InvalidCapture,
+    InvalidFragment,
     InvalidStringEscape,
     UnclosedString,
     InvalidOperator,
@@ -88,7 +91,8 @@ pub const Tokenizer = struct {
             ',' => return self.advanceToken(.comma, start, start_index),
             '"' => return self.string(start, start_index),
             '@' => return self.capture(start, start_index),
-            '=' => return self.requiredPair(.equal_sign, .equal_equal, start, start_index),
+            '$' => return self.fragment(start, start_index),
+            '=' => return self.optionalEquals(.equal, .equal_equal, start, start_index),
             '!' => return self.bang(start, start_index),
             '>' => return self.optionalEquals(.greater, .greater_equal, start, start_index),
             '<' => return self.optionalEquals(.less, .less_equal, start, start_index),
@@ -145,6 +149,16 @@ pub const Tokenizer = struct {
         }
         self.consumeSymbolChars();
         return self.token(.capture, start, start_index);
+    }
+
+    fn fragment(self: *Tokenizer, start: Position, start_index: usize) Error!Token {
+        self.advance();
+        if (self.index >= self.source.len or !bytes.isSymbol(self.source[self.index])) {
+            self.failAt(start);
+            return error.InvalidFragment;
+        }
+        self.consumeSymbolChars();
+        return self.token(.fragment, start, start_index);
     }
 
     fn symbol(self: *Tokenizer, start: Position, start_index: usize) Token {

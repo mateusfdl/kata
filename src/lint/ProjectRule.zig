@@ -43,9 +43,9 @@ pub const Violation = struct {
     diagnostic: diagnostic.Diagnostic,
 };
 
-/// Evaluate project rules against the index. `path_filter` restricts the
+/// evaluate project rules against the index. `path_filter` restricts the
 /// output to violations in that file while still using the whole index for
-/// cross-file context (callee types) — violations are always attributed to
+/// cross-file context (callee types), violations are always attributed to
 /// the file containing the offending call or import.
 pub fn evaluate(
     allocator: std.mem.Allocator,
@@ -101,7 +101,9 @@ fn evaluateRestrictedCallers(
 
     if (path_filter) |path| {
         const file = index.get(path) orelse return;
+
         try restrictedCallsInFile(allocator, rule_id, restricted, file, &callee_types, out);
+
         return;
     }
 
@@ -153,6 +155,7 @@ fn evaluateImportBoundary(
     if (path_filter) |path| {
         const file = index.get(path) orelse return;
         try importBoundaryInFile(allocator, rule_id, boundary, file, out);
+
         return;
     }
 
@@ -172,6 +175,7 @@ fn importBoundaryInFile(
     if (!glob.match(boundary.from, file.path)) return;
     for (file.imports) |im| {
         if (!try importDenied(allocator, boundary.deny, file.path, file.lang, im.source)) continue;
+
         try out.append(allocator, .{
             .path = file.path,
             .diagnostic = .{
@@ -196,6 +200,7 @@ fn importDenied(
     specifier: []const u8,
 ) !bool {
     const resolved = (try facts.resolveImportSource(allocator, lang, importer_path, specifier)) orelse return false;
+
     return glob.match(deny, resolved);
 }
 
@@ -205,9 +210,12 @@ pub fn violationLessThan(_: void, a: Violation, b: Violation) bool {
         .gt => return false,
         .eq => {},
     }
+
     if (a.diagnostic.range.start.line != b.diagnostic.range.start.line)
         return a.diagnostic.range.start.line < b.diagnostic.range.start.line;
+
     if (a.diagnostic.range.start.column != b.diagnostic.range.start.column)
         return a.diagnostic.range.start.column < b.diagnostic.range.start.column;
+
     return std.mem.order(u8, a.diagnostic.rule_id, b.diagnostic.rule_id) == .lt;
 }

@@ -345,6 +345,158 @@ test "parser: parses nested alternation matchers" {
     try std.testing.expectEqualStrings("exit", field.pattern.capture.?.name);
 }
 
+test "parser: expands pattern fragments at the match root" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\pattern callable = [function_declaration, method_declaration]
+        \\rule uses-fragment {
+        \\  lang go
+        \\  match $callable @match {
+        \\    body: block
+        \\  }
+        \\  emit @match { message "callable" }
+        \\}
+    , &diag);
+
+    const node = file.rules[0].match.?.node;
+    try std.testing.expectEqualStrings("match", node.capture.?.name);
+    const branches = node.node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 2), branches.len);
+    try std.testing.expectEqualStrings("function_declaration", branches[0].node_kind.symbol);
+    try std.testing.expectEqualStrings("method_declaration", branches[1].node_kind.symbol);
+    try std.testing.expectEqual(@as(usize, 1), node.fields.len);
+    try expectFieldRelation("body", node.fields[0].relation);
+}
+
+test "parser: expands pattern fragments in field position" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\pattern repoReceiver = [type_identifier @recv, pointer_type { child: type_identifier @recv }]
+        \\rule repo-rule {
+        \\  lang go
+        \\  match method_declaration @match {
+        \\    receiver: parameter_list {
+        \\      child: parameter_declaration {
+        \\        type: $repoReceiver
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @match { message "repo" }
+        \\}
+    , &diag);
+
+    const receiver = file.rules[0].match.?.node.fields[0].pattern;
+    const param = receiver.fields[0].pattern;
+    const branches = param.fields[0].pattern.node_kind.alternation;
+    try std.testing.expectEqual(@as(usize, 2), branches.len);
+    try std.testing.expectEqualStrings("recv", branches[0].capture.?.name);
+    try std.testing.expectEqualStrings("pointer_type", branches[1].node_kind.symbol);
+}
+
+test "parser: fragments reference earlier fragments" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\pattern namedType = type_identifier @recv
+        \\pattern receiverType = [$namedType, pointer_type { child: $namedType }]
+        \\rule repo-rule {
+        \\  lang go
+        \\  match parameter_declaration @match {
+        \\    type: $receiverType
+        \\  }
+        \\  emit @match { message "repo" }
+        \\}
+    , &diag);
+
+    const branches = file.rules[0].match.?.node.fields[0].pattern.node_kind.alternation;
+    try std.testing.expectEqualStrings("type_identifier", branches[0].node_kind.symbol);
+    try std.testing.expectEqualStrings("recv", branches[0].capture.?.name);
+    try std.testing.expectEqualStrings("recv", branches[1].fields[0].pattern.capture.?.name);
+}
+
+test "parser: rejects unknown fragments" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.UnknownFragment, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang go
+        \\  match $nope @match
+        \\  emit @match { message "bad" }
+        \\}
+    , &diag));
+}
+
+test "parser: rejects duplicate fragments" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.DuplicateFragment, parse(arena.allocator(),
+        \\pattern callable = function_declaration
+        \\pattern callable = method_declaration
+        \\rule bad {
+        \\  lang go
+        \\  match $callable @match
+        \\  emit @match { message "bad" }
+        \\}
+    , &diag));
+}
+
+test "parser: rejects unused fragments" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.UnusedFragment, parse(arena.allocator(),
+        \\pattern callable = function_declaration
+        \\rule bad {
+        \\  lang go
+        \\  match method_declaration @match
+        \\  emit @match { message "bad" }
+        \\}
+    , &diag));
+}
+
+test "parser: rejects capture conflicts on fragment references" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.FragmentCaptureConflict, parse(arena.allocator(),
+        \\pattern named = function_declaration @fn
+        \\rule bad {
+        \\  lang go
+        \\  match $named @match
+        \\  emit @match { message "bad" }
+        \\}
+    , &diag));
+}
+
+test "parser: rejects anonymous-rooted fragments at the match root" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedSymbol, parse(arena.allocator(),
+        \\pattern voidOp = "void"
+        \\rule bad {
+        \\  lang ts
+        \\  match $voidOp @match
+        \\  emit @match { message "bad" }
+        \\}
+    , &diag));
+}
+
 test "parser: parses negated field assertions" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

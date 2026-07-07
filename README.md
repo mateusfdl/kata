@@ -353,6 +353,37 @@ grammar field names only - `!child` and `!children` are rejected at parse
 time, and a field name the grammar does not define fails compilation like any
 other invalid field.
 
+A file may name a pattern once and reference it from any matcher position
+with `$name`:
+
+```kata
+pattern repoReceiver = [type_identifier @recv, pointer_type { child: type_identifier @recv }]
+
+rule repo-only {
+  lang go
+
+  match method_declaration @match {
+    receiver: parameter_list {
+      child: parameter_declaration {
+        type: $repoReceiver
+      }
+    }
+  }
+
+  where { matches(text(@recv), "Repository$") }
+
+  emit @match { message "repo method" }
+}
+```
+
+Fragments expand inline at parse time: captures inside one bind exactly as if
+written out, and rule blocks in the same file share it. A reference may add a
+capture (`match $callable @match`) and a field block, which merge onto the
+fragment; a capture on both the fragment root and the reference is a
+conflict. Fragments are file-local, must be declared before use, may
+reference earlier fragments, and an unused or redeclared fragment is a
+compile error.
+
 `where` blocks also take composition predicates - `inside`, `not inside`,
 `has`, `not has`, `parent`, `not parent`, and `count` - to express containment
 rules that a single query cannot:

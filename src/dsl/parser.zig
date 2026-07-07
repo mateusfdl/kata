@@ -23,7 +23,12 @@ pub const Error = tokenizer.Error || error{
     ExpectedRightParen,
     ExpectedColon,
     ExpectedMessage,
+    ExpectedEqual,
     InvalidNegatedField,
+    UnknownFragment,
+    DuplicateFragment,
+    UnusedFragment,
+    FragmentCaptureConflict,
     UnknownClause,
     DuplicateClause,
     EmptyWhere,
@@ -62,6 +67,19 @@ const Keyword = enum {
     in,
     any,
     all,
+    pattern,
+};
+
+const Fragment = struct {
+    pattern: ast.NodePattern,
+    range: tokenizer.Range,
+    used: bool,
+};
+
+const FieldBlock = struct {
+    fields: []const ast.FieldPattern,
+    absent_fields: []const []const u8,
+    end: tokenizer.Position,
 };
 
 const ParsedNodeKind = struct {
@@ -79,6 +97,7 @@ pub const Parser = struct {
     tokenizer: tokenizer.Tokenizer,
     diag: *Diagnostic,
     current: Token,
+    fragments: std.StringArrayHashMapUnmanaged(Fragment) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Error!Parser {
         var t = tokenizer.Tokenizer.init(source, diag);
@@ -99,10 +118,44 @@ pub const Parser = struct {
 
         var rules: std.ArrayList(ast.Rule) = .empty;
         while (self.current.kind != .eof) {
+            if (self.currentIs(.pattern)) {
+                try self.parseFragmentDeclaration();
+                continue;
+            }
             try rules.append(self.allocator, try self.parseRule());
         }
 
+        if (rules.items.len == 0) {
+            self.failAt(self.current);
+            return error.ExpectedRule;
+        }
+        try self.rejectUnusedFragments();
+
         return .{ .rules = try rules.toOwnedSlice(self.allocator) };
+    }
+
+    fn parseFragmentDeclaration(self: *Parser) Error!void {
+        try self.advance();
+        const name = try self.expectSymbol(error.ExpectedSymbol);
+        _ = try self.expect(.equal, error.ExpectedEqual);
+        const pattern = try self.parseNodePattern(.allowed);
+        const entry = try self.fragments.getOrPut(self.allocator, name.lexeme);
+        if (entry.found_existing) {
+            self.failAt(name);
+            return error.DuplicateFragment;
+        }
+        entry.value_ptr.* = .{ .pattern = pattern, .range = name.range, .used = false };
+    }
+
+    fn rejectUnusedFragments(self: *Parser) Error!void {
+        for (self.fragments.values()) |fragment| {
+            if (fragment.used) continue;
+            self.diag.* = .{
+                .line = fragment.range.start.line,
+                .column = fragment.range.start.column,
+            };
+            return error.UnusedFragment;
+        }
     }
 
     fn parseRule(self: *Parser) Error!ast.Rule {
@@ -268,6 +321,7 @@ pub const Parser = struct {
     }
 
     fn parseNodePattern(self: *Parser, anonymous: AnonymousNodeKind) Error!ast.NodePattern {
+        if (self.current.kind == .fragment) return self.parseFragmentReference(anonymous);
         const node = try self.parseNodeKind(anonymous);
         const capture = try self.parseOptionalCapture();
         var fields: []const ast.FieldPattern = &.{};
@@ -275,23 +329,10 @@ pub const Parser = struct {
         var end = node.range.end;
         if (capture) |value| end = value.range.end;
         if (try self.consume(.left_brace)) {
-            var list: std.ArrayList(ast.FieldPattern) = .empty;
-            var absents: std.ArrayList([]const u8) = .empty;
-            while (self.current.kind != .right_brace) {
-                if (self.current.kind == .eof) {
-                    self.failAt(self.current);
-                    return error.ExpectedRightBrace;
-                }
-                if (self.current.kind == .bang) {
-                    try absents.append(self.allocator, try self.parseAbsentField());
-                    continue;
-                }
-                try list.append(self.allocator, try self.parseFieldPattern());
-            }
-            end = self.current.range.end;
-            try self.advance();
-            fields = try list.toOwnedSlice(self.allocator);
-            absent_fields = try absents.toOwnedSlice(self.allocator);
+            const block = try self.parseFieldBlock();
+            fields = block.fields;
+            absent_fields = block.absent_fields;
+            end = block.end;
         }
         return .{
             .node_kind = node.value,
@@ -300,6 +341,91 @@ pub const Parser = struct {
             .absent_fields = absent_fields,
             .range = .{ .start = node.range.start, .end = end },
         };
+    }
+
+    fn parseFieldBlock(self: *Parser) Error!FieldBlock {
+        var list: std.ArrayList(ast.FieldPattern) = .empty;
+        var absents: std.ArrayList([]const u8) = .empty;
+        while (self.current.kind != .right_brace) {
+            if (self.current.kind == .eof) {
+                self.failAt(self.current);
+                return error.ExpectedRightBrace;
+            }
+            if (self.current.kind == .bang) {
+                try absents.append(self.allocator, try self.parseAbsentField());
+                continue;
+            }
+            try list.append(self.allocator, try self.parseFieldPattern());
+        }
+        const end = self.current.range.end;
+        try self.advance();
+        return .{
+            .fields = try list.toOwnedSlice(self.allocator),
+            .absent_fields = try absents.toOwnedSlice(self.allocator),
+            .end = end,
+        };
+    }
+
+    fn parseFragmentReference(self: *Parser, anonymous: AnonymousNodeKind) Error!ast.NodePattern {
+        const token = self.current;
+        try self.advance();
+        const entry = self.fragments.getPtr(token.lexeme[1..]) orelse {
+            self.failAt(token);
+            return error.UnknownFragment;
+        };
+        entry.used = true;
+        const fragment = entry.pattern;
+        if (anonymous == .rejected and hasAnonymousRoot(fragment)) {
+            self.failAt(token);
+            return error.ExpectedSymbol;
+        }
+
+        const capture = try self.parseOptionalCapture();
+        if (capture != null and fragment.capture != null) {
+            self.failAt(token);
+            return error.FragmentCaptureConflict;
+        }
+        var fields = fragment.fields;
+        var absent_fields = fragment.absent_fields;
+        var end = token.range.end;
+        if (capture) |value| end = value.range.end;
+        if (try self.consume(.left_brace)) {
+            const block = try self.parseFieldBlock();
+            fields = try self.concatFields(fragment.fields, block.fields);
+            absent_fields = try self.concatAbsent(fragment.absent_fields, block.absent_fields);
+            end = block.end;
+        }
+        return .{
+            .node_kind = fragment.node_kind,
+            .capture = capture orelse fragment.capture,
+            .fields = fields,
+            .absent_fields = absent_fields,
+            .range = .{ .start = token.range.start, .end = end },
+        };
+    }
+
+    fn concatFields(
+        self: *Parser,
+        first: []const ast.FieldPattern,
+        second: []const ast.FieldPattern,
+    ) Error![]const ast.FieldPattern {
+        if (first.len == 0) return second;
+        const out = try self.allocator.alloc(ast.FieldPattern, first.len + second.len);
+        @memcpy(out[0..first.len], first);
+        @memcpy(out[first.len..], second);
+        return out;
+    }
+
+    fn concatAbsent(
+        self: *Parser,
+        first: []const []const u8,
+        second: []const []const u8,
+    ) Error![]const []const u8 {
+        if (first.len == 0) return second;
+        const out = try self.allocator.alloc([]const u8, first.len + second.len);
+        @memcpy(out[0..first.len], first);
+        @memcpy(out[first.len..], second);
+        return out;
     }
 
     fn parseAbsentField(self: *Parser) Error![]const u8 {
@@ -819,6 +945,19 @@ fn compositionKeyword(token: Token) ?Keyword {
     if (isKeyword(token, .count)) return .count;
     if (isKeyword(token, .not)) return .not;
     return null;
+}
+
+fn hasAnonymousRoot(pattern: ast.NodePattern) bool {
+    return switch (pattern.node_kind) {
+        .anonymous => true,
+        .symbol => false,
+        .alternation => |branches| blk: {
+            for (branches) |branch| {
+                if (hasAnonymousRoot(branch)) break :blk true;
+            }
+            break :blk false;
+        },
+    };
 }
 
 fn patternRelation(name: []const u8) ast.PatternRelation {

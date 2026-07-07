@@ -31,6 +31,7 @@ pub fn run(
 
     print(stdout, file_facts) catch |err|
         return output.internal(stderr, "print facts", err, exit.internal_error);
+
     return exit.clean;
 }
 
@@ -38,18 +39,23 @@ fn print(stdout: *std.Io.Writer, file_facts: lint.facts.FileFacts) !void {
     for (file_facts.classes) |cl| {
         try stdout.print("class {s} @{d}:{d}\n", .{ cl.name, cl.range.start.line + 1, cl.range.start.column + 1 });
     }
+
     for (file_facts.methods) |m| {
         try stdout.print("method {s}.{s} @{d}:{d}\n", .{ orDash(m.container), m.name, m.range.start.line + 1, m.range.start.column + 1 });
     }
+
     for (file_facts.typed_decls) |d| {
         try stdout.print("decl {s}: {s} @{d}:{d}\n", .{ d.name, d.type_name, d.range.start.line + 1, d.range.start.column + 1 });
     }
+
     for (file_facts.calls) |call| {
         try stdout.print("call {s}.{s} in {s} @{d}:{d}\n", .{ orDash(call.receiver), call.method, orDash(call.container), call.range.start.line + 1, call.range.start.column + 1 });
     }
+
     for (file_facts.imports) |im| {
         try stdout.print("import {s} from {s}\n", .{ orDash(im.name), im.source });
     }
+
     try stdout.flush();
 }
 

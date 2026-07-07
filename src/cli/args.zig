@@ -30,6 +30,7 @@ pub const CommandName = enum {
             const command: CommandName = @enumFromInt(field.value);
             if (std.mem.eql(u8, value, @tagName(command))) return command;
         }
+
         return null;
     }
 
@@ -61,6 +62,7 @@ pub fn valueFor(args: []const [:0]const u8, index: *usize, flag: Flag) FlagValue
 
     if (value.len == flag_len + 1) return .absent;
     if (value[flag_len] != '=') return .absent;
+
     return .{ .found = value[flag_len + 1 ..] };
 }
 
@@ -68,6 +70,7 @@ pub fn firstPositional(values: []const [:0]const u8) ?[]const u8 {
     for (values) |value| {
         if (!std.mem.startsWith(u8, value, flag_prefix)) return value;
     }
+
     return null;
 }
 

@@ -125,6 +125,12 @@ test "tokenizer: tokenizes captures symbols strings and numbers" {
     try expectToken("\"console\"", .string, "\"console\"");
 }
 
+test "tokenizer: tokenizes fragments and bare equals" {
+    try expectToken("$callable", .fragment, "$callable");
+    try expectToken("=", .equal, "=");
+    try expectToken("==", .equal_equal, "==");
+}
+
 test "tokenizer: rejects invalid string escapes" {
     var diag: tokenizer.Diagnostic = .{};
     var t = tokenizer.Tokenizer.init("message \"bad\\x\"", &diag);
@@ -162,10 +168,10 @@ test "tokenizer: rejects incomplete captures and operators" {
     try std.testing.expectError(error.InvalidCapture, capture.next());
     try std.testing.expectEqual(@as(u32, 1), diag_capture.column);
 
-    var diag_equal: tokenizer.Diagnostic = .{};
-    var equal = tokenizer.Tokenizer.init("=", &diag_equal);
-    try std.testing.expectError(error.InvalidOperator, equal.next());
-    try std.testing.expectEqual(@as(u32, 1), diag_equal.column);
+    var diag_fragment: tokenizer.Diagnostic = .{};
+    var fragment = tokenizer.Tokenizer.init("$", &diag_fragment);
+    try std.testing.expectError(error.InvalidFragment, fragment.next());
+    try std.testing.expectEqual(@as(u32, 1), diag_fragment.column);
 
     var diag_amp: tokenizer.Diagnostic = .{};
     var amp = tokenizer.Tokenizer.init("&", &diag_amp);

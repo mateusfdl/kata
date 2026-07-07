@@ -399,6 +399,79 @@ test "compile: distributes fields over an alternation inside a field pattern" {
     try std.testing.expectEqual(@as(u32, 1), diags[1].range.start.line);
 }
 
+test "compile: fragments expand into working rules" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\pattern repoReceiver = [type_identifier @recv, pointer_type { child: type_identifier @recv }]
+        \\rule repo-receiver {
+        \\  lang go
+        \\  match method_declaration @match {
+        \\    receiver: parameter_list {
+        \\      child: parameter_declaration {
+        \\        type: $repoReceiver
+        \\      }
+        \\    }
+        \\  }
+        \\  where { matches(text(@recv), "Repository$") }
+        \\  emit @match { message "repo method" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const src =
+        "package main\n\n" ++
+        "type UserRepository struct{}\n\n" ++
+        "func (r UserRepository) FindValue(id string) string { return id }\n\n" ++
+        "func (r *UserRepository) FindPointer(id string) string { return id }\n\n" ++
+        "type OrderService struct{}\n\n" ++
+        "func (s *OrderService) Create(id string) string { return id }\n";
+    const diags = try runCompiled(gpa, &compiled, .go, src, null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqual(@as(u32, 4), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 6), diags[1].range.start.line);
+}
+
+test "compile: fragments shared across rule blocks in one file" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\pattern callable = [function_declaration, method_declaration]
+        \\rule no-untyped-callables {
+        \\  lang go
+        \\  match $callable @match {
+        \\    !result
+        \\  }
+        \\  emit @match { message "callable has no result" }
+        \\}
+        \\rule no-callable-bodies {
+        \\  lang go
+        \\  match $callable @match {
+        \\    body: block @body
+        \\  }
+        \\  where { length(@body) > 3 }
+        \\  emit @match { message "callable body too long" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), compiled.patterns.len);
+
+    const src =
+        "package main\n\n" ++
+        "func untyped() {}\n\n" ++
+        "func typed() int { return 1 }\n";
+    const diags = try runCompiled(gpa, &compiled, .go, src, null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqualStrings("callable has no result", diags[0].message);
+}
+
 test "compile: negated fields match nodes lacking the field" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
