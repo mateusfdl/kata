@@ -12,13 +12,15 @@ rule no-weak-assertions {
 
   where {
     text(@expect) == "expect"
-    text(@name) == "toBeDefined" ||
-    text(@name) == "toBeUndefined" ||
-    text(@name) == "toBeNull" ||
-    text(@name) == "toBeTruthy" ||
-    text(@name) == "toBeFalsy" ||
-    text(@name) == "toHaveBeenCalled" ||
-    text(@name) == "toContain"
+    text(@name) in [
+      "toBeDefined",
+      "toBeUndefined",
+      "toBeNull",
+      "toBeTruthy",
+      "toBeFalsy",
+      "toHaveBeenCalled",
+      "toContain",
+    ]
   }
 
   emit @match {
