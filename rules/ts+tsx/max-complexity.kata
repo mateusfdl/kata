@@ -1,13 +1,13 @@
-rule max-function-length {
-  lang ts
+rule max-complexity {
+  lang ts, tsx
 
   match [function_declaration, function_expression, generator_function_declaration, generator_function, arrow_function, method_definition] @match
 
   where {
-    length(@match) > 50
+    complexity(@match) > 10
   }
 
   emit @match {
-    message "function spans {length(@match)} lines (max 50) - split it into focused units"
+    message "cyclomatic complexity {complexity(@match)} exceeds 10 - extract smaller functions"
   }
 }

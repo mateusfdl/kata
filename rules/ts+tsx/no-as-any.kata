@@ -1,5 +1,5 @@
 rule no-as-any {
-  lang tsx
+  lang ts, tsx
 
   match as_expression @match {
     child: predefined_type @t
@@ -15,7 +15,7 @@ rule no-as-any {
 }
 
 rule no-as-any {
-  lang tsx
+  lang ts, tsx
 
   match as_expression @match {
     child: array_type {

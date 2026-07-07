@@ -1,5 +1,5 @@
 rule no-any {
-  lang tsx
+  lang ts, tsx
 
   match type_annotation @match {
     child: predefined_type @t
@@ -15,7 +15,7 @@ rule no-any {
 }
 
 rule no-any {
-  lang tsx
+  lang ts, tsx
 
   match type_annotation @match {
     child: array_type {
@@ -33,7 +33,7 @@ rule no-any {
 }
 
 rule no-any {
-  lang tsx
+  lang ts, tsx
 
   match type_arguments @match {
     child: predefined_type @t

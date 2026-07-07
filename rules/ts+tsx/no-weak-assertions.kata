@@ -1,5 +1,5 @@
 rule no-weak-assertions {
-  lang ts
+  lang ts, tsx
 
   match call_expression @match {
     function: member_expression {

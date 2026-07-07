@@ -1,5 +1,5 @@
 rule no-generic-error {
-  lang ts
+  lang ts, tsx
 
   match throw_statement @match {
     child: new_expression {

@@ -1,5 +1,5 @@
 rule no-comments {
-  lang tsx
+  lang ts, tsx
 
   match comment @match
 

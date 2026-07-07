@@ -1,5 +1,5 @@
 rule simple-repositories {
-  lang ts
+  lang ts, tsx
 
   match class_declaration {
     name: type_identifier @name
