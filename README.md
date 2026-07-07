@@ -296,10 +296,26 @@ rule no-console {
 }
 ```
 
-A `.kata` file declares exactly one rule, the rule id must match the file name,
-and the `lang` clause must include the language directory the file sits in.
-Everything else works exactly like `.scm` rules: same tiers, same shadowing,
-same `enabled:` opt-in, same fixture harness under `tests/`.
+Every rule block in a `.kata` file carries the id of the file name, and the
+`lang` clause must include the language directory the file sits in. A file may
+repeat the rule block to bundle pattern variants under one id. Everything else
+works exactly like `.scm` rules: same tiers, same shadowing, same `enabled:`
+opt-in, same fixture harness under `tests/`.
+
+Matchers accept alternations of node kinds, and a field block on an
+alternation is distributed into every branch:
+
+```kata
+match [function_declaration, method_declaration, func_literal] {
+  parameters: parameter_list {
+    child: parameter_declaration @match
+  }
+}
+```
+
+matches the parameters of any of the three kinds. Branches share the same
+fields and captures; when variants need different fields or messages, repeated
+rule blocks remain the tool.
 
 `where` blocks also take composition predicates - `inside`, `not inside`,
 `has`, `not has`, and `count` - to express containment rules that a single
