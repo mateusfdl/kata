@@ -21,15 +21,15 @@ pub const Diagnostic = struct {
     severity: Severity = .@"error",
 };
 
+pub const Report = struct {
+    language: []const u8,
+    diagnostics: []const Diagnostic,
+    clean: bool,
+};
+
 pub fn hasErrors(diagnostics: []const Diagnostic) bool {
     for (diagnostics) |d| {
         if (d.severity == .@"error") return true;
     }
     return false;
 }
-
-pub const Report = struct {
-    language: []const u8,
-    diagnostics: []const Diagnostic,
-    clean: bool,
-};

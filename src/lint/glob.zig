@@ -1,5 +1,8 @@
 const std = @import("std");
 
+/// Match `path` against a glob: `*` and `?` stop at `/`, `**` crosses it.
+/// A trailing `/` turns the pattern into a directory prefix — "vendor/"
+/// matches any path inside a directory that itself matches "vendor".
 pub fn match(pattern: []const u8, path: []const u8) bool {
     if (pattern.len == 0) return false;
     if (pattern[pattern.len - 1] == '/') return matchDirPrefix(pattern[0 .. pattern.len - 1], path);

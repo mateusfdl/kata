@@ -1,5 +1,9 @@
 const std = @import("std");
 
+const expression_open: u8 = '(';
+const expression_close: u8 = ')';
+const capture_marker: u8 = '@';
+
 pub const Measure = enum {
     complexity,
     nesting,
@@ -15,7 +19,44 @@ pub const Measure = enum {
     }
 };
 
-pub const Compare = enum { gt, ge, lt, le, eq, ne };
+pub const Compare = enum {
+    gt,
+    ge,
+    lt,
+    le,
+    eq,
+    ne,
+
+    pub fn fromString(name: []const u8) ?Compare {
+        inline for (std.meta.fields(Compare)) |field| {
+            const compare: Compare = @enumFromInt(field.value);
+            if (std.mem.eql(u8, name, compare.toString())) return compare;
+        }
+
+        return null;
+    }
+
+    pub fn toString(self: Compare) []const u8 {
+        return switch (self) {
+            .gt => ">",
+            .ge => ">=",
+            .lt => "<",
+            .le => "<=",
+            .eq => "=",
+            .ne => "!=",
+        };
+    }
+};
+
+const LogicalOp = enum {
+    @"and",
+    @"or",
+    not,
+
+    fn fromString(name: []const u8) ?LogicalOp {
+        return std.meta.stringToEnum(LogicalOp, name);
+    }
+};
 
 pub const Term = union(enum) {
     number: u32,
@@ -28,6 +69,51 @@ pub const Expr = union(enum) {
     any: []const Expr,
     negate: *const Expr,
 };
+
+const Token = union(enum) {
+    open,
+    close,
+    atom: []const u8,
+};
+
+const Tokenizer = struct {
+    source: []const u8,
+    pos: usize = 0,
+
+    fn next(self: *Tokenizer) ?Token {
+        while (self.pos < self.source.len and std.ascii.isWhitespace(self.source[self.pos])) self.pos += 1;
+        if (self.pos >= self.source.len) return null;
+
+        switch (self.source[self.pos]) {
+            expression_open => {
+                self.pos += 1;
+
+                return .open;
+            },
+            expression_close => {
+                self.pos += 1;
+
+                return .close;
+            },
+            else => {
+                const start = self.pos;
+
+                while (self.pos < self.source.len) : (self.pos += 1) {
+                    const c = self.source[self.pos];
+
+                    if (std.ascii.isWhitespace(c) or c == expression_open or c == expression_close) break;
+                }
+
+                return .{ .atom = self.source[start..self.pos] };
+            },
+        }
+    }
+};
+
+pub fn captureName(atom: []const u8) ?[]const u8 {
+    if (atom.len < 2 or atom[0] != capture_marker) return null;
+    return atom[1..];
+}
 
 pub const ParseError = error{
     MalformedExpression,
@@ -96,65 +182,27 @@ fn resolveTerm(term: Term, measures: anytype) @TypeOf(measures).Error!?u32 {
     };
 }
 
-const Token = union(enum) {
-    open,
-    close,
-    atom: []const u8,
-};
-
-const Tokenizer = struct {
-    source: []const u8,
-    pos: usize = 0,
-
-    fn next(self: *Tokenizer) ?Token {
-        while (self.pos < self.source.len and std.ascii.isWhitespace(self.source[self.pos])) self.pos += 1;
-        if (self.pos >= self.source.len) return null;
-
-        switch (self.source[self.pos]) {
-            '(' => {
-                self.pos += 1;
-
-                return .open;
-            },
-            ')' => {
-                self.pos += 1;
-
-                return .close;
-            },
-            else => {
-                const start = self.pos;
-
-                while (self.pos < self.source.len) : (self.pos += 1) {
-                    const c = self.source[self.pos];
-
-                    if (std.ascii.isWhitespace(c) or c == '(' or c == ')') break;
-                }
-
-                return .{ .atom = self.source[start..self.pos] };
-            },
-        }
-    }
-};
-
 fn parseForm(arena: std.mem.Allocator, tokens: *Tokenizer, resolver: anytype) ParseError!Expr {
     const head = try expectAtom(tokens);
 
-    if (compareFromName(head)) |op| {
+    if (Compare.fromString(head)) |op| {
         const left = try parseTerm(tokens, resolver);
         const right = try parseTerm(tokens, resolver);
         try expectClose(tokens);
         return .{ .compare = .{ .op = op, .left = left, .right = right } };
     }
-    if (std.mem.eql(u8, head, "and")) return .{ .all = try parseList(arena, tokens, resolver) };
-    if (std.mem.eql(u8, head, "or")) return .{ .any = try parseList(arena, tokens, resolver) };
-    if (std.mem.eql(u8, head, "not")) {
-        try expectOpen(tokens);
-        const inner = try arena.create(Expr);
-        inner.* = try parseForm(arena, tokens, resolver);
-        try expectClose(tokens);
-        return .{ .negate = inner };
-    }
-    return error.UnknownOperator;
+
+    return switch (LogicalOp.fromString(head) orelse return error.UnknownOperator) {
+        .@"and" => .{ .all = try parseList(arena, tokens, resolver) },
+        .@"or" => .{ .any = try parseList(arena, tokens, resolver) },
+        .not => blk: {
+            try expectOpen(tokens);
+            const inner = try arena.create(Expr);
+            inner.* = try parseForm(arena, tokens, resolver);
+            try expectClose(tokens);
+            break :blk .{ .negate = inner };
+        },
+    };
 }
 
 fn parseList(arena: std.mem.Allocator, tokens: *Tokenizer, resolver: anytype) ParseError![]const Expr {
@@ -181,10 +229,8 @@ fn parseTerm(tokens: *Tokenizer, resolver: anytype) ParseError!Term {
             const name = try expectAtom(tokens);
             const measure = Measure.fromString(name) orelse return error.UnknownMeasure;
             const capture = try expectAtom(tokens);
-
-            if (capture.len < 2 or capture[0] != '@') return error.MalformedExpression;
-
-            const id = resolver.captureId(capture[1..]) orelse return error.UnknownCapture;
+            const capture_name = captureName(capture) orelse return error.MalformedExpression;
+            const id = resolver.captureId(capture_name) orelse return error.UnknownCapture;
 
             try expectClose(tokens);
 
@@ -214,15 +260,4 @@ fn expectClose(tokens: *Tokenizer) ParseError!void {
     const token = tokens.next() orelse return error.MalformedExpression;
 
     if (token != .close) return error.MalformedExpression;
-}
-
-fn compareFromName(name: []const u8) ?Compare {
-    if (std.mem.eql(u8, name, ">")) return .gt;
-    if (std.mem.eql(u8, name, ">=")) return .ge;
-    if (std.mem.eql(u8, name, "<")) return .lt;
-    if (std.mem.eql(u8, name, "<=")) return .le;
-    if (std.mem.eql(u8, name, "=")) return .eq;
-    if (std.mem.eql(u8, name, "!=")) return .ne;
-
-    return null;
 }

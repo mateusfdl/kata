@@ -163,7 +163,7 @@ fn factSubject(ctx: *Compiler, r: ast.Rule) Error!Subject {
             return error.UnsupportedMatch;
         },
     };
-    const fact = fact_rule.factKindFromString(symbol) orelse {
+    const fact = fact_rule.FactKind.fromString(symbol) orelse {
         ctx.failAt(unknown_fact_detail, pattern.range);
         return error.UnsupportedMatch;
     };

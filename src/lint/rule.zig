@@ -73,6 +73,30 @@ pub const PredicateOp = enum {
     inside,
     not_inside,
     count,
+
+    pub fn scmName(self: PredicateOp) ?[]const u8 {
+        return switch (self) {
+            .eq => "eq?",
+            .not_eq => "not-eq?",
+            .any_of => "any-of?",
+            .not_any_of => "not-any-of?",
+            .match => "match?",
+            .not_match => "not-match?",
+            .where => "where?",
+            else => null,
+        };
+    }
+
+    pub fn fromScmName(name: []const u8) ?PredicateOp {
+        inline for (std.meta.fields(PredicateOp)) |field| {
+            const op: PredicateOp = @enumFromInt(field.value);
+            if (op.scmName()) |scm_name| {
+                if (std.mem.eql(u8, name, scm_name)) return op;
+            }
+        }
+
+        return null;
+    }
 };
 
 pub const PredicateOperand = union(enum) {
@@ -324,28 +348,6 @@ fn ownerIndexForPattern(rule_starts: []const u32, pattern_start: u32) usize {
 
 pub const captureIdForName = message_mod.captureIdForName;
 
-const PredicateOpName = struct {
-    name: []const u8,
-    op: PredicateOp,
-};
-
-const predicate_op_names = [_]PredicateOpName{
-    .{ .name = "eq?", .op = .eq },
-    .{ .name = "not-eq?", .op = .not_eq },
-    .{ .name = "any-of?", .op = .any_of },
-    .{ .name = "not-any-of?", .op = .not_any_of },
-    .{ .name = "match?", .op = .match },
-    .{ .name = "not-match?", .op = .not_match },
-    .{ .name = "where?", .op = .where },
-};
-
-fn predicateOpFromName(name: []const u8) ?PredicateOp {
-    for (predicate_op_names) |entry| {
-        if (std.mem.eql(u8, name, entry.name)) return entry.op;
-    }
-    return null;
-}
-
 fn parsePattern(
     arena: std.mem.Allocator,
     query: *ts.Query,
@@ -471,7 +473,7 @@ fn buildPredicate(
     op_name: []const u8,
     group: []const ts.Query.PredicateStep,
 ) !Predicate {
-    const op = predicateOpFromName(op_name) orelse return error.UnknownPredicate;
+    const op = PredicateOp.fromScmName(op_name) orelse return error.UnknownPredicate;
     var args = try arena.alloc(PredicateOperand, group.len - 1);
 
     for (group[1..], 0..) |arg_step, j| {

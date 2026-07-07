@@ -18,6 +18,25 @@ pub const FactKind = enum {
     typed_decl,
     call,
     import,
+
+    pub fn fromString(name: []const u8) ?FactKind {
+        inline for (std.meta.fields(FactKind)) |field| {
+            const kind: FactKind = @enumFromInt(field.value);
+            if (std.mem.eql(u8, name, kind.toString())) return kind;
+        }
+
+        return null;
+    }
+
+    pub fn toString(self: FactKind) []const u8 {
+        return switch (self) {
+            .class => "class",
+            .method => "method",
+            .typed_decl => "typedDecl",
+            .call => "call",
+            .import => "import",
+        };
+    }
 };
 
 pub const Field = enum {
@@ -74,16 +93,6 @@ pub const CompiledFactRule = struct {
     severity: diagnostic.Severity = .@"error",
     exclude_paths: []const []const u8 = &.{},
 };
-
-pub fn factKindFromString(name: []const u8) ?FactKind {
-    if (std.mem.eql(u8, name, "class")) return .class;
-    if (std.mem.eql(u8, name, "method")) return .method;
-    if (std.mem.eql(u8, name, "typedDecl")) return .typed_decl;
-    if (std.mem.eql(u8, name, "call")) return .call;
-    if (std.mem.eql(u8, name, "import")) return .import;
-
-    return null;
-}
 
 pub fn fieldFromString(name: []const u8) ?Field {
     return std.meta.stringToEnum(Field, name);

@@ -3,6 +3,10 @@ const ts = @import("tree_sitter");
 
 const expr = @import("expr.zig");
 
+const placeholder_open: u8 = '{';
+const placeholder_close: u8 = '}';
+const placeholder_markers = &[_]u8{ placeholder_open, placeholder_close };
+
 pub const invalid_capture_id: u32 = std.math.maxInt(u32);
 
 pub const Placeholder = struct {
@@ -44,20 +48,20 @@ fn compileSegments(
     query: *ts.Query,
     source: []const u8,
 ) CompileError!?[]const Segment {
-    if (std.mem.indexOfAny(u8, source, "{}") == null) return null;
+    if (std.mem.indexOfAny(u8, source, placeholder_markers) == null) return null;
 
     var segments: std.ArrayList(Segment) = .empty;
     var literal: std.ArrayList(u8) = .empty;
     var i: usize = 0;
     while (i < source.len) {
         const c = source[i];
-        if (c == '{') {
-            if (i + 1 < source.len and source[i + 1] == '{') {
-                try literal.append(arena, '{');
+        if (c == placeholder_open) {
+            if (i + 1 < source.len and source[i + 1] == placeholder_open) {
+                try literal.append(arena, placeholder_open);
                 i += 2;
                 continue;
             }
-            const close = std.mem.indexOfScalarPos(u8, source, i + 1, '}') orelse
+            const close = std.mem.indexOfScalarPos(u8, source, i + 1, placeholder_close) orelse
                 return error.UnclosedPlaceholder;
             if (literal.items.len > 0)
                 try segments.append(arena, .{ .literal = try literal.toOwnedSlice(arena) });
@@ -65,9 +69,9 @@ fn compileSegments(
             i = close + 1;
             continue;
         }
-        if (c == '}') {
-            if (i + 1 < source.len and source[i + 1] == '}') {
-                try literal.append(arena, '}');
+        if (c == placeholder_close) {
+            if (i + 1 < source.len and source[i + 1] == placeholder_close) {
+                try literal.append(arena, placeholder_close);
                 i += 2;
                 continue;
             }
@@ -88,8 +92,8 @@ fn parsePlaceholder(query: *ts.Query, inner: []const u8) CompileError!Placeholde
     if (it.next() != null) return error.MalformedPlaceholder;
 
     const measure = expr.Measure.fromString(measure_name) orelse return error.UnknownPlaceholderMeasure;
-    if (capture.len < 2 or capture[0] != '@') return error.MalformedPlaceholder;
-    const id = captureIdForName(query, capture[1..]);
+    const capture_name = expr.captureName(capture) orelse return error.MalformedPlaceholder;
+    const id = captureIdForName(query, capture_name);
     if (id == invalid_capture_id) return error.UnknownPlaceholderCapture;
     return .{ .measure = measure, .capture_id = id };
 }
