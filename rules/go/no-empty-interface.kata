@@ -15,7 +15,7 @@ rule no-empty-interface {
 rule no-empty-interface {
   lang go
 
-  match parameter_declaration {
+  match [parameter_declaration, field_declaration, var_spec] {
     type: type_identifier @match
   }
 
@@ -33,38 +33,6 @@ rule no-empty-interface {
 
   match function_declaration {
     result: type_identifier @match
-  }
-
-  where {
-    text(@match) == "any"
-  }
-
-  emit @match {
-    message "any accepts anything and asserts nothing - use a concrete type or a generic constraint"
-  }
-}
-
-rule no-empty-interface {
-  lang go
-
-  match field_declaration {
-    type: type_identifier @match
-  }
-
-  where {
-    text(@match) == "any"
-  }
-
-  emit @match {
-    message "any accepts anything and asserts nothing - use a concrete type or a generic constraint"
-  }
-}
-
-rule no-empty-interface {
-  lang go
-
-  match var_spec {
-    type: type_identifier @match
   }
 
   where {
