@@ -9,7 +9,7 @@ test "check: run skips .git and gitignored folders" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
-    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    var f = try test_fixture.Fixture.initFormat(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule, .kata);
     defer f.deinit();
 
     var tmp = std.testing.tmpDir(.{});
@@ -45,13 +45,17 @@ test "check: warn severity counts separately and exits clean" {
     const io = std.testing.io;
 
     const warn_rule =
-        \\((as_expression (predefined_type) @t) @match
-        \\ (#eq? @t "any")
-        \\ (#set! severity "warn")
-        \\ (#set! message "as any is not allowed"))
-        \\
+        \\rule no-as-any {
+        \\  lang ts
+        \\  severity warn
+        \\  match as_expression @match {
+        \\    child: predefined_type @t
+        \\  }
+        \\  where { text(@t) == "any" }
+        \\  emit @match { message "as any is not allowed" }
+        \\}
     ;
-    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", warn_rule);
+    var f = try test_fixture.Fixture.initFormat(gpa, &.{.ts}, "no-as-any", warn_rule, .kata);
     defer f.deinit();
 
     var tmp = std.testing.tmpDir(.{});
@@ -81,7 +85,7 @@ test "check: project rules report cross-file violations" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
-    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    var f = try test_fixture.Fixture.initFormat(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule, .kata);
     defer f.deinit();
 
     var tmp = std.testing.tmpDir(.{});
@@ -125,7 +129,7 @@ test "check: warnings demote project violations and exit clean" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
-    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    var f = try test_fixture.Fixture.initFormat(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule, .kata);
     defer f.deinit();
     f.engine.warnings = &.{.{ .lang = null, .id = "domain-no-infra" }};
 
@@ -163,7 +167,7 @@ test "check: import-boundary project rules report violations" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
-    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    var f = try test_fixture.Fixture.initFormat(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule, .kata);
     defer f.deinit();
 
     var tmp = std.testing.tmpDir(.{});
@@ -210,7 +214,7 @@ test "check: project kata rules report at the yaml rule positions" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
-    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    var f = try test_fixture.Fixture.initFormat(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule, .kata);
     defer f.deinit();
 
     var tmp = std.testing.tmpDir(.{});
@@ -248,7 +252,7 @@ test "check: kata import rules report at the yaml rule positions" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
-    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    var f = try test_fixture.Fixture.initFormat(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule, .kata);
     defer f.deinit();
 
     var tmp = std.testing.tmpDir(.{});

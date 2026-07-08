@@ -9,7 +9,7 @@ const test_frame = @import("../test_frame.zig");
 const daemon_mtime: i64 = 1726000000000;
 
 fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
-    return test_fixture.Fixture.init(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule);
+    return test_fixture.Fixture.initFormat(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule, .kata);
 }
 
 fn context(f: *test_fixture.Fixture) daemon.Context {

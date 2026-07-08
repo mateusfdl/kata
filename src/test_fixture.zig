@@ -7,14 +7,24 @@ const Engine = lint.Engine;
 const language = lint.language;
 
 pub const no_as_any_rule =
-    \\((as_expression (predefined_type) @t) @match
-    \\ (#eq? @t "any")
-    \\ (#set! message "as any is not allowed"))
-    \\
-    \\((as_expression (array_type (predefined_type) @t)) @match
-    \\ (#eq? @t "any")
-    \\ (#set! message "as any[] is not allowed"))
-    \\
+    \\rule no-as-any {
+    \\  lang ts, tsx
+    \\  match as_expression @match {
+    \\    child: predefined_type @t
+    \\  }
+    \\  where { text(@t) == "any" }
+    \\  emit @match { message "as any is not allowed" }
+    \\}
+    \\rule no-as-any {
+    \\  lang ts, tsx
+    \\  match as_expression @match {
+    \\    child: array_type {
+    \\      child: predefined_type @t
+    \\    }
+    \\  }
+    \\  where { text(@t) == "any" }
+    \\  emit @match { message "as any[] is not allowed" }
+    \\}
 ;
 
 pub fn relativeTmpPath(buf: []u8, sub_path: []const u8) ![]u8 {
