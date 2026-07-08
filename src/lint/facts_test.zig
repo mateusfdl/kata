@@ -7,11 +7,17 @@ const ProjectIndex = @import("ProjectIndex.zig").ProjectIndex;
 
 const Fixture = test_fixture.Fixture;
 
-const comment_rule = "((comment) @match (#set! message \"no comments\"))\n";
+const comment_rule =
+    \\rule no-comments {
+    \\  lang ts, tsx, go
+    \\  match comment @match
+    \\  emit @match { message "no comments" }
+    \\}
+;
 
 test "facts: ts extraction covers classes, methods, decls, calls, and imports" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
     defer f.deinit();
 
     const src =
@@ -91,7 +97,7 @@ test "facts: ts extraction covers classes, methods, decls, calls, and imports" {
 
 test "facts: go extraction covers types, methods, decls, calls, and imports" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", comment_rule, .kata);
     defer f.deinit();
 
     const src =
@@ -165,7 +171,7 @@ test "facts: go extraction covers types, methods, decls, calls, and imports" {
 
 test "facts: multi-name short var declarations bind only the first name" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", comment_rule, .kata);
     defer f.deinit();
 
     const src =
@@ -186,7 +192,7 @@ test "facts: multi-name short var declarations bind only the first name" {
 
 test "facts: non-constructor call initializers are not typed decls" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", comment_rule, .kata);
     defer f.deinit();
 
     const src =
@@ -204,7 +210,7 @@ test "facts: non-constructor call initializers are not typed decls" {
 
 test "facts: project index replaces entries by path" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);

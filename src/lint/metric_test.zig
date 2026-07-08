@@ -5,11 +5,17 @@ const test_fixture = @import("../test_fixture.zig");
 
 const Fixture = test_fixture.Fixture;
 
-const comment_rule = "((comment) @match (#set! message \"no comments\"))\n";
+const comment_rule =
+    \\rule no-comments {
+    \\  lang ts, tsx, go
+    \\  match comment @match
+    \\  emit @match { message "no comments" }
+    \\}
+;
 
 test "metric: function-length flags ts function over threshold" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
     defer f.deinit();
     f.engine.metrics.set(.function_length, 3);
 
@@ -34,7 +40,7 @@ test "metric: function-length flags ts function over threshold" {
 
 test "metric: function at threshold is clean" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
     defer f.deinit();
     f.engine.metrics.set(.function_length, 3);
 
@@ -52,7 +58,7 @@ test "metric: function at threshold is clean" {
 
 test "metric: no configured metrics emits nothing" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
     defer f.deinit();
 
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -73,7 +79,7 @@ test "metric: no configured metrics emits nothing" {
 
 test "metric: arrow functions and methods are measured" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
     defer f.deinit();
     f.engine.metrics.set(.function_length, 2);
 
@@ -102,7 +108,7 @@ test "metric: arrow functions and methods are measured" {
 
 test "metric: go functions, methods, and literals are measured" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", comment_rule, .kata);
     defer f.deinit();
     f.engine.metrics.set(.function_length, 3);
 
@@ -138,7 +144,7 @@ test "metric: go functions, methods, and literals are measured" {
 
 test "metric: tsx arrow component is measured" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.tsx}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.tsx}, "no-comments", comment_rule, .kata);
     defer f.deinit();
     f.engine.metrics.set(.function_length, 2);
 
@@ -159,7 +165,7 @@ test "metric: tsx arrow component is measured" {
 
 test "metric: complexity counts ts decision points" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
     defer f.deinit();
     f.engine.metrics.set(.complexity, 7);
 
@@ -197,7 +203,7 @@ test "metric: complexity counts ts decision points" {
 
 test "metric: complexity attributes nested functions separately" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
     defer f.deinit();
     f.engine.metrics.set(.complexity, 1);
 
@@ -220,7 +226,7 @@ test "metric: complexity attributes nested functions separately" {
 
 test "metric: complexity counts go decision points" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", comment_rule, .kata);
     defer f.deinit();
     f.engine.metrics.set(.complexity, 5);
 
@@ -252,7 +258,7 @@ test "metric: complexity counts go decision points" {
 
 test "metric: nesting depth flags construct beyond threshold" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
     defer f.deinit();
     f.engine.metrics.set(.nesting_depth, 3);
 
@@ -283,7 +289,7 @@ test "metric: nesting depth flags construct beyond threshold" {
 
 test "metric: else-if chains do not increase nesting depth" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
     defer f.deinit();
     f.engine.metrics.set(.nesting_depth, 2);
 
@@ -310,7 +316,7 @@ test "metric: else-if chains do not increase nesting depth" {
 
 test "metric: go switch nests via the switch statement" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", comment_rule, .kata);
     defer f.deinit();
     f.engine.metrics.set(.nesting_depth, 2);
 
@@ -339,7 +345,7 @@ test "metric: go switch nests via the switch statement" {
 
 test "metric: scm diagnostics and metric diagnostics coexist" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", comment_rule);
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", comment_rule, .kata);
     defer f.deinit();
     f.engine.metrics.set(.function_length, 2);
 

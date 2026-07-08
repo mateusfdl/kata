@@ -384,13 +384,17 @@ test "daemon: warn-only diagnostics keep the report clean" {
     defer arena.deinit();
 
     const warn_rule =
-        \\((as_expression (predefined_type) @t) @match
-        \\ (#eq? @t "any")
-        \\ (#set! severity "warn")
-        \\ (#set! message "as any is not allowed"))
-        \\
+        \\rule no-as-any {
+        \\  lang ts
+        \\  severity warn
+        \\  match as_expression @match {
+        \\    child: predefined_type @t
+        \\  }
+        \\  where { text(@t) == "any" }
+        \\  emit @match { message "as any is not allowed" }
+        \\}
     ;
-    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", warn_rule);
+    var f = try test_fixture.Fixture.initFormat(gpa, &.{.ts}, "no-as-any", warn_rule, .kata);
     defer f.deinit();
 
     const resp = daemon.handle(context(f), arena.allocator(), .{
@@ -542,15 +546,22 @@ test "daemon: ratchet compares error counts so warn diagnostics never mask error
     defer arena.deinit();
 
     const mixed_rule =
-        \\((as_expression (predefined_type) @t) @match
-        \\ (#eq? @t "any")
-        \\ (#set! message "as any is not allowed"))
-        \\((non_null_expression) @match
-        \\ (#set! severity "warn")
-        \\ (#set! message "no non-null assertions"))
-        \\
+        \\rule no-as-any {
+        \\  lang ts
+        \\  match as_expression @match {
+        \\    child: predefined_type @t
+        \\  }
+        \\  where { text(@t) == "any" }
+        \\  emit @match { message "as any is not allowed" }
+        \\}
+        \\rule no-as-any {
+        \\  lang ts
+        \\  severity warn
+        \\  match non_null_expression @match
+        \\  emit @match { message "no non-null assertions" }
+        \\}
     ;
-    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", mixed_rule);
+    var f = try test_fixture.Fixture.initFormat(gpa, &.{.ts}, "no-as-any", mixed_rule, .kata);
     defer f.deinit();
 
     var tmp = std.testing.tmpDir(.{});
