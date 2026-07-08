@@ -6,6 +6,7 @@ const glob = @import("glob.zig");
 const language = @import("language.zig");
 const metric = @import("metric.zig");
 const rule = @import("rule.zig");
+const Node = @import("node.zig").Node;
 
 pub const MetricContext = struct {
     allocator: std.mem.Allocator,
@@ -98,7 +99,7 @@ fn evalHas(
     const cursor = ctx.nested_cursor orelse return false;
     const subject = subjectNode(pred.args, match) orelse return false;
 
-    cursor.exec(pred.matcher.query, subject);
+    cursor.exec(pred.matcher.query, subject.inner);
     while (cursor.nextMatch()) |nested_match| {
         if (try nestedMatchPasses(pred.matcher, nested_match, subject, ctx)) return !negate;
     }
@@ -144,7 +145,7 @@ fn evalParent(
     return negate;
 }
 
-fn isDirectParent(candidate: ts.Node, subject: ts.Node) bool {
+fn isDirectParent(candidate: Node, subject: Node) bool {
     const p = subject.parent() orelse return false;
     return p.eql(candidate);
 }
@@ -157,7 +158,7 @@ fn evalCount(
     const cursor = ctx.nested_cursor orelse return false;
     const subject = subjectNode(pred.args, match) orelse return false;
 
-    cursor.exec(pred.matcher.query, subject);
+    cursor.exec(pred.matcher.query, subject.inner);
     var total: u32 = 0;
     while (cursor.nextMatch()) |nested_match| {
         if (try nestedMatchPasses(pred.matcher, nested_match, subject, ctx)) total += 1;
@@ -169,7 +170,7 @@ fn evalCount(
 fn nestedMatchPasses(
     nested: *const rule.NestedMatcher,
     nested_match: ts.Query.Match,
-    subject: ts.Node,
+    subject: Node,
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
     const root_node = findCaptureNode(nested.root_capture_id, nested_match) orelse return false;
@@ -178,7 +179,7 @@ fn nestedMatchPasses(
     return evaluate(nested.predicates, nested_match, ctx);
 }
 
-fn subjectNode(args: []const rule.PredicateOperand, match: ts.Query.Match) ?ts.Node {
+fn subjectNode(args: []const rule.PredicateOperand, match: ts.Query.Match) ?Node {
     if (args.len != 1) return null;
 
     return switch (args[0]) {
@@ -187,13 +188,13 @@ fn subjectNode(args: []const rule.PredicateOperand, match: ts.Query.Match) ?ts.N
     };
 }
 
-fn strictlyContains(enclosing: ts.Node, node: ts.Node) bool {
+fn strictlyContains(enclosing: Node, node: Node) bool {
     if (sameRange(enclosing, node)) return false;
 
     return enclosing.startByte() <= node.startByte() and node.endByte() <= enclosing.endByte();
 }
 
-fn sameRange(a: ts.Node, b: ts.Node) bool {
+fn sameRange(a: Node, b: Node) bool {
     return a.startByte() == b.startByte() and a.endByte() == b.endByte();
 }
 
@@ -230,12 +231,8 @@ const NodeMeasures = struct {
         };
     }
 
-    fn numericText(self: NodeMeasures, node: ts.Node) ?u32 {
-        const end = node.endByte();
-
-        if (end > self.source.len) return null;
-
-        const text = self.source[node.startByte()..end];
+    fn numericText(self: NodeMeasures, node: Node) ?u32 {
+        const text = node.text(self.source) orelse return null;
 
         return std.fmt.parseInt(u32, text, 10) catch null;
     }
@@ -376,17 +373,13 @@ fn findCaptureText(
     source: []const u8,
 ) ?[]const u8 {
     const node = findCaptureNode(id, match) orelse return null;
-    const start = node.startByte();
-    const end = node.endByte();
 
-    if (end > source.len) return null;
-
-    return source[start..end];
+    return node.text(source);
 }
 
-fn findCaptureNode(id: u32, match: ts.Query.Match) ?ts.Node {
+fn findCaptureNode(id: u32, match: ts.Query.Match) ?Node {
     for (match.captures) |cap| {
-        if (cap.index == id) return cap.node;
+        if (cap.index == id) return Node.from(cap.node);
     }
 
     return null;

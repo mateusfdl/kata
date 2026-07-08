@@ -4,6 +4,7 @@ const ts = @import("tree_sitter");
 const diagnostic = @import("diagnostic.zig");
 const fs_path = @import("../fs/path.zig");
 const language = @import("language.zig");
+const Node = @import("node.zig").Node;
 
 pub const ClassDef = struct {
     name: []const u8,
@@ -248,10 +249,10 @@ pub fn extract(
 
     cursor.exec(compiled.query, root);
     while (cursor.nextMatch()) |match| {
-        var nodes: std.EnumArray(Role, ?ts.Node) = .initFill(null);
+        var nodes: std.EnumArray(Role, ?Node) = .initFill(null);
 
         for (match.captures) |cap| {
-            nodes.set(compiled.capture_roles[cap.index], cap.node);
+            nodes.set(compiled.capture_roles[cap.index], Node.from(cap.node));
         }
 
         try assemble(arena, source, nodes, &lists);
@@ -280,7 +281,7 @@ pub fn extract(
 fn assemble(
     arena: std.mem.Allocator,
     source: []const u8,
-    nodes: std.EnumArray(Role, ?ts.Node),
+    nodes: std.EnumArray(Role, ?Node),
     lists: *Lists,
 ) !void {
     if (nodes.get(.method_name)) |name_node| {
@@ -350,7 +351,7 @@ fn assemble(
 fn declTypeName(
     arena: std.mem.Allocator,
     source: []const u8,
-    nodes: std.EnumArray(Role, ?ts.Node),
+    nodes: std.EnumArray(Role, ?Node),
 ) !?[]const u8 {
     if (nodes.get(.decl_type)) |type_node| return try nodeText(arena, source, type_node);
 
@@ -421,15 +422,15 @@ fn sortByStart(comptime T: type, items: []T) void {
     }.lessThan);
 }
 
-fn nodeSlice(source: []const u8, node: ts.Node) []const u8 {
+fn nodeSlice(source: []const u8, node: Node) []const u8 {
     return source[node.startByte()..node.endByte()];
 }
 
-fn nodeText(arena: std.mem.Allocator, source: []const u8, node: ts.Node) ![]const u8 {
+fn nodeText(arena: std.mem.Allocator, source: []const u8, node: Node) ![]const u8 {
     return arena.dupe(u8, nodeSlice(source, node));
 }
 
-fn rangeOf(node: ts.Node) diagnostic.Range {
+fn rangeOf(node: Node) diagnostic.Range {
     const sp = node.startPoint();
     const ep = node.endPoint();
 

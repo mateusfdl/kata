@@ -3,6 +3,7 @@ const ts = @import("tree_sitter");
 
 const diagnostic = @import("diagnostic.zig");
 const language = @import("language.zig");
+const Node = @import("node.zig").Node;
 
 pub const Name = enum {
     complexity,
@@ -251,9 +252,9 @@ pub fn complexityOf(
     allocator: std.mem.Allocator,
     compiled: *const Compiled,
     cursor: *ts.QueryCursor,
-    node: ts.Node,
+    node: Node,
 ) std.mem.Allocator.Error!u32 {
-    const analysis = try analyze(allocator, compiled, cursor, node);
+    const analysis = try analyze(allocator, compiled, cursor, node.inner);
     defer analysis.deinit(allocator);
 
     var cc: u32 = 1;
@@ -270,9 +271,9 @@ pub fn nestingOf(
     allocator: std.mem.Allocator,
     compiled: *const Compiled,
     cursor: *ts.QueryCursor,
-    node: ts.Node,
+    node: Node,
 ) std.mem.Allocator.Error!u32 {
-    const analysis = try analyze(allocator, compiled, cursor, node);
+    const analysis = try analyze(allocator, compiled, cursor, node.inner);
     defer analysis.deinit(allocator);
 
     // Collapse ownership to one class: constructs belonging to `node` share a
@@ -295,13 +296,13 @@ pub fn nestingOf(
 /// A span collected under `node` belongs to `node` itself when no captured
 /// function strictly contains it, or when the innermost one is `node` (the
 /// query root is captured too, so it shows up as a function span).
-fn ownedByRoot(spans: []const Span, owner: ?usize, node: ts.Node) bool {
+fn ownedByRoot(spans: []const Span, owner: ?usize, node: Node) bool {
     const fi = owner orelse return true;
     const f = spans[fi];
     return f.start == node.startByte() and f.end == node.endByte();
 }
 
-pub fn positionOf(node: ts.Node) ?u32 {
+pub fn positionOf(node: Node) ?u32 {
     if (node.parent() == null) return null;
     var ordinal: u32 = 1;
     var current = node;
@@ -312,16 +313,16 @@ pub fn positionOf(node: ts.Node) ?u32 {
     return ordinal;
 }
 
-pub fn siblingsOf(node: ts.Node) ?u32 {
+pub fn siblingsOf(node: Node) ?u32 {
     const container = node.parent() orelse return null;
     return container.namedChildCount();
 }
 
-pub fn lengthOf(node: ts.Node) u32 {
+pub fn lengthOf(node: Node) u32 {
     return node.endPoint().row - node.startPoint().row + 1;
 }
 
-pub fn paramsOf(node: ts.Node, lang: language.Name) ?u32 {
+pub fn paramsOf(node: Node, lang: language.Name) ?u32 {
     if (node.childByFieldName("parameters")) |params| {
         return switch (lang) {
             .ts, .tsx => countNonExtraNamed(params),
@@ -332,7 +333,7 @@ pub fn paramsOf(node: ts.Node, lang: language.Name) ?u32 {
     return null;
 }
 
-fn goParamCount(params: ts.Node) u32 {
+fn goParamCount(params: Node) u32 {
     var total: u32 = 0;
     var i: u32 = 0;
     while (i < params.namedChildCount()) : (i += 1) {
@@ -344,13 +345,13 @@ fn goParamCount(params: ts.Node) u32 {
     return total;
 }
 
-fn isGoParameterDeclaration(node: ts.Node) bool {
+fn isGoParameterDeclaration(node: Node) bool {
     const kind = node.kind();
     return std.mem.eql(u8, kind, "parameter_declaration") or
         std.mem.eql(u8, kind, "variadic_parameter_declaration");
 }
 
-fn countNonExtraNamed(node: ts.Node) u32 {
+fn countNonExtraNamed(node: Node) u32 {
     var count: u32 = 0;
     var i: u32 = 0;
     while (i < node.namedChildCount()) : (i += 1) {
@@ -361,7 +362,7 @@ fn countNonExtraNamed(node: ts.Node) u32 {
     return count;
 }
 
-fn countFieldChildren(node: ts.Node, field: []const u8) u32 {
+fn countFieldChildren(node: Node, field: []const u8) u32 {
     var count: u32 = 0;
     var i: u32 = 0;
     while (i < node.childCount()) : (i += 1) {
@@ -371,7 +372,7 @@ fn countFieldChildren(node: ts.Node, field: []const u8) u32 {
     return count;
 }
 
-pub fn argsOf(node: ts.Node) ?u32 {
+pub fn argsOf(node: Node) ?u32 {
     const arguments = node.childByFieldName("arguments") orelse return null;
     return countNonExtraNamed(arguments);
 }

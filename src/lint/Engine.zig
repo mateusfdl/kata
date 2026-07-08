@@ -11,6 +11,7 @@ const language = @import("language.zig");
 const matcher = @import("matcher.zig");
 const metric = @import("metric.zig");
 const rule = @import("rule.zig");
+const Node = @import("node.zig").Node;
 
 const RuleSet = @import("RuleSet.zig").RuleSet;
 
@@ -331,8 +332,9 @@ fn emitMatchDiagnostics(
     for (match.captures) |cap| {
         if (cap.index != r.match_capture_id) continue;
 
-        const sp = cap.node.startPoint();
-        const ep = cap.node.endPoint();
+        const n = Node.from(cap.node);
+        const sp = n.startPoint();
+        const ep = n.endPoint();
 
         try out.append(allocator, .{
             .rule_id = meta.rule_id,
