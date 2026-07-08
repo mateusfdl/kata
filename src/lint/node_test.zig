@@ -80,6 +80,23 @@ test "node: comment inside params is extra" {
     try std.testing.expect(saw_extra);
 }
 
+test "node: named symbol vs anonymous token" {
+    const src = "x;";
+    const tree = parse(src);
+    defer tree.destroy();
+
+    const root = Node.from(tree.rootNode());
+    const stmt = root.namedChild(0).?;
+
+    const identifier = stmt.child(0).?;
+    try std.testing.expectEqualStrings("identifier", identifier.kind());
+    try std.testing.expect(identifier.isNamed());
+
+    const semicolon = stmt.child(1).?;
+    try std.testing.expectEqualStrings(";", semicolon.kind());
+    try std.testing.expect(!semicolon.isNamed());
+}
+
 test "node: text is null when span exceeds the given source" {
     const src = "const x = 42;";
     const tree = parse(src);

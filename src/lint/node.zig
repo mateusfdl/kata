@@ -70,6 +70,10 @@ pub const Node = struct {
         return wrap(self.inner.prevNamedSibling());
     }
 
+    pub fn isNamed(self: Node) bool {
+        return self.inner.isNamed();
+    }
+
     pub fn isExtra(self: Node) bool {
         return self.inner.isExtra();
     }
