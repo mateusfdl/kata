@@ -6,7 +6,6 @@ const source_files = @import("source.zig");
 
 const language = lint.language;
 
-pub const scm_suffix = ".scm";
 pub const kata_suffix = ".kata";
 
 pub const project_dir_name = "project";
@@ -16,7 +15,6 @@ pub const RuleFile = struct {
     id: []const u8,
     body: []const u8,
     source: lint.Source,
-    format: lint.rule.Format,
     project: bool = false,
 };
 
@@ -119,15 +117,13 @@ fn collectLanguageRuleFiles(
     var file_iter = lang_dir.iterate();
     while (try file_iter.next(io)) |fentry| {
         if (fentry.kind != .file) continue;
-        const format = formatOf(fentry.name) orelse continue;
-        const id = stripSuffix(fentry.name, format);
+        const id = ruleId(fentry.name) orelse continue;
         if (id.len == 0) return error.InvalidRule;
         try out.append(allocator, .{
             .langs = langs,
             .id = try allocator.dupe(u8, id),
             .body = try lang_dir.readFileAlloc(io, fentry.name, allocator, .limited(std.math.maxInt(usize))),
             .source = source,
-            .format = format,
         });
     }
 }
@@ -145,25 +141,21 @@ fn collectProjectRuleFiles(
     var file_iter = project_dir.iterate();
     while (try file_iter.next(io)) |fentry| {
         if (fentry.kind != .file) continue;
-        const format = formatOf(fentry.name) orelse continue;
-        if (format != .kata) return error.ProjectRuleMustBeKata;
-        const id = stripSuffix(fentry.name, format);
+        const id = ruleId(fentry.name) orelse continue;
         if (id.len == 0) return error.InvalidRule;
         try out.append(allocator, .{
             .langs = &.{},
             .id = try allocator.dupe(u8, id),
             .body = try project_dir.readFileAlloc(io, fentry.name, allocator, .limited(std.math.maxInt(usize))),
             .source = source,
-            .format = format,
             .project = true,
         });
     }
 }
 
-pub fn formatOf(name: []const u8) ?lint.rule.Format {
-    if (std.mem.endsWith(u8, name, scm_suffix)) return .scm;
-    if (std.mem.endsWith(u8, name, kata_suffix)) return .kata;
-    return null;
+pub fn ruleId(name: []const u8) ?[]const u8 {
+    if (!std.mem.endsWith(u8, name, kata_suffix)) return null;
+    return name[0 .. name.len - kata_suffix.len];
 }
 
 fn collectLanguageFixtureFiles(
@@ -195,12 +187,4 @@ fn collectLanguageFixtureFiles(
             .path = try paths.join(arena, tests_path, entry.name),
         });
     }
-}
-
-fn stripSuffix(name: []const u8, format: lint.rule.Format) []const u8 {
-    const suffix = switch (format) {
-        .scm => scm_suffix,
-        .kata => kata_suffix,
-    };
-    return name[0 .. name.len - suffix.len];
 }

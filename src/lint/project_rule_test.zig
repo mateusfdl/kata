@@ -57,7 +57,7 @@ fn indexTsFiles(f: *Fixture, gpa: std.mem.Allocator, index: *ProjectIndex) !void
 
 test "project rule: restricted-callers flags non-repository callers only" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -84,7 +84,7 @@ test "project rule: restricted-callers flags non-repository callers only" {
 
 test "project rule: path filter keeps cross-file context but reports one file" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -105,7 +105,7 @@ test "project rule: path filter keeps cross-file context but reports one file" {
 
 test "project rule: warnings demote violations to warn severity" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -124,7 +124,7 @@ test "project rule: warnings demote violations to warn severity" {
 
 test "project rule: go constructor channel resolves receivers" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -160,7 +160,7 @@ test "project rule: go constructor channel resolves receivers" {
 
 test "project rule: top-level callers are not repositories" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -186,7 +186,7 @@ test "project rule: top-level callers are not repositories" {
 
 test "project rule: ambiguous receivers are skipped" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -214,7 +214,7 @@ test "project rule: ambiguous receivers are skipped" {
 
 test "project rule: callee types not defined in the project are skipped" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -240,7 +240,7 @@ test "project rule: callee types not defined in the project are skipped" {
 
 test "project rule: violations are sorted by path and position" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -278,7 +278,7 @@ const domain_no_infra: project_rule.ProjectRule = .{
 
 test "project rule: import-boundary resolves ts relative specifiers" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -313,7 +313,7 @@ test "project rule: import-boundary resolves ts relative specifiers" {
 
 test "project rule: import-boundary matches go import strings" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -349,7 +349,7 @@ test "project rule: import-boundary matches go import strings" {
 
 test "project rule: import-boundary never denies relative imports escaping the root" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -370,7 +370,7 @@ test "project rule: import-boundary never denies relative imports escaping the r
 
 test "project rule: import-boundary judges relative imports by resolved path only" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -398,7 +398,7 @@ test "project rule: import-boundary judges relative imports by resolved path onl
 
 test "project rule: import-boundary ignores imports outside the deny glob" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);

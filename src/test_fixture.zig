@@ -42,23 +42,13 @@ pub const Fixture = struct {
         id: []const u8,
         source: []const u8,
     ) !*Fixture {
-        return initFormat(allocator, langs, id, source, .kata);
-    }
-
-    pub fn initFormat(
-        allocator: std.mem.Allocator,
-        langs: []const language.Name,
-        id: []const u8,
-        source: []const u8,
-        format: lint.rule.Format,
-    ) !*Fixture {
         const self = try allocator.create(Fixture);
         self.* = .{
             .allocator = allocator,
             .rule_set = .{ .allocator = allocator },
             .engine = undefined,
         };
-        for (langs) |l| try self.add(l, id, source, format);
+        for (langs) |l| try self.add(l, id, source);
 
         self.engine = Engine.init(allocator, &self.rule_set);
         return self;
@@ -69,12 +59,10 @@ pub const Fixture = struct {
         lang: language.Name,
         id: []const u8,
         source: []const u8,
-        format: lint.rule.Format,
     ) !void {
         try self.rule_set.append(lang, .{
             .id = try self.allocator.dupe(u8, id),
             .source = try self.allocator.dupe(u8, source),
-            .format = format,
         });
     }
 

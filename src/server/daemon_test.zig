@@ -9,7 +9,7 @@ const test_frame = @import("../test_frame.zig");
 const daemon_mtime: i64 = 1726000000000;
 
 fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
-    return test_fixture.Fixture.initFormat(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule, .kata);
+    return test_fixture.Fixture.init(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule);
 }
 
 fn context(f: *test_fixture.Fixture) daemon.Context {
@@ -394,7 +394,7 @@ test "daemon: warn-only diagnostics keep the report clean" {
         \\  emit @match { message "as any is not allowed" }
         \\}
     ;
-    var f = try test_fixture.Fixture.initFormat(gpa, &.{.ts}, "no-as-any", warn_rule, .kata);
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", warn_rule);
     defer f.deinit();
 
     const resp = daemon.handle(context(f), arena.allocator(), .{
@@ -561,7 +561,7 @@ test "daemon: ratchet compares error counts so warn diagnostics never mask error
         \\  emit @match { message "no non-null assertions" }
         \\}
     ;
-    var f = try test_fixture.Fixture.initFormat(gpa, &.{.ts}, "no-as-any", mixed_rule, .kata);
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", mixed_rule);
     defer f.deinit();
 
     var tmp = std.testing.tmpDir(.{});

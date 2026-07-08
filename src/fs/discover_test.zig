@@ -97,9 +97,9 @@ test "discover: anchor inside the .kata directory itself finds the root" {
     defer s.deinit();
 
     try s.tmp.dir.createDirPath(io, "proj/.kata/rules/go");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/go/no-panic.scm", .data = "((x) @match)\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/go/no-panic.kata", .data = "rule no-panic {}\n" });
 
-    const found = try discover.findProjectRoot(io, s.arena.allocator(), try s.path("proj/.kata/rules/go/no-panic.scm"));
+    const found = try discover.findProjectRoot(io, s.arena.allocator(), try s.path("proj/.kata/rules/go/no-panic.kata"));
     try std.testing.expectEqualStrings(try s.absolute(io, "proj"), found.?);
 }
 

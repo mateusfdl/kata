@@ -11,13 +11,10 @@ pub const match_capture = "match";
 
 pub const Source = enum { embedded, user, project };
 
-pub const Format = enum { scm, kata };
-
 pub const RawRule = struct {
     id: []const u8,
     source: []const u8,
     origin: Source = .embedded,
-    format: Format = .scm,
 };
 
 pub const ScopedId = struct {

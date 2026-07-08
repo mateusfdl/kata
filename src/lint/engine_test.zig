@@ -113,7 +113,7 @@ const cross_grammar_print_rule =
 const Fixture = test_fixture.Fixture;
 
 fn newFixture(allocator: std.mem.Allocator, langs: []const language.Name) !*Fixture {
-    return Fixture.initFormat(allocator, langs, "no-as-any", kata_no_as_any_rule, .kata);
+    return Fixture.init(allocator, langs, "no-as-any", kata_no_as_any_rule);
 }
 
 test "engine: detects `as any`" {
@@ -233,7 +233,7 @@ test "engine: per-language rule filtering" {
 
 test "engine: ts rules never evaluate go sources" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-print-call", cross_grammar_print_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-print-call", cross_grammar_print_rule);
     defer f.deinit();
 
     const ts_diags = try f.engine.lint(gpa, "print(\"x\");", .ts, null);
@@ -249,7 +249,7 @@ test "engine: ts rules never evaluate go sources" {
 
 test "engine: weak assertions only match expect chains" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{ .ts, .tsx }, "no-weak-assertions", no_weak_assertions_rule, .kata);
+    var f = try Fixture.init(gpa, &.{ .ts, .tsx }, "no-weak-assertions", no_weak_assertions_rule);
     defer f.deinit();
 
     const src =
@@ -271,7 +271,7 @@ test "engine: weak assertions only match expect chains" {
 
 test "engine: go detects blank identifier short declaration" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "no-swallowed-errors", blank_identifier_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "no-swallowed-errors", blank_identifier_rule);
     defer f.deinit();
 
     const src =
@@ -294,7 +294,7 @@ test "engine: go detects blank identifier short declaration" {
 
 test "engine: not-match? exempts matching comments" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", no_comments_except_directives_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", no_comments_except_directives_rule);
     defer f.deinit();
 
     const src =
@@ -312,7 +312,7 @@ test "engine: not-match? exempts matching comments" {
 
 test "engine: match? flags only matching comments" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "todo-comments", todo_comments_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "todo-comments", todo_comments_rule);
     defer f.deinit();
 
     const src =
@@ -337,7 +337,7 @@ test "engine: exclude-paths suppresses diagnostics for matching paths" {
         \\  emit @match { message "no comments" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
     defer f.deinit();
     const src = "// plain\n";
 
@@ -365,7 +365,7 @@ test "engine: exclude-paths set directive is accepted" {
         \\  emit @match { message "no comments" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "// plain\n", .go, null);
@@ -377,7 +377,7 @@ test "engine: exclude-paths set directive is accepted" {
 
 test "engine: go detects console output" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "no-console", go_no_console_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "no-console", go_no_console_rule);
     defer f.deinit();
 
     const src =
@@ -420,7 +420,7 @@ const repo_complexity_rule =
 
 test "engine: where scopes complexity to matching classes only" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "repo-complexity", repo_complexity_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "repo-complexity", repo_complexity_rule);
     defer f.deinit();
 
     const src =
@@ -459,7 +459,7 @@ test "engine: where complexity excludes nested functions" {
         \\  emit @match { message "too complex" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "method-complexity", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "method-complexity", rule);
     defer f.deinit();
 
     const src =
@@ -499,7 +499,7 @@ test "engine: where scopes complexity to go receiver types" {
         \\  emit @match { message "repository methods must keep complexity <= 1" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "repo-complexity", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "repo-complexity", rule);
     defer f.deinit();
 
     const src =
@@ -533,7 +533,7 @@ test "engine: where nesting fires beyond the threshold" {
         \\  emit @match { message "too deep" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-nesting", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "max-nesting", rule);
     defer f.deinit();
 
     const deep =
@@ -575,7 +575,7 @@ test "engine: where composes length and complexity" {
         \\  emit @match { message "long and complex" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "long-complex", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "long-complex", rule);
     defer f.deinit();
 
     const src =
@@ -622,7 +622,7 @@ test "engine: set severity warn stamps warn on diagnostics" {
         \\  emit @match { message "no comments" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "// hi\n", .go, null);
@@ -643,7 +643,7 @@ test "engine: set severity error keeps error" {
         \\  emit @match { message "no comments" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "// hi\n", .go, null);
@@ -689,7 +689,7 @@ test "engine: where params counts ts function parameters" {
         \\  emit @match { message "too many params" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-params", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "max-params", rule);
     defer f.deinit();
 
     const src =
@@ -713,7 +713,7 @@ test "engine: where params counts go grouped parameter names" {
         \\  emit @match { message "too many params" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "max-params", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "max-params", rule);
     defer f.deinit();
 
     const src =
@@ -737,7 +737,7 @@ test "engine: where args counts call arguments" {
         \\  emit @match { message "too many args" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-args", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "max-args", rule);
     defer f.deinit();
 
     const src = "f(1, 2, 3, 4);\ng(1, 2, 3);\n";
@@ -758,7 +758,7 @@ test "engine: where args ignores comments between arguments" {
         \\  emit @match { message "too many args" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-args", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "max-args", rule);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "f(1, /* note */ 2);\n", .ts, null);
@@ -777,7 +777,7 @@ test "engine: where params ignores comments in ts parameter list" {
         \\  emit @match { message "too many params" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-params", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "max-params", rule);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "function f(a, /* note */ b) {}\n", .ts, null);
@@ -796,7 +796,7 @@ test "engine: where params ignores comments in go parameter list" {
         \\  emit @match { message "too many params" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "max-params", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "max-params", rule);
     defer f.deinit();
 
     const src =
@@ -820,7 +820,7 @@ test "engine: where text compares numeric capture text" {
         \\  emit @match { message "timeout too long" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "short-timeouts", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "short-timeouts", rule);
     defer f.deinit();
 
     const src = "const slow = 60000;\nconst fast = 100;\n";
@@ -844,7 +844,7 @@ test "engine: where text on non-numeric capture never fires" {
         \\  emit @match { message "m" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "never", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "never", rule);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "const name = \"x\";\n", .ts, null);
@@ -867,7 +867,7 @@ test "engine: message interpolates measures and capture text" {
         \\  emit @match { message "complexity {complexity(@match)} exceeds 2 in {text(@name)}" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-complexity", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "max-complexity", rule);
     defer f.deinit();
 
     const src =
@@ -893,7 +893,7 @@ test "engine: message interpolation works without a where predicate" {
         \\  emit @match { message "spans {length(@match)} lines" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "length-report", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "length-report", rule);
     defer f.deinit();
 
     const src =
@@ -917,7 +917,7 @@ test "engine: message renders doubled braces as literals" {
         \\  emit @match { message "avoid interface{{}} here" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-empty-iface", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-empty-iface", rule);
     defer f.deinit();
 
     const diags = try f.engine.lint(arena.allocator(), "function f() {}", .ts, null);
@@ -937,7 +937,7 @@ test "engine: message renders escaped braces around a placeholder" {
         \\  emit @match { message "{{{length(@match)}}}" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "length-report", rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "length-report", rule);
     defer f.deinit();
 
     const diags = try f.engine.lint(arena.allocator(), "function f() {}", .ts, null);
@@ -961,7 +961,7 @@ const kata_no_console_rule =
 
 test "engine: lints with a kata rule" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-console", kata_no_console_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-console", kata_no_console_rule);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "console.log(1);\nfoo.bar(2);\n", .ts, null);
@@ -978,9 +978,9 @@ test "engine: lints with a kata rule" {
 
 test "engine: multiple kata rules fire together" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-as-any", kata_no_as_any_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-as-any", kata_no_as_any_rule);
     defer f.deinit();
-    try f.add(.ts, "no-console", kata_no_console_rule, .kata);
+    try f.add(.ts, "no-console", kata_no_console_rule);
 
     const diags = try f.engine.lint(gpa, "const x = (y as any).z;\nconsole.log(1);\n", .ts, null);
     defer gpa.free(diags);
@@ -1000,7 +1000,7 @@ test "engine: kata measure rules use the metric context" {
         \\  emit @match { message "complexity {complexity(@match)} exceeds 1" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-complexity", measured, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "max-complexity", measured);
     defer f.deinit();
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -1014,7 +1014,7 @@ test "engine: kata measure rules use the metric context" {
 
 test "engine: kata parse error reports the rule id and position" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-x", "rule no-x {\n  lang ts\n", .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-x", "rule no-x {\n  lang ts\n");
     defer f.deinit();
 
     try std.testing.expectError(error.ExpectedRightBrace, f.engine.lint(gpa, "x;\n", .ts, null));
@@ -1027,7 +1027,7 @@ test "engine: kata parse error reports the rule id and position" {
 
 test "engine: kata rule id must match the file name" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "other-name", kata_no_console_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "other-name", kata_no_console_rule);
     defer f.deinit();
 
     try std.testing.expectError(error.RuleIdMismatch, f.engine.lint(gpa, "x;\n", .ts, null));
@@ -1037,7 +1037,7 @@ test "engine: kata rule id must match the file name" {
 
 test "engine: kata rule must declare the directory language" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "no-console", kata_no_console_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "no-console", kata_no_console_rule);
     defer f.deinit();
 
     try std.testing.expectError(error.UndeclaredLanguage, f.engine.lint(gpa, "package main\n", .go, null));
@@ -1065,7 +1065,7 @@ test "engine: kata rule variants in one file all fire" {
         \\  emit @match { message "as any is not allowed" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-any", variants, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-any", variants);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "const x: any = y as any;\n", .ts, null);
@@ -1092,7 +1092,7 @@ test "engine: kata variant with a different id fails" {
         \\  emit @match { message "b" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-a", two_rules, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-a", two_rules);
     defer f.deinit();
 
     try std.testing.expectError(error.RuleIdMismatch, f.engine.lint(gpa, "x;\n", .ts, null));
@@ -1107,7 +1107,7 @@ test "engine: project kata rules cannot load from language dirs" {
         \\  emit @match { message "m" }
         \\}
     ;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "boundaries", project_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "boundaries", project_rule);
     defer f.deinit();
 
     try std.testing.expectError(error.ProjectRuleInLocalDir, f.engine.lint(gpa, "x;\n", .ts, null));
@@ -1137,7 +1137,7 @@ const kata_console_outside_logger =
 
 test "engine: not inside skips matches enclosed by the named class" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "console-outside-logger", kata_console_outside_logger, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "console-outside-logger", kata_console_outside_logger);
     defer f.deinit();
 
     const src =
@@ -1168,7 +1168,7 @@ const kata_no_empty_catch =
 
 test "engine: not has fires only when the subtree lacks a match" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-empty-catch", kata_no_empty_catch, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-empty-catch", kata_no_empty_catch);
     defer f.deinit();
 
     const src =
@@ -1195,7 +1195,7 @@ const kata_statement_call =
 
 test "engine: parent matches the direct parent, not any ancestor" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "statement-call", kata_statement_call, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "statement-call", kata_statement_call);
     defer f.deinit();
 
     const src =
@@ -1229,7 +1229,7 @@ const kata_no_void =
 
 test "engine: no-void flags sub-expression void and exempts statements and void 0" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-void", kata_no_void, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-void", kata_no_void);
     defer f.deinit();
 
     const src =
@@ -1269,7 +1269,7 @@ const kata_any_of_helper =
 
 test "engine: anyOf helper flags any listed matcher and nothing else" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-weak-assertions", kata_any_of_helper, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-weak-assertions", kata_any_of_helper);
     defer f.deinit();
 
     const src =
@@ -1302,7 +1302,7 @@ const kata_in_operator =
 
 test "engine: in operator flags any listed matcher and nothing else" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-weak-assertions", kata_in_operator, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-weak-assertions", kata_in_operator);
     defer f.deinit();
 
     const src =
@@ -1335,7 +1335,7 @@ const kata_not_in_operator =
 
 test "engine: not in operator flags everything outside the set" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "allowlist", kata_not_in_operator, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "allowlist", kata_not_in_operator);
     defer f.deinit();
 
     const src =
@@ -1363,7 +1363,7 @@ const kata_too_many_returns =
 
 test "engine: count compares nested match totals" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "too-many-returns", kata_too_many_returns, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "too-many-returns", kata_too_many_returns);
     defer f.deinit();
 
     const src =
@@ -1404,7 +1404,7 @@ const kata_complex_class =
 
 test "engine: has evaluates measures in the nested where" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "complex-class", kata_complex_class, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "complex-class", kata_complex_class);
     defer f.deinit();
 
     const src =
@@ -1439,7 +1439,7 @@ const kata_self_has =
 
 test "engine: has rejects the same-range self match" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "self-has", kata_self_has, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "self-has", kata_self_has);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "function f() { return 1; }\n", .ts, null);
@@ -1465,7 +1465,7 @@ const kata_missing_subject =
 
 test "engine: a missing subject capture evaluates to false" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "missing-subject", kata_missing_subject, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "missing-subject", kata_missing_subject);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "function quiet() { let a = 1; }\nfunction loud() { return call(); }\n", .ts, null);
@@ -1492,7 +1492,7 @@ const kata_effect_hooks =
 
 test "engine: string helper predicates filter matches" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "effect-hooks", kata_effect_hooks, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "effect-hooks", kata_effect_hooks);
     defer f.deinit();
 
     const src =
@@ -1525,7 +1525,7 @@ const kata_glob_imports =
 
 test "engine: glob predicate filters matches" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-internal-imports", kata_glob_imports, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-internal-imports", kata_glob_imports);
     defer f.deinit();
 
     const src =
@@ -1556,7 +1556,7 @@ const kata_no_early_exit =
 
 test "engine: capture predicate tests optional capture presence" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-early-exit", kata_no_early_exit, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-early-exit", kata_no_early_exit);
     defer f.deinit();
 
     const src =
@@ -1587,7 +1587,7 @@ test "engine: position measure selects the nth named sibling" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "second-element", kata_second_element, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "second-element", kata_second_element);
     defer f.deinit();
 
     const src = "const x = [a, b, c];\nconst y = [d];\n";
@@ -1613,7 +1613,7 @@ const kata_last_element =
 
 test "engine: position equals siblings selects the last named sibling" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "last-element", kata_last_element, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "last-element", kata_last_element);
     defer f.deinit();
 
     const src = "const x = [a, b, c];\nconst y = [d];\n";

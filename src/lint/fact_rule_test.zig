@@ -67,7 +67,7 @@ const seed_script_ts =
 
 test "fact rule: repository isolation flags service and top-level callers" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -104,7 +104,7 @@ test "fact rule: repository isolation flags service and top-level callers" {
 
 test "fact rule: path filter keeps cross-file context but reports one file" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -127,7 +127,7 @@ test "fact rule: path filter keeps cross-file context but reports one file" {
 
 test "fact rule: ambiguous receivers emit nothing" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -155,7 +155,7 @@ test "fact rule: ambiguous receivers emit nothing" {
 
 test "fact rule: receiver types not defined in the project emit nothing" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -195,7 +195,7 @@ const domain_no_infra: fact_rule.CompiledFactRule = .{
 
 test "fact rule: import boundary resolves relative specifiers" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -228,7 +228,7 @@ test "fact rule: import boundary resolves relative specifiers" {
 
 test "fact rule: go import specifiers pass through verbatim" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.go}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -262,7 +262,7 @@ test "fact rule: go import specifiers pass through verbatim" {
 
 test "fact rule: relative imports escaping the root emit nothing" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -283,7 +283,7 @@ test "fact rule: relative imports escaping the root emit nothing" {
 
 test "fact rule: empty fields compare as empty strings" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -311,7 +311,7 @@ test "fact rule: empty fields compare as empty strings" {
 
 test "fact rule: class facts expose name and range" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -345,7 +345,7 @@ test "fact rule: class facts expose name and range" {
 
 test "fact rule: regex and any-of predicates filter facts" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -381,7 +381,7 @@ test "fact rule: regex and any-of predicates filter facts" {
 
 test "fact rule: missing message operands render as question marks" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -415,7 +415,7 @@ test "fact rule: missing message operands render as question marks" {
 
 test "fact rule: exclude paths skip matching files" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);
@@ -441,7 +441,7 @@ test "fact rule: exclude paths skip matching files" {
 
 test "fact rule: warnings demote violations to warn severity" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-comments", comment_rule, .kata);
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
 
     var index = ProjectIndex.init(gpa);

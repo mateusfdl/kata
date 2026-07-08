@@ -58,7 +58,6 @@ pub fn compileRaws(
 
     var rules: std.ArrayList(ast.Rule) = .empty;
     for (raws) |raw| {
-        if (raw.format != .kata) continue;
         try rules.appendSlice(arena, try parseRaw(arena, lang, raw, diag));
     }
     if (rules.items.len == 0) return null;

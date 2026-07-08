@@ -779,8 +779,8 @@ test "selection: project raws need a project scoped enable" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
-    try fx.set.upsertProject(.{ .id = "isolation", .source = "1", .format = .kata }, .project);
-    try fx.set.upsertProject(.{ .id = "boundaries", .source = "2", .format = .kata }, .project);
+    try fx.set.upsertProject(.{ .id = "isolation", .source = "1" }, .project);
+    try fx.set.upsertProject(.{ .id = "boundaries", .source = "2" }, .project);
 
     var cfg = try expectParseOk("enabled:\n  - project/isolation\n");
     defer cfg.deinit();
@@ -806,8 +806,8 @@ test "selection: bare ids enable project raws and disabled wins" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
-    try fx.set.upsertProject(.{ .id = "isolation", .source = "1", .format = .kata }, .project);
-    try fx.set.upsertProject(.{ .id = "boundaries", .source = "2", .format = .kata }, .project);
+    try fx.set.upsertProject(.{ .id = "isolation", .source = "1" }, .project);
+    try fx.set.upsertProject(.{ .id = "boundaries", .source = "2" }, .project);
 
     var cfg = try expectParseOk("enabled:\n  - isolation\n  - boundaries\ndisabled:\n  - project/boundaries\n");
     defer cfg.deinit();

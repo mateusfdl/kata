@@ -8,6 +8,70 @@ const test_fixture = @import("../test_fixture.zig");
 
 const language = lint.language;
 
+const kata_ident =
+    \\rule marker {
+    \\  lang ts
+    \\  match identifier @match
+    \\  emit @match { message "flag" }
+    \\}
+;
+
+const kata_shared_user =
+    \\rule shared-rule {
+    \\  lang ts
+    \\  match identifier @match
+    \\  emit @match { message "user" }
+    \\}
+;
+
+const kata_shared_project =
+    \\rule shared-rule {
+    \\  lang ts
+    \\  match identifier @match
+    \\  emit @match { message "project" }
+    \\}
+;
+
+const kata_project_only =
+    \\rule project-only {
+    \\  lang ts
+    \\  match call_expression @match
+    \\  emit @match { message "call" }
+    \\}
+;
+
+const kata_one =
+    \\rule one {
+    \\  lang ts
+    \\  match identifier @match
+    \\  emit @match { message "one" }
+    \\}
+;
+
+const kata_two =
+    \\rule two {
+    \\  lang ts
+    \\  match identifier @match
+    \\  emit @match { message "two" }
+    \\}
+;
+
+const kata_local_old =
+    \\rule local {
+    \\  lang ts
+    \\  match identifier @match
+    \\  emit @match { message "old" }
+    \\}
+;
+
+const kata_local_new =
+    \\rule local {
+    \\  lang ts
+    \\  match identifier @match
+    \\  emit @match { message "new body, strictly longer than the old one" }
+    \\}
+;
+
 const Setup = struct {
     tmp: std.testing.TmpDir,
     arena: std.heap.ArenaAllocator,
@@ -67,7 +131,7 @@ test "context: no anchor resolves the global context" {
     defer s.deinit();
 
     try s.tmp.dir.createDirPath(io, "user/ts");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/my-user-rule.scm", .data = "((identifier) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/my-user-rule.kata", .data = kata_ident });
 
     var global = try parseGlobal("enabled:\n  - my-user-rule\n");
     defer global.deinit();
@@ -77,7 +141,7 @@ test "context: no anchor resolves the global context" {
     defer ctx.deinit();
 
     try std.testing.expectEqual(@as(?[]const u8, null), ctx.root);
-    try std.testing.expectEqualStrings("((identifier) @match)", ruleSource(&ctx.rule_set, .ts, "my-user-rule").?);
+    try std.testing.expectEqualStrings(kata_ident, ruleSource(&ctx.rule_set, .ts, "my-user-rule").?);
     try std.testing.expectEqual(false, ctx.resolved.ratchet);
 }
 
@@ -87,11 +151,11 @@ test "context: anchored file loads project rules on top of user rules" {
     defer s.deinit();
 
     try s.tmp.dir.createDirPath(io, "user/ts");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/shared-rule.scm", .data = "((user_version) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/shared-rule.kata", .data = kata_shared_user });
     try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
     try s.tmp.dir.createDirPath(io, "proj/src");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/shared-rule.scm", .data = "((project_version) @match)" });
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/project-only.scm", .data = "((call_expression) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/shared-rule.kata", .data = kata_shared_project });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/project-only.kata", .data = kata_project_only });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
     var global = try parseGlobal("enabled:\n  - shared-rule\n  - project-only\n");
@@ -103,8 +167,8 @@ test "context: anchored file loads project rules on top of user rules" {
 
     try std.testing.expect(ctx.root != null);
     try std.testing.expect(std.mem.endsWith(u8, ctx.root.?, "proj"));
-    try std.testing.expectEqualStrings("((project_version) @match)", ruleSource(&ctx.rule_set, .ts, "shared-rule").?);
-    try std.testing.expectEqualStrings("((call_expression) @match)", ruleSource(&ctx.rule_set, .ts, "project-only").?);
+    try std.testing.expectEqualStrings(kata_shared_project, ruleSource(&ctx.rule_set, .ts, "shared-rule").?);
+    try std.testing.expectEqualStrings(kata_project_only, ruleSource(&ctx.rule_set, .ts, "project-only").?);
     try std.testing.expectEqual(@as(usize, 0), ctx.rule_set.warnings.items.len);
 }
 
@@ -114,7 +178,7 @@ test "context: project rules.yaml overrides global config per key" {
     defer s.deinit();
 
     try s.tmp.dir.createDirPath(io, "user/ts");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/drop-me.scm", .data = "((identifier) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/drop-me.kata", .data = kata_ident });
     try s.tmp.dir.createDirPath(io, "proj/.kata");
     try s.tmp.dir.createDirPath(io, "proj/src");
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\ndisabled:\n  - ts/drop-me\n" });
@@ -139,7 +203,7 @@ test "context: undeclared rules stay inactive" {
 
     try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
     try s.tmp.dir.createDirPath(io, "proj/src");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/undeclared.scm", .data = "((identifier) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/undeclared.kata", .data = kata_ident });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
     var r = s.resolver(null, null);
@@ -160,14 +224,14 @@ test "context: project rules.yaml enables its own rules" {
     try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
     try s.tmp.dir.createDirPath(io, "proj/src");
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "enabled:\n  - ts/local\n" });
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.scm", .data = "((identifier) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.kata", .data = kata_ident });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
     var r = s.resolver(null, null);
     const ctx = try r.resolve(try s.path("proj/src/main.ts"));
     defer ctx.deinit();
 
-    try std.testing.expectEqualStrings("((identifier) @match)", ruleSource(&ctx.rule_set, .ts, "local").?);
+    try std.testing.expectEqualStrings(kata_ident, ruleSource(&ctx.rule_set, .ts, "local").?);
 }
 
 test "context: project without rules dir or rules.yaml keeps global behavior" {
@@ -253,7 +317,7 @@ test "cache: same project resolves once and is reused" {
 
     try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
     try s.tmp.dir.createDirPath(io, "proj/src");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.scm", .data = "((identifier) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.kata", .data = kata_ident });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/a.ts", .data = "const a = 1;\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/b.ts", .data = "const b = 2;\n" });
 
@@ -268,7 +332,7 @@ test "cache: same project resolves once and is reused" {
     const second = (try cache.acquire(s.arena.allocator(), try s.path("proj/src/b.ts"))).?;
 
     try std.testing.expectEqual(first, second);
-    try std.testing.expectEqualStrings("((identifier) @match)", ruleSource(&first.rule_set, .ts, "local").?);
+    try std.testing.expectEqualStrings(kata_ident, ruleSource(&first.rule_set, .ts, "local").?);
 }
 
 test "cache: distinct projects get their own contexts" {
@@ -278,8 +342,8 @@ test "cache: distinct projects get their own contexts" {
 
     try s.tmp.dir.createDirPath(io, "one/.kata/rules/ts");
     try s.tmp.dir.createDirPath(io, "two/.kata/rules/ts");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "one/.kata/rules/ts/rule-one.scm", .data = "((one) @match)" });
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "two/.kata/rules/ts/rule-two.scm", .data = "((two) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "one/.kata/rules/ts/rule-one.kata", .data = kata_one });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "two/.kata/rules/ts/rule-two.kata", .data = kata_two });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "one/a.ts", .data = "const a = 1;\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "two/b.ts", .data = "const b = 2;\n" });
 
@@ -294,9 +358,9 @@ test "cache: distinct projects get their own contexts" {
     const two = (try cache.acquire(s.arena.allocator(), try s.path("two/b.ts"))).?;
 
     try std.testing.expect(one != two);
-    try std.testing.expectEqualStrings("((one) @match)", ruleSource(&one.rule_set, .ts, "rule-one").?);
+    try std.testing.expectEqualStrings(kata_one, ruleSource(&one.rule_set, .ts, "rule-one").?);
     try std.testing.expectEqual(@as(?[]const u8, null), ruleSource(&one.rule_set, .ts, "rule-two"));
-    try std.testing.expectEqualStrings("((two) @match)", ruleSource(&two.rule_set, .ts, "rule-two").?);
+    try std.testing.expectEqualStrings(kata_two, ruleSource(&two.rule_set, .ts, "rule-two").?);
 }
 
 test "cache: unchanged project keeps serving the cached context" {
@@ -305,7 +369,7 @@ test "cache: unchanged project keeps serving the cached context" {
     defer s.deinit();
 
     try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.scm", .data = "((identifier) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.kata", .data = kata_ident });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const a = 1;\n" });
 
     var r = s.resolver(null, null);
@@ -323,7 +387,7 @@ test "cache: edited rule file rebuilds the project context" {
     defer s.deinit();
 
     try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.scm", .data = "((old_body) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.kata", .data = kata_local_old });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const a = 1;\n" });
 
     var global = try parseGlobal("enabled:\n  - local\n");
@@ -334,12 +398,12 @@ test "cache: edited rule file rebuilds the project context" {
     defer cache.deinit();
 
     const first = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
-    try std.testing.expectEqualStrings("((old_body) @match)", ruleSource(&first.rule_set, .ts, "local").?);
+    try std.testing.expectEqualStrings(kata_local_old, ruleSource(&first.rule_set, .ts, "local").?);
 
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.scm", .data = "((new_body_longer) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.kata", .data = kata_local_new });
 
     const second = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
-    try std.testing.expectEqualStrings("((new_body_longer) @match)", ruleSource(&second.rule_set, .ts, "local").?);
+    try std.testing.expectEqualStrings(kata_local_new, ruleSource(&second.rule_set, .ts, "local").?);
 }
 
 test "cache: added rule file rebuilds the project context" {
@@ -348,7 +412,7 @@ test "cache: added rule file rebuilds the project context" {
     defer s.deinit();
 
     try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/one.scm", .data = "((one) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/one.kata", .data = kata_one });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const a = 1;\n" });
 
     var global = try parseGlobal("enabled:\n  - one\n  - two\n");
@@ -361,10 +425,10 @@ test "cache: added rule file rebuilds the project context" {
     const first = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
     try std.testing.expectEqual(@as(?[]const u8, null), ruleSource(&first.rule_set, .ts, "two"));
 
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/two.scm", .data = "((two) @match)" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/two.kata", .data = kata_two });
 
     const second = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
-    try std.testing.expectEqualStrings("((two) @match)", ruleSource(&second.rule_set, .ts, "two").?);
+    try std.testing.expectEqualStrings(kata_two, ruleSource(&second.rule_set, .ts, "two").?);
 }
 
 test "cache: deleted rules yaml rebuilds and drops project config" {

@@ -39,7 +39,6 @@ pub const Resolver = struct {
     user_rules_dir: ?[]const u8 = null,
     global_config: ?*const config.Config = null,
     diag: config.Diagnostic = .{},
-    load_diag: loader.Diagnostic = .{},
 
     pub fn resolve(self: *Resolver, anchor: ?[]const u8) !*Context {
         const ctx = try self.gpa.create(Context);
@@ -89,11 +88,9 @@ pub const Resolver = struct {
             }
         }
 
-        self.load_diag = .{};
         var rule_set = try loader.load(arena, self.io, .{
             .user_dir = self.user_rules_dir,
             .project_dir = project_rules_dir,
-            .diag = &self.load_diag,
         });
         errdefer rule_set.deinit();
 
@@ -196,7 +193,7 @@ fn projectFingerprint(io: std.Io, scratch: std.mem.Allocator, root: []const u8) 
         var files = lang_dir.iterate();
         while (try files.next(io)) |fentry| {
             if (fentry.kind != .file) continue;
-            if (fs.rules.formatOf(fentry.name) == null) continue;
+            if (fs.rules.ruleId(fentry.name) == null) continue;
             const st = try lang_dir.statFile(io, fentry.name, .{});
             acc ^= entryHash(entry.name, fentry.name, st);
         }

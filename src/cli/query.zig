@@ -49,7 +49,7 @@ pub fn run(
     var rule_set: lint.RuleSet = .{ .allocator = gpa };
     defer rule_set.deinit();
     for (langs_buf[0..langs_len]) |lang| {
-        try rule_set.append(lang, .{ .id = rule_id, .source = opts.text, .format = .kata });
+        try rule_set.append(lang, .{ .id = rule_id, .source = opts.text });
     }
 
     var engine = Engine.init(gpa, &rule_set);

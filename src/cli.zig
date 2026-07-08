@@ -220,11 +220,6 @@ fn resolveContext(c: Command, anchor: ?[]const u8) !?*context_mod.Context {
             try c.stderr.flush();
             return null;
         }
-        if (c.resolver.load_diag.lang) |lang| {
-            try c.stderr.print("kata: rule {s}/{s} exists as both .scm and .kata\n", .{ lang.toString(), c.resolver.load_diag.id() });
-            try c.stderr.flush();
-            return null;
-        }
         _ = try internalError(c.stderr, "resolve context", err);
         return null;
     };
@@ -263,7 +258,7 @@ fn runNewRule(
 
 fn runUnknown(c: Command, cmd: []const u8) !u8 {
     try c.stderr.print("unknown subcommand: \"{s}\"\n", .{cmd});
-    try c.stderr.writeAll("usage: kata [daemon [--root <dir>] | check <path> | facts <file> | test <rules-dir> | query <scm> [path] --lang=<lang> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
+    try c.stderr.writeAll("usage: kata [daemon [--root <dir>] | check <path> | facts <file> | test <rules-dir> | query <rule> [path] --lang=<lang> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
     try c.stderr.flush();
     return exit_usage;
 }

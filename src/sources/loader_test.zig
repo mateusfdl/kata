@@ -5,7 +5,6 @@ const loader = @import("loader.zig");
 const test_fixture = @import("../test_fixture.zig");
 
 const language = lint.language;
-const rule = lint.rule;
 
 test "upsert: first insertion appends without warning" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
@@ -37,32 +36,16 @@ test "upsert: same-tier collision replaces in place and emits one warning" {
     try std.testing.expectEqualStrings("no-any", w.id);
 }
 
-test "upsert: same tier same id across formats errors" {
+test "upsert: cross-tier override replaces and stays silent" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     var set: loader.RuleSet = .{ .allocator = arena.allocator() };
 
-    try set.upsert(.ts, .{ .id = "no-any", .source = "((x) @match)" }, .user);
-    const got = set.upsert(.ts, .{ .id = "no-any", .source = "rule no-any {}", .format = .kata }, .user);
-
-    try std.testing.expectError(error.DuplicateRuleFormats, got);
-    const dup = set.duplicate.?;
-    try std.testing.expectEqual(loader.Source.user, dup.source);
-    try std.testing.expectEqual(language.Name.ts, dup.lang);
-    try std.testing.expectEqualStrings("no-any", dup.id);
-}
-
-test "upsert: cross-tier override across formats stays silent" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    var set: loader.RuleSet = .{ .allocator = arena.allocator() };
-
-    try set.upsert(.ts, .{ .id = "no-any", .source = "((x) @match)" }, .embedded);
-    try set.upsert(.ts, .{ .id = "no-any", .source = "rule no-any {}", .format = .kata }, .user);
+    try set.upsert(.ts, .{ .id = "no-any", .source = "rule no-any { a }" }, .embedded);
+    try set.upsert(.ts, .{ .id = "no-any", .source = "rule no-any { b }" }, .user);
 
     try std.testing.expectEqual(@as(usize, 1), set.get(.ts).len);
-    try std.testing.expectEqual(rule.Format.kata, set.get(.ts)[0].format);
-    try std.testing.expectEqualStrings("rule no-any {}", set.get(.ts)[0].source);
+    try std.testing.expectEqualStrings("rule no-any { b }", set.get(.ts)[0].source);
     try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
 }
 
@@ -94,7 +77,7 @@ test "upsert: different ids in same language coexist" {
 
 const relativeTmpPath = test_fixture.relativeTmpPath;
 
-test "load: user_dir reads scm files into the right language slot" {
+test "load: user_dir ignores non-kata files" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -115,13 +98,10 @@ test "load: user_dir reads scm files into the right language slot" {
     });
     defer set.deinit();
 
-    try std.testing.expectEqual(@as(usize, 1), set.get(.ts).len);
-    try std.testing.expectEqualStrings("local-rule", set.get(.ts)[0].id);
-    try std.testing.expectEqualStrings("((identifier) @match)", set.get(.ts)[0].source);
-    try std.testing.expectEqual(rule.Format.scm, set.get(.ts)[0].format);
+    try std.testing.expectEqual(@as(usize, 0), set.get(.ts).len);
 }
 
-test "load: user_dir reads kata files with the kata format" {
+test "load: user_dir reads kata files into the right language slot" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -145,38 +125,6 @@ test "load: user_dir reads kata files with the kata format" {
     try std.testing.expectEqual(@as(usize, 1), set.get(.ts).len);
     try std.testing.expectEqualStrings("local-rule", set.get(.ts)[0].id);
     try std.testing.expectEqualStrings("rule local-rule {}", set.get(.ts)[0].source);
-    try std.testing.expectEqual(rule.Format.kata, set.get(.ts)[0].format);
-}
-
-test "load: same id in both formats in one dir errors with the scoped id" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(std.testing.io, "ts");
-    try tmp.dir.writeFile(std.testing.io, .{
-        .sub_path = "ts/no-x.scm",
-        .data = "((identifier) @match)",
-    });
-    try tmp.dir.writeFile(std.testing.io, .{
-        .sub_path = "ts/no-x.kata",
-        .data = "rule no-x {}",
-    });
-
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    var path_buf: [256]u8 = undefined;
-    const rel = try relativeTmpPath(&path_buf, &tmp.sub_path);
-
-    var diag: loader.Diagnostic = .{};
-    const got = loader.load(arena.allocator(), std.testing.io, .{
-        .skip_embedded = true,
-        .user_dir = rel,
-        .diag = &diag,
-    });
-
-    try std.testing.expectError(error.DuplicateRuleFormats, got);
-    try std.testing.expectEqual(language.Name.ts, diag.lang.?);
-    try std.testing.expectEqualStrings("no-x", diag.id());
 }
 
 test "load: missing user_dir is silently empty" {
@@ -212,8 +160,8 @@ test "load: user_dir overrides embedded without a warning" {
 
     try tmp.dir.createDirPath(std.testing.io, "ts");
     try tmp.dir.writeFile(std.testing.io, .{
-        .sub_path = "ts/no-console.scm",
-        .data = "((my_override) @match)",
+        .sub_path = "ts/no-console.kata",
+        .data = "rule no-console { override }",
     });
 
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
@@ -233,7 +181,7 @@ test "load: user_dir overrides embedded without a warning" {
         }
     }
     try std.testing.expectEqual(@as(usize, 1), found_ts_no_console);
-    try std.testing.expectEqualStrings("((my_override) @match)", override_source.?);
+    try std.testing.expectEqualStrings("rule no-console { override }", override_source.?);
     try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
 }
 
@@ -245,13 +193,13 @@ test "load: project_dir overrides user_dir silently" {
 
     try user_tmp.dir.createDirPath(std.testing.io, "go");
     try user_tmp.dir.writeFile(std.testing.io, .{
-        .sub_path = "go/no-panic.scm",
-        .data = "((user_version) @match)",
+        .sub_path = "go/no-panic.kata",
+        .data = "rule no-panic { user }",
     });
     try project_tmp.dir.createDirPath(std.testing.io, "go");
     try project_tmp.dir.writeFile(std.testing.io, .{
-        .sub_path = "go/no-panic.scm",
-        .data = "((project_version) @match)",
+        .sub_path = "go/no-panic.kata",
+        .data = "rule no-panic { project }",
     });
 
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
@@ -269,7 +217,7 @@ test "load: project_dir overrides user_dir silently" {
     defer set.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), set.get(.go).len);
-    try std.testing.expectEqualStrings("((project_version) @match)", set.get(.go)[0].source);
+    try std.testing.expectEqualStrings("rule no-panic { project }", set.get(.go)[0].source);
     try std.testing.expectEqual(@as(usize, 0), set.warnings.items.len);
 }
 
@@ -278,8 +226,8 @@ test "upsertProject: same-tier collision warns with the project scope" {
     defer arena.deinit();
     var set: loader.RuleSet = .{ .allocator = arena.allocator() };
 
-    try set.upsertProject(.{ .id = "isolation", .source = "1", .format = .kata }, .user);
-    try set.upsertProject(.{ .id = "isolation", .source = "2", .format = .kata }, .user);
+    try set.upsertProject(.{ .id = "isolation", .source = "1" }, .user);
+    try set.upsertProject(.{ .id = "isolation", .source = "2" }, .user);
 
     try std.testing.expectEqual(@as(usize, 1), set.projectRaws().len);
     try std.testing.expectEqualStrings("2", set.projectRaws()[0].source);
@@ -293,8 +241,8 @@ test "upsertProject: project tier overrides user tier silently" {
     defer arena.deinit();
     var set: loader.RuleSet = .{ .allocator = arena.allocator() };
 
-    try set.upsertProject(.{ .id = "isolation", .source = "1", .format = .kata }, .user);
-    try set.upsertProject(.{ .id = "isolation", .source = "2", .format = .kata }, .project);
+    try set.upsertProject(.{ .id = "isolation", .source = "1" }, .user);
+    try set.upsertProject(.{ .id = "isolation", .source = "2" }, .project);
 
     try std.testing.expectEqual(@as(usize, 1), set.projectRaws().len);
     try std.testing.expectEqualStrings("2", set.projectRaws()[0].source);
@@ -325,11 +273,10 @@ test "load: project dir reads kata files into the project slot" {
     try std.testing.expectEqual(@as(usize, 1), set.projectRaws().len);
     try std.testing.expectEqualStrings("isolation", set.projectRaws()[0].id);
     try std.testing.expectEqualStrings("rule isolation {}", set.projectRaws()[0].source);
-    try std.testing.expectEqual(rule.Format.kata, set.projectRaws()[0].format);
     try std.testing.expectEqual(loader.Source.project, set.projectRaws()[0].origin);
 }
 
-test "load: scm files in the project dir error" {
+test "load: project dir ignores non-kata files" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -344,10 +291,13 @@ test "load: scm files in the project dir error" {
     var path_buf: [256]u8 = undefined;
     const rel = try relativeTmpPath(&path_buf, &tmp.sub_path);
 
-    try std.testing.expectError(error.ProjectRuleMustBeKata, loader.load(arena.allocator(), std.testing.io, .{
+    var set = try loader.load(arena.allocator(), std.testing.io, .{
         .skip_embedded = true,
         .project_dir = rel,
-    }));
+    });
+    defer set.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), set.projectRaws().len);
 }
 
 test "load: project tier project rule overrides the user tier" {
