@@ -4,16 +4,22 @@ const harness = @import("harness.zig");
 const test_fixture = @import("../test_fixture.zig");
 
 const flag_any_rule =
-    \\((as_expression (predefined_type) @t) @match
-    \\ (#eq? @t "any")
-    \\ (#set! message "as any is not allowed"))
-    \\
+    \\rule flag-any {
+    \\  lang ts, tsx
+    \\  match as_expression @match {
+    \\    child: predefined_type @t
+    \\  }
+    \\  where { text(@t) == "any" }
+    \\  emit @match { message "as any is not allowed" }
+    \\}
 ;
 
 const no_comments_rule =
-    \\((comment) @match
-    \\ (#set! message "comments are not allowed"))
-    \\
+    \\rule no-comments {
+    \\  lang ts
+    \\  match comment @match
+    \\  emit @match { message "comments are not allowed" }
+    \\}
 ;
 
 const Setup = struct {
@@ -58,7 +64,7 @@ const Setup = struct {
 
 test "harness: fixture with satisfied expectations passes" {
     const io = std.testing.io;
-    var s = try Setup.init(io, "flag-any.scm", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
+    var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
         "const x = foo as any;\n" ++
         "const ok: string = \"1\";\n");
     defer s.deinit();
@@ -71,7 +77,7 @@ test "harness: fixture with satisfied expectations passes" {
 
 test "harness: expected rule that never fires reports missing" {
     const io = std.testing.io;
-    var s = try Setup.init(io, "flag-any.scm", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
+    var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
         "const ok: string = \"1\";\n");
     defer s.deinit();
 
@@ -88,7 +94,7 @@ test "harness: expected rule that never fires reports missing" {
 
 test "harness: diagnostic on an unannotated line reports unexpected" {
     const io = std.testing.io;
-    var s = try Setup.init(io, "flag-any.scm", flag_any_rule, "sample.ts", "const x = foo as any;\n");
+    var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "const x = foo as any;\n");
     defer s.deinit();
 
     const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
@@ -120,14 +126,21 @@ test "harness: missing rules dir is invalid" {
 
 test "harness: rule that fails to compile is invalid" {
     const io = std.testing.io;
-    var s = try Setup.init(io, "broken.scm", "((as_expression) @match (#unknown-pred? @match))\n", "sample.ts", "const ok: string = \"1\";\n");
+    var s = try Setup.init(io, "broken.kata",
+        \\rule broken {
+        \\  lang ts
+        \\  match as_expression @match
+        \\  where { text(@ghost) == "x" }
+        \\  emit @match { message "x" }
+        \\}
+    , "sample.ts", "const ok: string = \"1\";\n");
     defer s.deinit();
 
     const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
 
     try std.testing.expectEqual(harness.Outcome.invalid, outcome);
     try std.testing.expectEqualStrings(
-        "kata test: rule ts/broken: unknown predicate\n",
+        "kata test: rule ts/broken: unknown capture\n",
         s.err.written(),
     );
 }
@@ -145,7 +158,7 @@ test "harness: combined language dir runs fixtures for each extension" {
     defer err.deinit();
 
     try tmp.dir.createDirPath(io, "rules/ts+tsx/tests");
-    try tmp.dir.writeFile(io, .{ .sub_path = "rules/ts+tsx/flag-any.scm", .data = flag_any_rule });
+    try tmp.dir.writeFile(io, .{ .sub_path = "rules/ts+tsx/flag-any.kata", .data = flag_any_rule });
     try tmp.dir.writeFile(io, .{ .sub_path = "rules/ts+tsx/tests/sample.ts", .data = "// kata-expect: flag-any\nconst x = foo as any;\n" });
     try tmp.dir.writeFile(io, .{ .sub_path = "rules/ts+tsx/tests/widget.tsx", .data = "// kata-expect: flag-any\nconst y = bar as any;\n" });
 
@@ -161,7 +174,7 @@ test "harness: combined language dir runs fixtures for each extension" {
 
 test "harness: annotation lines are exempt from diagnostics" {
     const io = std.testing.io;
-    var s = try Setup.init(io, "no-comments.scm", no_comments_rule, "sample.ts", "// kata-expect: no-comments\n" ++
+    var s = try Setup.init(io, "no-comments.kata", no_comments_rule, "sample.ts", "// kata-expect: no-comments\n" ++
         "// a forbidden comment\n");
     defer s.deinit();
 
@@ -173,7 +186,7 @@ test "harness: annotation lines are exempt from diagnostics" {
 
 test "harness: duplicate expectations cover duplicate diagnostics on one line" {
     const io = std.testing.io;
-    var s = try Setup.init(io, "flag-any.scm", flag_any_rule, "sample.ts", "// kata-expect: flag-any, flag-any\n" ++
+    var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any, flag-any\n" ++
         "const pair = [foo as any, bar as any];\n");
     defer s.deinit();
 
@@ -185,7 +198,7 @@ test "harness: duplicate expectations cover duplicate diagnostics on one line" {
 
 test "harness: stacked annotations bind to the next code line" {
     const io = std.testing.io;
-    var s = try Setup.init(io, "flag-any.scm", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
+    var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
         "// kata-expect: flag-any\n" ++
         "const pair = [foo as any, bar as any];\n");
     defer s.deinit();
@@ -198,7 +211,7 @@ test "harness: stacked annotations bind to the next code line" {
 
 test "harness: annotation on the last line reports dangling" {
     const io = std.testing.io;
-    var s = try Setup.init(io, "flag-any.scm", flag_any_rule, "sample.ts", "const ok: string = \"1\";\n" ++
+    var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "const ok: string = \"1\";\n" ++
         "// kata-expect: flag-any\n");
     defer s.deinit();
 
@@ -210,7 +223,7 @@ test "harness: annotation on the last line reports dangling" {
 
 test "harness: annotation without rule ids reports a failure" {
     const io = std.testing.io;
-    var s = try Setup.init(io, "flag-any.scm", flag_any_rule, "sample.ts", "// kata-expect:\n" ++
+    var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect:\n" ++
         "const ok: string = \"1\";\n");
     defer s.deinit();
 
@@ -222,7 +235,7 @@ test "harness: annotation without rule ids reports a failure" {
 
 test "harness: tab-separated annotation ids are recognized" {
     const io = std.testing.io;
-    var s = try Setup.init(io, "flag-any.scm", flag_any_rule, "sample.ts", "// kata-expect:\tflag-any\n" ++
+    var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect:\tflag-any\n" ++
         "const x = foo as any;\n");
     defer s.deinit();
 
@@ -233,7 +246,7 @@ test "harness: tab-separated annotation ids are recognized" {
 
 test "harness: a single expectation does not cover two diagnostics" {
     const io = std.testing.io;
-    var s = try Setup.init(io, "flag-any.scm", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
+    var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
         "const pair = [foo as any, bar as any];\n");
     defer s.deinit();
 

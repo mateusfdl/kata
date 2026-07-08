@@ -3,17 +3,6 @@ const diagnostic = @import("diagnostic.zig");
 const language = @import("language.zig");
 const test_fixture = @import("../test_fixture.zig");
 
-const no_as_any_rule =
-    \\((as_expression (predefined_type) @t) @match
-    \\ (#eq? @t "any")
-    \\ (#set! message "as any is not allowed"))
-    \\
-    \\((as_expression (array_type (predefined_type) @t)) @match
-    \\ (#eq? @t "any")
-    \\ (#set! message "as any[] is not allowed"))
-    \\
-;
-
 const kata_no_as_any_rule =
     \\rule no-as-any {
     \\  lang ts, tsx
@@ -987,9 +976,9 @@ test "engine: lints with a kata rule" {
     try std.testing.expectEqual(@as(u32, 14), diags[0].range.end.column);
 }
 
-test "engine: scm and kata rules fire together" {
+test "engine: multiple kata rules fire together" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-as-any", no_as_any_rule, .scm);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-as-any", kata_no_as_any_rule, .kata);
     defer f.deinit();
     try f.add(.ts, "no-console", kata_no_console_rule, .kata);
 

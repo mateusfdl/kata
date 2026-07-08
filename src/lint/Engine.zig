@@ -10,6 +10,7 @@ const glob = @import("glob.zig");
 const language = @import("language.zig");
 const matcher = @import("matcher.zig");
 const metric = @import("metric.zig");
+const query = @import("query.zig");
 const rule = @import("rule.zig");
 const Node = @import("node.zig").Node;
 
@@ -29,7 +30,6 @@ const DslSlot = union(enum) {
 pub const Engine = struct {
     allocator: std.mem.Allocator,
     rules: *RuleSet,
-    compiled: std.EnumArray(language.Name, ?rule.CompiledRule) = .initFill(null),
     compiled_dsl: std.EnumArray(language.Name, DslSlot) = .initFill(.not_compiled),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
     metrics: metric.Set = metric.empty,
@@ -37,7 +37,6 @@ pub const Engine = struct {
     facts_queries: std.EnumArray(language.Name, ?facts.Compiled) = .initFill(null),
     cursor: *ts.QueryCursor,
     metric_cursor: *ts.QueryCursor,
-    nested_cursor: *ts.QueryCursor,
     compiled_fact: ?[]const fact_rule.CompiledFactRule = null,
     fact_arena: ?*std.heap.ArenaAllocator = null,
     warnings: []const rule.ScopedId = &.{},
@@ -52,16 +51,10 @@ pub const Engine = struct {
             .rules = rules,
             .cursor = ts.QueryCursor.create(),
             .metric_cursor = ts.QueryCursor.create(),
-            .nested_cursor = ts.QueryCursor.create(),
         };
     }
 
     pub fn deinit(self: *Engine) void {
-        var it = self.compiled.iterator();
-        while (it.next()) |entry| {
-            if (entry.value.*) |*compiled| compiled.deinit();
-        }
-
         var dit = self.compiled_dsl.iterator();
         while (dit.next()) |entry| {
             switch (entry.value.*) {
@@ -90,15 +83,13 @@ pub const Engine = struct {
         }
         self.cursor.destroy();
         self.metric_cursor.destroy();
-        self.nested_cursor.destroy();
     }
 
     pub fn prewarm(self: *Engine) !void {
         for (std.enums.values(language.Name)) |lang| {
-            const compiled = try self.ensureCompiled(lang);
             const compiled_dsl = try self.ensureCompiledDsl(lang);
             _ = try self.ensureParser(lang);
-            if (metric.anyEnabled(self.metrics) or needsMeasures(compiled, compiled_dsl)) _ = try self.ensureMetricQuery(lang);
+            if (metric.anyEnabled(self.metrics) or needsMeasures(compiled_dsl)) _ = try self.ensureMetricQuery(lang);
         }
         _ = try self.ensureCompiledFact();
     }
@@ -150,15 +141,6 @@ pub const Engine = struct {
         parser.setLanguage(language.grammar(lang)) catch return error.SetLanguageFailed;
         self.parsers.set(lang, parser);
         return parser;
-    }
-
-    fn ensureCompiled(self: *Engine, lang: language.Name) !*rule.CompiledRule {
-        const slot = self.compiled.getPtr(lang);
-        if (slot.*) |*cached| return cached;
-
-        slot.* = try rule.compile(self.allocator, lang, self.rules.get(lang), &self.compile_diag);
-
-        return &slot.*.?;
     }
 
     fn ensureCompiledDsl(self: *Engine, lang: language.Name) !?*rule.CompiledRule {
@@ -218,7 +200,6 @@ pub const Engine = struct {
         lang: language.Name,
         path: ?[]const u8,
     ) ![]diagnostic.Diagnostic {
-        const compiled = try self.ensureCompiled(lang);
         const compiled_dsl = try self.ensureCompiledDsl(lang);
         const parser = try self.ensureParser(lang);
         const tree = parser.parseString(source, null) orelse return error.ParseFailed;
@@ -227,7 +208,7 @@ pub const Engine = struct {
         var out: std.ArrayList(diagnostic.Diagnostic) = try .initCapacity(allocator, initial_diagnostic_capacity);
         errdefer out.deinit(allocator);
 
-        const metric_ctx: ?matcher.MetricContext = if (needsMeasures(compiled, compiled_dsl)) .{
+        const metric_ctx: ?matcher.MetricContext = if (needsMeasures(compiled_dsl)) .{
             .allocator = allocator,
             .compiled = try self.ensureMetricQuery(lang),
             .cursor = self.metric_cursor,
@@ -235,14 +216,13 @@ pub const Engine = struct {
         } else null;
 
         const eval_ctx: matcher.EvalContext = .{
+            .allocator = allocator,
             .source = source,
-            .root = tree.rootNode(),
+            .root = Node.from(tree.rootNode()),
             .metric = metric_ctx,
-            .nested_cursor = self.nested_cursor,
         };
 
-        try runRule(allocator, compiled, self.cursor, eval_ctx, lang, path, &out);
-        if (compiled_dsl) |dsl| try runRule(allocator, dsl, self.cursor, eval_ctx, lang, path, &out);
+        if (compiled_dsl) |dsl| try runRule(allocator, dsl, eval_ctx, lang, path, &out);
 
         if (metric.anyEnabled(self.metrics)) {
             const metric_query = try self.ensureMetricQuery(lang);
@@ -255,8 +235,7 @@ pub const Engine = struct {
     }
 };
 
-fn needsMeasures(compiled: *const rule.CompiledRule, compiled_dsl: ?*rule.CompiledRule) bool {
-    if (compiled.needs_measures) return true;
+fn needsMeasures(compiled_dsl: ?*rule.CompiledRule) bool {
     if (compiled_dsl) |dsl| return dsl.needs_measures;
 
     return false;
@@ -283,29 +262,34 @@ fn matchesWarning(warnings: []const rule.ScopedId, lang: language.Name, rule_id:
 pub fn runRule(
     allocator: std.mem.Allocator,
     r: *const rule.CompiledRule,
-    cursor: *ts.QueryCursor,
     ctx: matcher.EvalContext,
     lang: language.Name,
     path: ?[]const u8,
     out: *std.ArrayList(diagnostic.Diagnostic),
 ) !void {
-    if (r.match_capture_id == rule.invalid_capture_id) return;
-    const query = r.query orelse return;
-
-    cursor.exec(query, ctx.root);
     const lang_str = lang.toString();
 
-    while (cursor.nextMatch()) |match| {
-        const meta = r.patterns[match.pattern_index];
-        if (pathExcluded(meta.exclude_paths, path)) continue;
-        if (!try matcher.evaluate(meta.predicates, match, ctx)) continue;
+    var scratch = std.heap.ArenaAllocator.init(allocator);
+    defer scratch.deinit();
 
-        const message = if (meta.message) |m| switch (m) {
-            .plain => |text| text,
-            .segments => |segments| try matcher.renderMessage(allocator, segments, match, ctx),
-        } else meta.rule_id;
+    var eval_ctx = ctx;
+    eval_ctx.allocator = scratch.allocator();
 
-        try emitMatchDiagnostics(allocator, r, meta, match, lang_str, message, out);
+    for (r.patterns) |cp| {
+        const match_id = cp.match_capture_id orelse continue;
+        if (pathExcluded(cp.meta.exclude_paths, path)) continue;
+
+        const matches = try query.run(scratch.allocator(), &cp.pattern, cp.capture_count, eval_ctx.root);
+        for (matches) |match| {
+            if (!try matcher.evaluate(cp.meta.predicates, match, eval_ctx)) continue;
+
+            const message = if (cp.meta.message) |m| switch (m) {
+                .plain => |text| text,
+                .segments => |segments| try matcher.renderMessage(allocator, segments, match, eval_ctx),
+            } else cp.meta.rule_id;
+
+            try emitDiagnostic(allocator, match_id, cp.meta, match, lang_str, message, out);
+        }
     }
 }
 
@@ -320,31 +304,27 @@ fn pathExcluded(globs: []const []const u8, path: ?[]const u8) bool {
     return false;
 }
 
-fn emitMatchDiagnostics(
+fn emitDiagnostic(
     allocator: std.mem.Allocator,
-    r: *const rule.CompiledRule,
+    match_id: query.CaptureId,
     meta: rule.PatternMeta,
-    match: ts.Query.Match,
+    match: query.Match,
     lang_str: []const u8,
     message: []const u8,
     out: *std.ArrayList(diagnostic.Diagnostic),
 ) !void {
-    for (match.captures) |cap| {
-        if (cap.index != r.match_capture_id) continue;
+    const n = match.get(match_id) orelse return;
+    const sp = n.startPoint();
+    const ep = n.endPoint();
 
-        const n = Node.from(cap.node);
-        const sp = n.startPoint();
-        const ep = n.endPoint();
-
-        try out.append(allocator, .{
-            .rule_id = meta.rule_id,
-            .language = lang_str,
-            .message = message,
-            .range = .{
-                .start = .{ .line = sp.row, .column = sp.column },
-                .end = .{ .line = ep.row, .column = ep.column },
-            },
-            .severity = meta.severity,
-        });
-    }
+    try out.append(allocator, .{
+        .rule_id = meta.rule_id,
+        .language = lang_str,
+        .message = message,
+        .range = .{
+            .start = .{ .line = sp.row, .column = sp.column },
+            .end = .{ .line = ep.row, .column = ep.column },
+        },
+        .severity = meta.severity,
+    });
 }

@@ -1,12 +1,13 @@
 const std = @import("std");
 const mvzr = @import("mvzr");
-const ts = @import("tree_sitter");
 
 const ast = @import("ast.zig");
+const lower = @import("lower.zig");
 const diagnostic = @import("../lint/diagnostic.zig");
 const dsl_parser = @import("parser.zig");
 const expr = @import("../lint/expr.zig");
 const language = @import("../lint/language.zig");
+const query = @import("../lint/query.zig");
 const rule = @import("../lint/rule.zig");
 
 pub const Error = error{
@@ -31,8 +32,6 @@ pub const RawError = Error || dsl_parser.Error || error{
     ProjectRuleInLocalDir,
 };
 
-const Cardinality = enum { one, many };
-
 const nested_root_capture = "kata-nested-root";
 
 const Compiler = struct {
@@ -40,8 +39,7 @@ const Compiler = struct {
     lang: language.Name,
     diag: *rule.Diagnostic,
     rule_id: []const u8 = "",
-    query: *ts.Query = undefined,
-    nested_queries: std.ArrayList(*ts.Query) = .empty,
+    captures: []const []const u8 = &.{},
 
     fn fail(self: *Compiler, detail: []const u8) void {
         self.diag.* = .{ .lang = self.lang, .rule_id = self.rule_id, .detail = detail };
@@ -124,51 +122,78 @@ pub fn compile(
     const arena = arena_ptr.allocator();
 
     var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag };
-    errdefer for (ctx.nested_queries.items) |nested| nested.destroy();
 
-    var selected: std.ArrayList(*const ast.Rule) = .empty;
-    var starts: std.ArrayList(u32) = .empty;
-    var query_source: std.ArrayList(u8) = .empty;
-
+    var patterns: std.ArrayList(rule.CompiledPattern) = .empty;
     for (file.rules) |*r| {
         ctx.rule_id = r.id;
         try validateLanguages(&ctx, r.*);
         if (r.kind == .project) continue;
         if (!includesLanguage(r.*, lang)) continue;
-        try starts.append(arena, @intCast(query_source.items.len));
-        try selected.append(arena, r);
-        try renderPattern(&ctx, &query_source, r.*);
-        try query_source.append(arena, '\n');
+        try patterns.append(arena, try compileRule(&ctx, r.*));
     }
 
-    var error_offset: u32 = 0;
-    const query = ts.Query.create(language.grammar(lang), query_source.items, &error_offset) catch {
-        ctx.rule_id = owningRuleId(starts.items, selected.items, error_offset);
-        ctx.fail("node kind or field is invalid for the grammar");
-        return error.QueryCompileFailed;
-    };
-    errdefer query.destroy();
-
-    if (query.patternCount() != selected.items.len) {
-        ctx.fail("match compiled to an unexpected pattern count");
-        return error.QueryCompileFailed;
-    }
-    ctx.query = query;
-
-    const patterns = try arena.alloc(rule.PatternMeta, selected.items.len);
-    for (selected.items, patterns) |r, *meta| {
-        ctx.rule_id = r.id;
-        meta.* = try compilePattern(&ctx, r.*);
-    }
-
+    const compiled = try patterns.toOwnedSlice(arena);
     return .{
-        .query = query,
-        .patterns = patterns,
-        .match_capture_id = rule.captureIdForName(query, rule.match_capture),
-        .needs_measures = rule.needsMeasures(patterns),
-        .nested_queries = ctx.nested_queries.items,
+        .patterns = compiled,
+        .needs_measures = rule.needsMeasures(compiled),
         .arena = arena_ptr,
         .allocator = allocator,
+    };
+}
+
+fn compileRule(ctx: *Compiler, r: ast.Rule) Error!rule.CompiledPattern {
+    ctx.rule_id = r.id;
+    const pattern = switch (r.match.?) {
+        .node => |node| node,
+        .kind => {
+            ctx.fail("match kind is not supported yet");
+            return error.UnsupportedMatch;
+        },
+    };
+
+    const emit_name = r.emit.capture.name;
+    if (!captureExists(pattern, emit_name)) {
+        ctx.fail("emit capture not found in match");
+        return error.UnknownCapture;
+    }
+    if (!guaranteedCapture(pattern, emit_name)) {
+        ctx.fail("emit capture must be bound in every alternation branch");
+        return error.EmitCaptureMissingInBranch;
+    }
+    if (!std.mem.eql(u8, emit_name, rule.match_capture) and captureExists(pattern, rule.match_capture)) {
+        ctx.fail("rule emits another capture but also binds @match");
+        return error.EmitCaptureConflict;
+    }
+
+    var lowerer = lower.Lowerer.init(ctx.arena, language.grammar(ctx.lang));
+    const lowered_pattern = lowerer.lowerPattern(pattern) catch |err| return mapLowerError(ctx, err);
+    const lowered = lowerer.finish(lowered_pattern) catch |err| return mapLowerError(ctx, err);
+    ctx.captures = lowered.capture_names;
+
+    const meta = try compilePattern(ctx, r);
+    return .{
+        .pattern = lowered.pattern,
+        .capture_count = lowered.capture_names.len,
+        .match_capture_id = lowered.idForName(emit_name),
+        .meta = meta,
+    };
+}
+
+fn mapLowerError(ctx: *Compiler, err: lower.Error) Error {
+    return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.UnknownNodeKind, error.UnknownField => {
+            ctx.fail("node kind or field is invalid for the grammar");
+            return error.QueryCompileFailed;
+        },
+        error.AnonymousWithChildren => {
+            ctx.fail("anonymous tokens cannot have child patterns");
+            return error.UnsupportedMatch;
+        },
+        error.TooManyCaptures => {
+            ctx.fail("too many captures in a single match");
+            return error.QueryCompileFailed;
+        },
     };
 }
 
@@ -188,40 +213,6 @@ fn includesLanguage(r: ast.Rule, lang: language.Name) bool {
         }
     }
     return false;
-}
-
-fn owningRuleId(starts: []const u32, rules: []const *const ast.Rule, offset: u32) []const u8 {
-    if (rules.len == 0) return "";
-    var i: usize = starts.len;
-    while (i > 0) {
-        i -= 1;
-        if (starts[i] <= offset) return rules[i].id;
-    }
-    return rules[0].id;
-}
-
-fn renderPattern(ctx: *Compiler, out: *std.ArrayList(u8), r: ast.Rule) Error!void {
-    const pattern = switch (r.match.?) {
-        .node => |node| node,
-        .kind => {
-            ctx.fail("match kind is not supported yet");
-            return error.UnsupportedMatch;
-        },
-    };
-    const emit_name = r.emit.capture.name;
-    if (!captureExists(pattern, emit_name)) {
-        ctx.fail("emit capture not found in match");
-        return error.UnknownCapture;
-    }
-    if (!guaranteedCapture(pattern, emit_name)) {
-        ctx.fail("emit capture must be bound in every alternation branch");
-        return error.EmitCaptureMissingInBranch;
-    }
-    if (!std.mem.eql(u8, emit_name, rule.match_capture) and captureExists(pattern, rule.match_capture)) {
-        ctx.fail("rule emits another capture but also binds @match");
-        return error.EmitCaptureConflict;
-    }
-    try renderNode(ctx, out, pattern, emit_name, .one);
 }
 
 fn captureExists(pattern: ast.NodePattern, name: []const u8) bool {
@@ -254,98 +245,6 @@ fn guaranteedCapture(pattern: ast.NodePattern, name: []const u8) bool {
         if (guaranteedCapture(field.pattern, name)) return true;
     }
     return false;
-}
-
-fn renderNode(
-    ctx: *Compiler,
-    out: *std.ArrayList(u8),
-    pattern: ast.NodePattern,
-    emit_name: []const u8,
-    cardinality: Cardinality,
-) Error!void {
-    switch (pattern.node_kind) {
-        .symbol => |kind| try renderBranch(ctx, out, kind, pattern.fields, pattern.absent_fields, emit_name),
-        .anonymous => |token| {
-            if (pattern.fields.len != 0 or pattern.absent_fields.len != 0) {
-                ctx.fail("anonymous tokens cannot have child patterns");
-                return error.UnsupportedMatch;
-            }
-            try out.append(ctx.arena, '"');
-            for (token) |c| {
-                if (c == '"' or c == '\\') try out.append(ctx.arena, '\\');
-                try out.append(ctx.arena, c);
-            }
-            try out.append(ctx.arena, '"');
-        },
-        .alternation => |branches| {
-            try out.append(ctx.arena, '[');
-            for (branches, 0..) |branch, i| {
-                if (i > 0) try out.append(ctx.arena, ' ');
-                try renderNode(ctx, out, try withSharedFields(ctx, branch, pattern.fields, pattern.absent_fields), emit_name, .one);
-            }
-            try out.append(ctx.arena, ']');
-        },
-    }
-    if (cardinality == .many) try out.append(ctx.arena, '*');
-    if (pattern.capture) |capture| {
-        try out.appendSlice(ctx.arena, " @");
-        try out.appendSlice(ctx.arena, capture.name);
-        if (std.mem.eql(u8, capture.name, emit_name) and !std.mem.eql(u8, emit_name, rule.match_capture)) {
-            try out.appendSlice(ctx.arena, " @");
-            try out.appendSlice(ctx.arena, rule.match_capture);
-        }
-    }
-}
-
-fn withSharedFields(
-    ctx: *Compiler,
-    branch: ast.NodePattern,
-    shared: []const ast.FieldPattern,
-    shared_absent: []const []const u8,
-) Error!ast.NodePattern {
-    if (shared.len == 0 and shared_absent.len == 0) return branch;
-    const fields = try ctx.arena.alloc(ast.FieldPattern, branch.fields.len + shared.len);
-    @memcpy(fields[0..branch.fields.len], branch.fields);
-    @memcpy(fields[branch.fields.len..], shared);
-    const absent = try ctx.arena.alloc([]const u8, branch.absent_fields.len + shared_absent.len);
-    @memcpy(absent[0..branch.absent_fields.len], branch.absent_fields);
-    @memcpy(absent[branch.absent_fields.len..], shared_absent);
-    return .{
-        .node_kind = branch.node_kind,
-        .capture = branch.capture,
-        .fields = fields,
-        .absent_fields = absent,
-        .range = branch.range,
-    };
-}
-
-fn renderBranch(
-    ctx: *Compiler,
-    out: *std.ArrayList(u8),
-    kind: []const u8,
-    fields: []const ast.FieldPattern,
-    absent_fields: []const []const u8,
-    emit_name: []const u8,
-) Error!void {
-    try out.append(ctx.arena, '(');
-    try out.appendSlice(ctx.arena, kind);
-    for (fields) |field| {
-        try out.append(ctx.arena, ' ');
-        switch (field.relation) {
-            .field => |name| {
-                try out.appendSlice(ctx.arena, name);
-                try out.appendSlice(ctx.arena, ": ");
-            },
-            .child, .children => {},
-        }
-        const child_cardinality: Cardinality = if (field.relation == .children) .many else .one;
-        try renderNode(ctx, out, field.pattern, emit_name, child_cardinality);
-    }
-    for (absent_fields) |name| {
-        try out.appendSlice(ctx.arena, " !");
-        try out.appendSlice(ctx.arena, name);
-    }
-    try out.append(ctx.arena, ')');
 }
 
 fn compilePattern(ctx: *Compiler, r: ast.Rule) Error!rule.PatternMeta {
@@ -445,32 +344,28 @@ fn compileNestedMatcher(ctx: *Compiler, matcher: ast.NestedMatcher) Error!*const
         return error.ReservedCapture;
     }
 
-    var source: std.ArrayList(u8) = .empty;
-    try renderNode(ctx, &source, matcher.pattern, "", .one);
-    if (matcher.pattern.capture == null) {
-        try source.appendSlice(ctx.arena, " @" ++ nested_root_capture);
-    }
+    var pattern = matcher.pattern;
+    if (pattern.capture == null) pattern.capture = .{ .name = nested_root_capture, .range = pattern.range };
+    const root_name = pattern.capture.?.name;
 
-    var error_offset: u32 = 0;
-    const query = ts.Query.create(language.grammar(ctx.lang), source.items, &error_offset) catch {
-        ctx.fail("node kind or field is invalid for the grammar");
-        return error.QueryCompileFailed;
-    };
-    try ctx.nested_queries.append(ctx.arena, query);
+    var lowerer = lower.Lowerer.init(ctx.arena, language.grammar(ctx.lang));
+    const lowered_pattern = lowerer.lowerPattern(pattern) catch |err| return mapLowerError(ctx, err);
+    const lowered = lowerer.finish(lowered_pattern) catch |err| return mapLowerError(ctx, err);
 
-    const root_name = if (matcher.pattern.capture) |capture| capture.name else nested_root_capture;
+    const outer_captures = ctx.captures;
+    ctx.captures = lowered.capture_names;
+    defer ctx.captures = outer_captures;
 
-    var nested_ctx = ctx.*;
-    nested_ctx.query = query;
     var predicates: std.ArrayList(rule.Predicate) = .empty;
     for (matcher.where) |expression| {
-        try translateExpression(&nested_ctx, expression, &predicates);
+        try translateExpression(ctx, expression, &predicates);
     }
 
     const out = try ctx.arena.create(rule.NestedMatcher);
     out.* = .{
-        .query = query,
-        .root_capture_id = rule.captureIdForName(query, root_name),
+        .pattern = lowered.pattern,
+        .capture_count = lowered.capture_names.len,
+        .root_capture_id = lowered.idForName(root_name).?,
         .predicates = try predicates.toOwnedSlice(ctx.arena),
     };
     return out;
@@ -528,7 +423,7 @@ fn membershipPredicate(ctx: *Compiler, m: ast.Membership, negated: bool) Error!?
 }
 
 fn anyOfPredicate(ctx: *Compiler, expression: ast.Expression, negated: bool) Error!?rule.Predicate {
-    var capture: ?u32 = null;
+    var capture: ?query.CaptureId = null;
     var strings: std.ArrayList([]const u8) = .empty;
     if (!try collectDisjunction(ctx, expression, &capture, &strings)) return null;
 
@@ -541,7 +436,7 @@ fn anyOfPredicate(ctx: *Compiler, expression: ast.Expression, negated: bool) Err
 fn collectDisjunction(
     ctx: *Compiler,
     expression: ast.Expression,
-    capture: *?u32,
+    capture: *?query.CaptureId,
     strings: *std.ArrayList([]const u8),
 ) Error!bool {
     switch (expression) {
@@ -811,14 +706,13 @@ fn compareOp(op: ast.CompareOp) expr.Compare {
     };
 }
 
-fn resolveCapture(ctx: *Compiler, name: []const u8) Error!u32 {
-    const id = rule.captureIdForName(ctx.query, name);
-    if (id == rule.invalid_capture_id) {
-        ctx.fail("unknown capture");
-        return error.UnknownCapture;
+fn resolveCapture(ctx: *Compiler, name: []const u8) Error!query.CaptureId {
+    for (ctx.captures, 0..) |existing, i| {
+        if (std.mem.eql(u8, existing, name)) return @intCast(i);
     }
 
-    return id;
+    ctx.fail("unknown capture");
+    return error.UnknownCapture;
 }
 
 fn compileMessage(ctx: *Compiler, message: []const u8) Error!rule.Message {

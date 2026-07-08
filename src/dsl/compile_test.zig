@@ -10,6 +10,7 @@ const engine = @import("../lint/Engine.zig");
 const expr = @import("../lint/expr.zig");
 const language = @import("../lint/language.zig");
 const rule = @import("../lint/rule.zig");
+const Node = @import("../lint/node.zig").Node;
 
 fn parseDsl(arena: std.mem.Allocator, source: []const u8) !ast.File {
     var diag: dsl_parser.Diagnostic = .{};
@@ -85,17 +86,13 @@ fn runCompiled(
     try parser.setLanguage(language.grammar(lang));
     const tree = parser.parseString(source, null) orelse return error.ParseFailed;
     defer tree.destroy();
-    const cursor = ts.QueryCursor.create();
-    defer cursor.destroy();
-    const nested_cursor = ts.QueryCursor.create();
-    defer nested_cursor.destroy();
 
     var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
     errdefer out.deinit(gpa);
-    try engine.runRule(gpa, compiled, cursor, .{
+    try engine.runRule(gpa, compiled, .{
+        .allocator = gpa,
         .source = source,
-        .root = tree.rootNode(),
-        .nested_cursor = nested_cursor,
+        .root = Node.from(tree.rootNode()),
     }, lang, path, &out);
     return out.toOwnedSlice(gpa);
 }
@@ -113,15 +110,7 @@ const kata_no_console =
     \\}
 ;
 
-const scm_no_console =
-    \\((call_expression
-    \\  function: (member_expression
-    \\    object: (identifier) @receiver)) @match
-    \\ (#eq? @receiver "console")
-    \\ (#set! message "console is not allowed"))
-;
-
-test "compile: dsl no-console matches scm diagnostics" {
+test "compile: dsl no-console produces one diagnostic" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -129,21 +118,16 @@ test "compile: dsl no-console matches scm diagnostics" {
     var kata_compiled = try compileDsl(gpa, arena.allocator(), .ts, kata_no_console);
     defer kata_compiled.deinit();
 
-    var scm_diag: rule.Diagnostic = .{};
-    var scm_compiled = try rule.compile(gpa, .ts, &.{.{
-        .id = "no-console",
-        .source = scm_no_console,
-    }}, &scm_diag);
-    defer scm_compiled.deinit();
-
     const source = "console.log(\"x\");\nfoo.bar(1);\n";
     const kata_diags = try runCompiled(gpa, &kata_compiled, .ts, source, null);
     defer gpa.free(kata_diags);
-    const scm_diags = try runCompiled(gpa, &scm_compiled, .ts, source, null);
-    defer gpa.free(scm_diags);
 
-    try std.testing.expectEqual(@as(usize, 1), scm_diags.len);
-    try std.testing.expectEqualDeep(scm_diags, kata_diags);
+    try std.testing.expectEqual(@as(usize, 1), kata_diags.len);
+    try std.testing.expectEqualStrings("no-console", kata_diags[0].rule_id);
+    try std.testing.expectEqualStrings("console is not allowed", kata_diags[0].message);
+    try std.testing.expectEqual(@as(u32, 0), kata_diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 0), kata_diags[0].range.start.column);
+    try std.testing.expectEqual(@as(u32, 16), kata_diags[0].range.end.column);
 }
 
 test "compile: emits from a non-match capture" {
@@ -198,7 +182,7 @@ test "compile: translates string predicates" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 3), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.not_eq, std.meta.activeTag(predicates[0]));
     try std.testing.expectEqual(rule.PredicateOp.match, std.meta.activeTag(predicates[1]));
@@ -223,7 +207,7 @@ test "compile: translates numeric measures to where expressions" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.where, std.meta.activeTag(predicates[0]));
     const where_expr = wherePredicate(predicates[0]);
@@ -250,7 +234,7 @@ test "compile: text compared with a number is a numeric measure" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.where, std.meta.activeTag(predicates[0]));
     const where_expr = wherePredicate(predicates[0]);
@@ -274,7 +258,7 @@ test "compile: builds message segments from call placeholders" {
     );
     defer compiled.deinit();
 
-    const segments = compiled.patterns[0].message.?.segments;
+    const segments = compiled.patterns[0].meta.message.?.segments;
     try std.testing.expectEqual(@as(usize, 3), segments.len);
     try std.testing.expectEqualStrings("complexity ", segments[0].literal);
     try std.testing.expectEqual(.complexity, segments[1].placeholder.measure);
@@ -302,7 +286,7 @@ test "compile: applies severity and exclude paths" {
     );
     defer compiled.deinit();
 
-    try std.testing.expectEqual(diagnostic.Severity.warn, compiled.patterns[0].severity);
+    try std.testing.expectEqual(diagnostic.Severity.warn, compiled.patterns[0].meta.severity);
 
     const excluded = try runCompiled(gpa, &compiled, .ts, "console.log(1);\n", "vendor/x.ts");
     defer gpa.free(excluded);
@@ -814,11 +798,11 @@ test "compile: nested matchers accept alternations with fields" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.has, std.meta.activeTag(predicates[0]));
-    try std.testing.expect(std.meta.activeTag(predicates[0]) == .has or std.meta.activeTag(predicates[0]) == .count);
-    try std.testing.expectEqual(@as(usize, 1), compiled.nested_queries.len);
+    const nested = nestedPredicate(predicates[0]).matcher;
+    try std.testing.expect(nested.root_capture_id < nested.capture_count);
 }
 
 test "compile: any groups lower to any_group predicates" {
@@ -844,7 +828,7 @@ test "compile: any groups lower to any_group predicates" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 2), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.eq, std.meta.activeTag(predicates[0]));
     try std.testing.expectEqual(rule.PredicateOp.any_group, std.meta.activeTag(predicates[1]));
@@ -877,7 +861,7 @@ test "compile: conjunction members stay atomic inside any groups" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
     const members = groupMembers(predicates[0]);
     try std.testing.expectEqual(@as(usize, 2), members.len);
@@ -1018,7 +1002,7 @@ test "compile: skips project rules and other languages" {
     defer compiled.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), compiled.patterns.len);
-    try std.testing.expectEqualStrings("ts-only", compiled.patterns[0].rule_id);
+    try std.testing.expectEqualStrings("ts-only", compiled.patterns[0].meta.rule_id);
 }
 
 test "compile: rejects invalid rules" {
@@ -1138,7 +1122,7 @@ test "compile: folds string disjunctions into any-of" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.any_of, std.meta.activeTag(predicates[0]));
     try std.testing.expectEqual(@as(usize, 4), predicateArgs(predicates[0]).len);
@@ -1166,7 +1150,7 @@ test "compile: negated string disjunction becomes not-any-of" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.not_any_of, std.meta.activeTag(predicates[0]));
     try std.testing.expectEqual(@as(usize, 3), predicateArgs(predicates[0]).len);
@@ -1193,7 +1177,7 @@ test "compile: anyOf helper lowers to the any-of predicate" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.any_of, std.meta.activeTag(predicates[0]));
     try std.testing.expectEqual(@as(usize, 4), predicateArgs(predicates[0]).len);
@@ -1221,7 +1205,7 @@ test "compile: noneOf helper lowers to the not-any-of predicate" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.not_any_of, std.meta.activeTag(predicates[0]));
     try std.testing.expectEqual(@as(usize, 3), predicateArgs(predicates[0]).len);
@@ -1248,7 +1232,7 @@ test "compile: in operator lowers to the any-of predicate" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.any_of, std.meta.activeTag(predicates[0]));
     try std.testing.expectEqual(@as(usize, 4), predicateArgs(predicates[0]).len);
@@ -1276,7 +1260,7 @@ test "compile: not in operator lowers to the not-any-of predicate" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.not_any_of, std.meta.activeTag(predicates[0]));
     try std.testing.expectEqual(@as(usize, 3), predicateArgs(predicates[0]).len);
@@ -1301,7 +1285,7 @@ test "compile: negated in operator lowers to not-any-of" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(rule.PredicateOp.not_any_of, std.meta.activeTag(predicates[0]));
 }
 
@@ -1371,15 +1355,14 @@ test "compile: translates has composition to a nested matcher" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.has, std.meta.activeTag(predicates[0]));
     const nested = nestedPredicate(predicates[0]).matcher;
-    try std.testing.expect(nested.root_capture_id != rule.invalid_capture_id);
+    try std.testing.expect(nested.root_capture_id < nested.capture_count);
     try std.testing.expectEqual(@as(usize, 1), nested.predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.eq, std.meta.activeTag(nested.predicates[0]));
     try std.testing.expectEqualStrings("panic", predicateArgs(nested.predicates[0])[1].string);
-    try std.testing.expectEqual(@as(usize, 1), compiled.nested_queries.len);
     try std.testing.expect(!compiled.needs_measures);
 }
 
@@ -1405,10 +1388,10 @@ test "compile: reuses a bound nested root capture" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(rule.PredicateOp.not_inside, std.meta.activeTag(predicates[0]));
     const nested = nestedPredicate(predicates[0]).matcher;
-    try std.testing.expectEqual(rule.captureIdForName(nested.query, "cls"), nested.root_capture_id);
+    try std.testing.expectEqual(nested.pattern.capture.?, nested.root_capture_id);
 }
 
 test "compile: translates not parent composition to a nested matcher" {
@@ -1430,12 +1413,11 @@ test "compile: translates not parent composition to a nested matcher" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 1), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.not_parent, std.meta.activeTag(predicates[0]));
     const nested = nestedPredicate(predicates[0]).matcher;
-    try std.testing.expect(nested.root_capture_id != rule.invalid_capture_id);
-    try std.testing.expectEqual(@as(usize, 1), compiled.nested_queries.len);
+    try std.testing.expect(nested.root_capture_id < nested.capture_count);
     try std.testing.expect(!compiled.needs_measures);
 }
 
@@ -1456,7 +1438,7 @@ test "compile: translates count with a comparison" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(rule.PredicateOp.count, std.meta.activeTag(predicates[0]));
     try std.testing.expect(std.meta.activeTag(predicates[0]) == .has or std.meta.activeTag(predicates[0]) == .count);
     try std.testing.expectEqual(expr.Compare.gt, countPredicate(predicates[0]).compare.op);
@@ -1571,7 +1553,7 @@ test "compile: translates string helper predicates" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 4), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.starts_with, std.meta.activeTag(predicates[0]));
     try std.testing.expectEqual(rule.PredicateOp.not_ends_with, std.meta.activeTag(predicates[1]));
@@ -1623,7 +1605,7 @@ test "compile: translates glob predicates" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 2), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.glob, std.meta.activeTag(predicates[0]));
     try std.testing.expectEqual(rule.PredicateOp.not_glob, std.meta.activeTag(predicates[1]));
@@ -1671,7 +1653,7 @@ test "compile: translates capture presence predicates" {
     );
     defer compiled.deinit();
 
-    const predicates = compiled.patterns[0].predicates;
+    const predicates = compiled.patterns[0].meta.predicates;
     try std.testing.expectEqual(@as(usize, 2), predicates.len);
     try std.testing.expectEqual(rule.PredicateOp.captured, std.meta.activeTag(predicates[0]));
     try std.testing.expectEqual(rule.PredicateOp.not_captured, std.meta.activeTag(predicates[1]));

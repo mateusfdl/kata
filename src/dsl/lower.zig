@@ -48,7 +48,7 @@ pub const Lowerer = struct {
             .symbol => |kind| {
                 if (self.grammar.idForNodeKind(kind, true) == 0) return self.failKind(kind);
                 return .{
-                    .kind = .{ .symbol = kind },
+                    .kind = .{ .symbol = try self.arena.dupe(u8, kind) },
                     .capture = capture,
                     .fields = try self.lowerFields(pattern.fields),
                     .absent_fields = try self.lowerAbsent(pattern.absent_fields),
@@ -60,7 +60,7 @@ pub const Lowerer = struct {
                     return error.AnonymousWithChildren;
                 }
                 if (self.grammar.idForNodeKind(token, false) == 0) return self.failKind(token);
-                return .{ .kind = .{ .anonymous = token }, .capture = capture };
+                return .{ .kind = .{ .anonymous = try self.arena.dupe(u8, token) }, .capture = capture };
             },
             .alternation => |branches| {
                 const lowered = try self.arena.alloc(query.Pattern, branches.len);
@@ -79,7 +79,7 @@ pub const Lowerer = struct {
             const relation: query.Relation = switch (field.relation) {
                 .field => |name| blk: {
                     if (self.grammar.fieldIdForName(name) == 0) return self.failField(name);
-                    break :blk .{ .field = name };
+                    break :blk .{ .field = try self.arena.dupe(u8, name) };
                 },
                 .child => .child,
                 .children => .children,
@@ -90,10 +90,12 @@ pub const Lowerer = struct {
     }
 
     fn lowerAbsent(self: *Lowerer, absent: []const []const u8) Error![]const []const u8 {
-        for (absent) |name| {
+        const out = try self.arena.alloc([]const u8, absent.len);
+        for (absent, out) |name, *slot| {
             if (self.grammar.fieldIdForName(name) == 0) return self.failField(name);
+            slot.* = try self.arena.dupe(u8, name);
         }
-        return absent;
+        return out;
     }
 
     fn captureId(self: *Lowerer, name: []const u8) Error!query.CaptureId {
@@ -102,7 +104,7 @@ pub const Lowerer = struct {
         }
         if (self.captures.items.len > std.math.maxInt(query.CaptureId)) return error.TooManyCaptures;
         const id: query.CaptureId = @intCast(self.captures.items.len);
-        try self.captures.append(self.arena, name);
+        try self.captures.append(self.arena, try self.arena.dupe(u8, name));
         return id;
     }
 

@@ -18,7 +18,7 @@ pub const Options = struct {
     invalid_arg: ?[]const u8 = null,
 };
 
-pub const usage_line = "usage: kata query '<scm>' [path] --lang=<ts|tsx|go>\n";
+pub const usage_line = "usage: kata query '<kata rule>' [path] --lang=<ts|tsx|go>\n";
 
 const rule_id = "query";
 
@@ -49,7 +49,7 @@ pub fn run(
     var rule_set: lint.RuleSet = .{ .allocator = gpa };
     defer rule_set.deinit();
     for (langs_buf[0..langs_len]) |lang| {
-        try rule_set.append(lang, .{ .id = rule_id, .source = opts.text });
+        try rule_set.append(lang, .{ .id = rule_id, .source = opts.text, .format = .kata });
     }
 
     var engine = Engine.init(gpa, &rule_set);

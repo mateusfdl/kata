@@ -7,15 +7,23 @@ const test_fixture = @import("../test_fixture.zig");
 const language = lint.language;
 
 const as_any_query =
-    \\((as_expression (predefined_type) @t) @match
-    \\ (#eq? @t "any")
-    \\ (#set! message "found as any"))
+    \\rule query {
+    \\  lang ts, tsx
+    \\  match as_expression @match {
+    \\    child: predefined_type @t
+    \\  }
+    \\  where { text(@t) == "any" }
+    \\  emit @match { message "found as any" }
+    \\}
 ;
 
 const complexity_query =
-    \\((function_declaration) @match
-    \\ (#where? "(> (complexity @match) 2)")
-    \\ (#set! message "complexity {complexity @match} exceeds 2"))
+    \\rule query {
+    \\  lang ts
+    \\  match function_declaration @match
+    \\  where { complexity(@match) > 2 }
+    \\  emit @match { message "complexity {complexity(@match)} exceeds 2" }
+    \\}
 ;
 
 const Result = struct {
@@ -195,17 +203,27 @@ test "query: empty query text is usage" {
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(query.Outcome.usage, r.outcome);
-    try std.testing.expectEqualStrings("usage: kata query '<scm>' [path] --lang=<ts|tsx|go>\n", r.stderr);
+    try std.testing.expectEqualStrings("usage: kata query '<kata rule>' [path] --lang=<ts|tsx|go>\n", r.stderr);
 }
 
 test "query: invalid query text is usage" {
     const gpa = std.testing.allocator;
 
-    const r = try runQuery(gpa, .{ .text = "(nonexistent_node) @match", .target = ".", .lang = "ts" });
+    const r = try runQuery(gpa, .{
+        .text =
+        \\rule query {
+        \\  lang ts
+        \\  match nonexistent_node @match
+        \\  emit @match { message "x" }
+        \\}
+        ,
+        .target = ".",
+        .lang = "ts",
+    });
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(query.Outcome.usage, r.outcome);
-    try std.testing.expectEqualStrings("kata: rule ts/query: query syntax error\n", r.stderr);
+    try std.testing.expectEqualStrings("kata: rule ts/query: node kind or field is invalid for the grammar\n", r.stderr);
 }
 
 test "query: stray argument reports a quoting hint" {

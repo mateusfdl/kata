@@ -5,6 +5,7 @@ const expr = @import("expr.zig");
 const glob = @import("glob.zig");
 const language = @import("language.zig");
 const metric = @import("metric.zig");
+const query = @import("query.zig");
 const rule = @import("rule.zig");
 const Node = @import("node.zig").Node;
 
@@ -16,15 +17,15 @@ pub const MetricContext = struct {
 };
 
 pub const EvalContext = struct {
+    allocator: std.mem.Allocator,
     source: []const u8,
-    root: ts.Node,
+    root: Node,
     metric: ?MetricContext = null,
-    nested_cursor: ?*ts.QueryCursor = null,
 };
 
 pub fn evaluate(
     predicates: []const rule.Predicate,
-    match: ts.Query.Match,
+    match: query.Match,
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
     for (predicates) |pred| {
@@ -35,7 +36,7 @@ pub fn evaluate(
 
 fn evalOne(
     pred: rule.Predicate,
-    match: ts.Query.Match,
+    match: query.Match,
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
     return switch (pred) {
@@ -70,7 +71,7 @@ fn evalOne(
 
 fn evalAnyGroup(
     members: []const rule.Predicate,
-    match: ts.Query.Match,
+    match: query.Match,
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
     for (members) |member| {
@@ -81,7 +82,7 @@ fn evalAnyGroup(
 
 fn evalWhere(
     parsed: *const expr.Expr,
-    match: ts.Query.Match,
+    match: query.Match,
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
     const metric_ctx = ctx.metric orelse return false;
@@ -92,15 +93,14 @@ fn evalWhere(
 
 fn evalHas(
     pred: rule.NestedPredicate,
-    match: ts.Query.Match,
+    match: query.Match,
     ctx: EvalContext,
     negate: bool,
 ) std.mem.Allocator.Error!bool {
-    const cursor = ctx.nested_cursor orelse return false;
     const subject = subjectNode(pred.args, match) orelse return false;
 
-    cursor.exec(pred.matcher.query, subject.inner);
-    while (cursor.nextMatch()) |nested_match| {
+    const matches = try query.run(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, subject);
+    for (matches) |nested_match| {
         if (try nestedMatchPasses(pred.matcher, nested_match, subject, ctx)) return !negate;
     }
 
@@ -109,16 +109,15 @@ fn evalHas(
 
 fn evalInside(
     pred: rule.NestedPredicate,
-    match: ts.Query.Match,
+    match: query.Match,
     ctx: EvalContext,
     negate: bool,
 ) std.mem.Allocator.Error!bool {
-    const cursor = ctx.nested_cursor orelse return false;
     const subject = subjectNode(pred.args, match) orelse return false;
 
-    cursor.exec(pred.matcher.query, ctx.root);
-    while (cursor.nextMatch()) |nested_match| {
-        const enclosing = findCaptureNode(pred.matcher.root_capture_id, nested_match) orelse continue;
+    const matches = try query.run(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, ctx.root);
+    for (matches) |nested_match| {
+        const enclosing = nested_match.get(pred.matcher.root_capture_id) orelse continue;
         if (!strictlyContains(enclosing, subject)) continue;
         if (try evaluate(pred.matcher.predicates, nested_match, ctx)) return !negate;
     }
@@ -128,16 +127,15 @@ fn evalInside(
 
 fn evalParent(
     pred: rule.NestedPredicate,
-    match: ts.Query.Match,
+    match: query.Match,
     ctx: EvalContext,
     negate: bool,
 ) std.mem.Allocator.Error!bool {
-    const cursor = ctx.nested_cursor orelse return false;
     const subject = subjectNode(pred.args, match) orelse return false;
 
-    cursor.exec(pred.matcher.query, ctx.root);
-    while (cursor.nextMatch()) |nested_match| {
-        const candidate = findCaptureNode(pred.matcher.root_capture_id, nested_match) orelse continue;
+    const matches = try query.run(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, ctx.root);
+    for (matches) |nested_match| {
+        const candidate = nested_match.get(pred.matcher.root_capture_id) orelse continue;
         if (!isDirectParent(candidate, subject)) continue;
         if (try evaluate(pred.matcher.predicates, nested_match, ctx)) return !negate;
     }
@@ -152,15 +150,14 @@ fn isDirectParent(candidate: Node, subject: Node) bool {
 
 fn evalCount(
     pred: rule.CountPredicate,
-    match: ts.Query.Match,
+    match: query.Match,
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
-    const cursor = ctx.nested_cursor orelse return false;
     const subject = subjectNode(pred.args, match) orelse return false;
 
-    cursor.exec(pred.matcher.query, subject.inner);
+    const matches = try query.run(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, subject);
     var total: u32 = 0;
-    while (cursor.nextMatch()) |nested_match| {
+    for (matches) |nested_match| {
         if (try nestedMatchPasses(pred.matcher, nested_match, subject, ctx)) total += 1;
     }
 
@@ -169,21 +166,21 @@ fn evalCount(
 
 fn nestedMatchPasses(
     nested: *const rule.NestedMatcher,
-    nested_match: ts.Query.Match,
+    nested_match: query.Match,
     subject: Node,
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
-    const root_node = findCaptureNode(nested.root_capture_id, nested_match) orelse return false;
+    const root_node = nested_match.get(nested.root_capture_id) orelse return false;
     if (sameRange(root_node, subject)) return false;
 
     return evaluate(nested.predicates, nested_match, ctx);
 }
 
-fn subjectNode(args: []const rule.PredicateOperand, match: ts.Query.Match) ?Node {
+fn subjectNode(args: []const rule.PredicateOperand, match: query.Match) ?Node {
     if (args.len != 1) return null;
 
     return switch (args[0]) {
-        .capture => |id| findCaptureNode(id, match),
+        .capture => |id| match.get(id),
         .string => null,
     };
 }
@@ -211,13 +208,13 @@ fn compareCount(op: expr.Compare, left: u32, right: u32) bool {
 
 const NodeMeasures = struct {
     ctx: MetricContext,
-    match: ts.Query.Match,
+    match: query.Match,
     source: []const u8,
 
     pub const Error = std.mem.Allocator.Error;
 
-    pub fn measure(self: NodeMeasures, m: expr.Measure, capture_id: u32) Error!?u32 {
-        const node = findCaptureNode(capture_id, self.match) orelse return null;
+    pub fn measure(self: NodeMeasures, m: expr.Measure, capture_id: query.CaptureId) Error!?u32 {
+        const node = self.match.get(capture_id) orelse return null;
 
         return switch (m) {
             .complexity => try metric.complexityOf(self.ctx.allocator, self.ctx.compiled, self.ctx.cursor, node),
@@ -241,7 +238,7 @@ const NodeMeasures = struct {
 pub fn renderMessage(
     allocator: std.mem.Allocator,
     segments: []const rule.MessageSegment,
-    match: ts.Query.Match,
+    match: query.Match,
     ctx: EvalContext,
 ) std.mem.Allocator.Error![]const u8 {
     var out: std.ArrayList(u8) = .empty;
@@ -261,11 +258,11 @@ fn renderPlaceholder(
     allocator: std.mem.Allocator,
     out: *std.ArrayList(u8),
     p: rule.Placeholder,
-    match: ts.Query.Match,
+    match: query.Match,
     ctx: EvalContext,
 ) std.mem.Allocator.Error!void {
     if (p.measure == .text) {
-        const text = findCaptureText(p.capture_id, match, ctx.source) orelse "?";
+        const text = captureText(p.capture_id, match, ctx.source) orelse "?";
 
         return out.appendSlice(allocator, text);
     }
@@ -281,7 +278,7 @@ fn renderPlaceholder(
 
 fn evalEq(
     args: []const rule.PredicateOperand,
-    match: ts.Query.Match,
+    match: query.Match,
     source: []const u8,
     negate: bool,
 ) bool {
@@ -295,7 +292,7 @@ fn evalEq(
 
 fn evalAnyOf(
     args: []const rule.PredicateOperand,
-    match: ts.Query.Match,
+    match: query.Match,
     source: []const u8,
     negate: bool,
 ) bool {
@@ -311,11 +308,11 @@ fn evalAnyOf(
     return negate;
 }
 
-fn evalCaptured(args: []const rule.PredicateOperand, match: ts.Query.Match, negate: bool) bool {
+fn evalCaptured(args: []const rule.PredicateOperand, match: query.Match, negate: bool) bool {
     if (args.len != 1) return false;
 
     const present = switch (args[0]) {
-        .capture => |id| findCaptureNode(id, match) != null,
+        .capture => |id| match.get(id) != null,
         .string => false,
     };
 
@@ -326,7 +323,7 @@ const StringHelper = enum { starts_with, ends_with, contains, glob };
 
 fn evalStringHelper(
     args: []const rule.PredicateOperand,
-    match: ts.Query.Match,
+    match: query.Match,
     source: []const u8,
     helper: StringHelper,
     negate: bool,
@@ -347,7 +344,7 @@ fn evalStringHelper(
 
 fn evalMatch(
     pred: rule.RegexPredicate,
-    match: ts.Query.Match,
+    match: query.Match,
     source: []const u8,
     negate: bool,
 ) bool {
@@ -358,29 +355,21 @@ fn evalMatch(
 
 fn resolveText(
     operand: rule.PredicateOperand,
-    match: ts.Query.Match,
+    match: query.Match,
     source: []const u8,
 ) ?[]const u8 {
     return switch (operand) {
         .string => |s| s,
-        .capture => |id| findCaptureText(id, match, source),
+        .capture => |id| captureText(id, match, source),
     };
 }
 
-fn findCaptureText(
-    id: u32,
-    match: ts.Query.Match,
+fn captureText(
+    id: query.CaptureId,
+    match: query.Match,
     source: []const u8,
 ) ?[]const u8 {
-    const node = findCaptureNode(id, match) orelse return null;
+    const node = match.get(id) orelse return null;
 
     return node.text(source);
-}
-
-fn findCaptureNode(id: u32, match: ts.Query.Match) ?Node {
-    for (match.captures) |cap| {
-        if (cap.index == id) return Node.from(cap.node);
-    }
-
-    return null;
 }

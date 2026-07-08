@@ -84,6 +84,7 @@ const Cont = union(enum) {
         fields: []const Field,
         index: usize,
         parent: Node,
+        min_child: u32,
         next: *const Cont,
     },
 };
@@ -135,13 +136,18 @@ fn matchNode(
         if (n.childByFieldName(field_name) != null) return;
     }
 
-    try matchFields(pattern.fields, 0, n, bindings, cont, collector);
+    try matchFields(pattern.fields, 0, n, 0, bindings, cont, collector);
 }
 
+/// `min_child` is the lowest named-child index the next unanchored child may
+/// bind, so a sequence of `child` patterns matches distinct siblings in tree
+/// order (tree-sitter's unanchored-but-ordered semantics). `field` relations are
+/// keyed by name and leave the sibling cursor untouched.
 fn matchFields(
     fields: []const Field,
     index: usize,
     parent: Node,
+    min_child: u32,
     bindings: []?Node,
     next: *const Cont,
     collector: *Collector,
@@ -149,39 +155,48 @@ fn matchFields(
     if (index == fields.len) return invoke(next, bindings, collector);
 
     const field = &fields[index];
-    const cont: Cont = .{ .fields = .{
-        .fields = fields,
-        .index = index + 1,
-        .parent = parent,
-        .next = next,
-    } };
 
     switch (field.relation) {
         .field => |name| {
             const child = parent.childByFieldName(name) orelse return;
+            const cont = fieldsCont(fields, index, parent, min_child, next);
             try matchNode(&field.pattern, child, bindings, &cont, collector);
         },
         .child => {
-            var k: u32 = 0;
+            var k: u32 = min_child;
             while (k < parent.namedChildCount()) : (k += 1) {
+                const cont = fieldsCont(fields, index, parent, k + 1, next);
                 try matchNode(&field.pattern, parent.namedChild(k).?, bindings, &cont, collector);
             }
         },
-        .children => try matchChildren(&field.pattern, parent, bindings, &cont, collector),
+        .children => try matchChildren(&field.pattern, parent, index, fields, min_child, bindings, next, collector),
     }
 }
 
+fn fieldsCont(fields: []const Field, index: usize, parent: Node, min_child: u32, next: *const Cont) Cont {
+    return .{ .fields = .{
+        .fields = fields,
+        .index = index + 1,
+        .parent = parent,
+        .min_child = min_child,
+        .next = next,
+    } };
+}
+
 /// Zero-or-more immediate named children. With a single-node capture slot this
-/// binds the first matching child (or none) and resumes once, since `*` is
-/// always satisfiable. No shipped rule exercises this relation.
+/// binds the first matching child at or after `min_child` (or none) and resumes
+/// once, since `*` is always satisfiable. No shipped rule exercises this relation.
 fn matchChildren(
     pattern: *const Pattern,
     parent: Node,
+    index: usize,
+    fields: []const Field,
+    min_child: u32,
     bindings: []?Node,
     next: *const Cont,
     collector: *Collector,
 ) Error!void {
-    var k: u32 = 0;
+    var k: u32 = min_child;
     while (k < parent.namedChildCount()) : (k += 1) {
         const child = parent.namedChild(k).?;
         if (!kindMatches(pattern, child)) continue;
@@ -194,16 +209,16 @@ fn matchChildren(
         defer if (pattern.capture) |c| {
             bindings[c] = saved;
         };
-        return invoke(next, bindings, collector);
+        return matchFields(fields, index + 1, parent, k + 1, bindings, next, collector);
     }
 
-    return invoke(next, bindings, collector);
+    return matchFields(fields, index + 1, parent, min_child, bindings, next, collector);
 }
 
 fn invoke(cont: *const Cont, bindings: []?Node, collector: *Collector) Error!void {
     switch (cont.*) {
         .emit => try collector.emit(bindings),
-        .fields => |f| try matchFields(f.fields, f.index, f.parent, bindings, f.next, collector),
+        .fields => |f| try matchFields(f.fields, f.index, f.parent, f.min_child, bindings, f.next, collector),
     }
 }
 

@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const query = @import("query.zig");
+
 const expression_open: u8 = '(';
 const expression_close: u8 = ')';
 const capture_marker: u8 = '@';
@@ -60,7 +62,7 @@ const LogicalOp = enum {
 
 pub const Term = union(enum) {
     number: u32,
-    measure: struct { measure: Measure, capture_id: u32 },
+    measure: struct { measure: Measure, capture_id: query.CaptureId },
 };
 
 pub const Expr = union(enum) {

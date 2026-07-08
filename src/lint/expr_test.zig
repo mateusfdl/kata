@@ -1,8 +1,9 @@
 const std = @import("std");
 const expr = @import("expr.zig");
+const query = @import("query.zig");
 
 const FakeResolver = struct {
-    pub fn captureId(_: FakeResolver, name: []const u8) ?u32 {
+    pub fn captureId(_: FakeResolver, name: []const u8) ?query.CaptureId {
         if (std.mem.eql(u8, name, "fn")) return 0;
         if (std.mem.eql(u8, name, "cls")) return 1;
         return null;
@@ -18,11 +19,11 @@ const FakeMeasures = struct {
     args: u32 = 0,
     position: u32 = 0,
     siblings: u32 = 0,
-    missing_capture: ?u32 = null,
+    missing_capture: ?query.CaptureId = null,
 
     pub const Error = error{};
 
-    pub fn measure(self: FakeMeasures, m: expr.Measure, capture_id: u32) Error!?u32 {
+    pub fn measure(self: FakeMeasures, m: expr.Measure, capture_id: query.CaptureId) Error!?u32 {
         if (self.missing_capture == capture_id) return null;
         return switch (m) {
             .complexity => self.complexity,
