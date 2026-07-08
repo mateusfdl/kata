@@ -42,7 +42,7 @@ pub fn run(
         return output.message(opts.stderr, "cannot resolve user rules directory: set XDG_CONFIG_HOME or HOME\n", exit_usage);
 
     const lang_dir = try std.fmt.allocPrint(arena, "{s}/{s}", .{ root, lang.toString() });
-    const file_path = try std.fmt.allocPrint(arena, "{s}/{s}.scm", .{ lang_dir, id });
+    const file_path = try std.fmt.allocPrint(arena, "{s}/{s}.kata", .{ lang_dir, id });
     const body = try renderTemplate(arena, lang, id);
 
     fs.rules.createNew(io, lang_dir, file_path, body) catch |err| switch (err) {
@@ -55,10 +55,11 @@ pub fn run(
 
 fn renderTemplate(arena: std.mem.Allocator, lang: language.Name, id: []const u8) ![]u8 {
     return std.fmt.allocPrint(arena,
-        \\; {s}/{s}: describe what this rule catches.
-        \\; The @match capture marks the node to report; (#set! message ...) sets the diagnostic text.
-        \\((identifier) @match
-        \\ (#set! message "TODO: explain why this is bad"))
+        \\rule {s} {{
+        \\  lang {s}
+        \\  match identifier @match
+        \\  emit @match {{ message "TODO: explain why this is bad" }}
+        \\}}
         \\
-    , .{ lang.toString(), id });
+    , .{ id, lang.toString() });
 }

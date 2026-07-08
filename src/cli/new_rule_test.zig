@@ -40,7 +40,7 @@ fn runOnce(
     };
 }
 
-test "new-rule: writes the .scm template at the expected path" {
+test "new-rule: writes the kata template at the expected path" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -54,20 +54,20 @@ test "new-rule: writes the .scm template at the expected path" {
     defer captured.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u8, new_rule.exit_clean), captured.code);
-    try std.testing.expect(std.mem.indexOf(u8, captured.stdout, "ts/no-throw-literal.scm") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured.stdout, "ts/no-throw-literal.kata") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured.stdout, "add ts/no-throw-literal to 'enabled' in rules.yaml to activate it") != null);
 
     const body = try tmp.dir.readFileAlloc(
         std.testing.io,
-        "ts/no-throw-literal.scm",
+        "ts/no-throw-literal.kata",
         std.testing.allocator,
         .limited(8 * 1024),
     );
     defer std.testing.allocator.free(body);
 
-    try std.testing.expect(std.mem.indexOf(u8, body, "ts/no-throw-literal:") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "@match") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "#set! message") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "rule no-throw-literal {") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "match identifier @match") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "emit @match { message \"TODO: explain why this is bad\" }") != null);
 }
 
 test "new-rule: refuses to overwrite an existing rule" {
@@ -86,7 +86,7 @@ test "new-rule: refuses to overwrite an existing rule" {
 
     const original = try tmp.dir.readFileAlloc(
         std.testing.io,
-        "ts/no-throw-literal.scm",
+        "ts/no-throw-literal.kata",
         std.testing.allocator,
         .limited(8 * 1024),
     );
@@ -99,7 +99,7 @@ test "new-rule: refuses to overwrite an existing rule" {
 
     const after = try tmp.dir.readFileAlloc(
         std.testing.io,
-        "ts/no-throw-literal.scm",
+        "ts/no-throw-literal.kata",
         std.testing.allocator,
         .limited(8 * 1024),
     );
