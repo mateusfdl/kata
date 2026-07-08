@@ -17,6 +17,7 @@ comptime {
     _ = @import("lint/fact_rule_test.zig");
     _ = @import("lint/glob_test.zig");
     _ = @import("dsl.zig");
+    _ = @import("dsl/lower_test.zig");
     _ = @import("dsl/compile_test.zig");
     _ = @import("dsl/fact_compile_test.zig");
     _ = @import("dsl/parser_test.zig");
