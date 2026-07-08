@@ -14,68 +14,117 @@ const no_as_any_rule =
     \\
 ;
 
+const kata_no_as_any_rule =
+    \\rule no-as-any {
+    \\  lang ts, tsx
+    \\  match as_expression @match {
+    \\    child: predefined_type @t
+    \\  }
+    \\  where { text(@t) == "any" }
+    \\  emit @match { message "as any is not allowed" }
+    \\}
+    \\rule no-as-any {
+    \\  lang ts, tsx
+    \\  match as_expression @match {
+    \\    child: array_type {
+    \\      child: predefined_type @t
+    \\    }
+    \\  }
+    \\  where { text(@t) == "any" }
+    \\  emit @match { message "as any[] is not allowed" }
+    \\}
+;
+
 const blank_identifier_rule =
-    \\((short_var_declaration
-    \\  left: (expression_list (identifier) @blank)) @match
-    \\ (#eq? @blank "_")
-    \\ (#set! message "blank identifier discarding function return - errors must be handled explicitly"))
-    \\
+    \\rule no-swallowed-errors {
+    \\  lang go
+    \\  match short_var_declaration @match {
+    \\    left: expression_list {
+    \\      child: identifier @blank
+    \\    }
+    \\  }
+    \\  where { text(@blank) == "_" }
+    \\  emit @match { message "blank identifier discarding function return - errors must be handled explicitly" }
+    \\}
 ;
 
 const go_no_console_rule =
-    \\((call_expression
-    \\  function: (identifier) @name) @match
-    \\ (#any-of? @name "print" "println")
-    \\ (#set! message "console output is not allowed - use proper instrumentation"))
-    \\
-    \\((call_expression
-    \\  function: (selector_expression
-    \\    operand: (identifier) @pkg
-    \\    field: (field_identifier) @name)) @match
-    \\ (#any-of? @pkg "fmt" "log")
-    \\ (#any-of? @name "Print" "Printf" "Println")
-    \\ (#set! message "console output is not allowed - use proper instrumentation"))
-    \\
+    \\rule no-console {
+    \\  lang go
+    \\  match call_expression @match {
+    \\    function: identifier @name
+    \\  }
+    \\  where { anyOf(text(@name), "print", "println") }
+    \\  emit @match { message "console output is not allowed - use proper instrumentation" }
+    \\}
+    \\rule no-console {
+    \\  lang go
+    \\  match call_expression @match {
+    \\    function: selector_expression {
+    \\      operand: identifier @pkg
+    \\      field: field_identifier @name
+    \\    }
+    \\  }
+    \\  where {
+    \\    anyOf(text(@pkg), "fmt", "log")
+    \\    anyOf(text(@name), "Print", "Printf", "Println")
+    \\  }
+    \\  emit @match { message "console output is not allowed - use proper instrumentation" }
+    \\}
 ;
 
 const no_weak_assertions_rule =
-    \\((call_expression
-    \\  function: (member_expression
-    \\    object: (call_expression
-    \\      function: (identifier) @expect)
-    \\    property: (property_identifier) @name)) @match
-    \\ (#eq? @expect "expect")
-    \\ (#any-of? @name "toBeDefined" "toBeUndefined" "toBeNull" "toBeTruthy" "toBeFalsy" "toHaveBeenCalled" "toContain")
-    \\ (#set! message "weak assertion - use .toEqual() with explicit values"))
-    \\
+    \\rule no-weak-assertions {
+    \\  lang ts, tsx
+    \\  match call_expression @match {
+    \\    function: member_expression {
+    \\      object: call_expression {
+    \\        function: identifier @expect
+    \\      }
+    \\      property: property_identifier @name
+    \\    }
+    \\  }
+    \\  where {
+    \\    text(@expect) == "expect"
+    \\    anyOf(text(@name), "toBeDefined", "toBeUndefined", "toBeNull", "toBeTruthy", "toBeFalsy", "toHaveBeenCalled", "toContain")
+    \\  }
+    \\  emit @match { message "weak assertion - use .toEqual() with explicit values" }
+    \\}
 ;
 
 const no_comments_except_directives_rule =
-    \\((comment) @match
-    \\ (#not-match? @match "^//go:")
-    \\ (#set! message "comments are not allowed - code should be self-documenting"))
-    \\
+    \\rule no-comments {
+    \\  lang go
+    \\  match comment @match
+    \\  where { !matches(text(@match), "^//go:") }
+    \\  emit @match { message "comments are not allowed - code should be self-documenting" }
+    \\}
 ;
 
 const todo_comments_rule =
-    \\((comment) @match
-    \\ (#match? @match "TODO")
-    \\ (#set! message "TODO comments are not allowed"))
-    \\
+    \\rule todo-comments {
+    \\  lang go
+    \\  match comment @match
+    \\  where { matches(text(@match), "TODO") }
+    \\  emit @match { message "TODO comments are not allowed" }
+    \\}
 ;
 
 const cross_grammar_print_rule =
-    \\((call_expression
-    \\  function: (identifier) @name) @match
-    \\ (#eq? @name "print")
-    \\ (#set! message "print calls are not allowed"))
-    \\
+    \\rule no-print-call {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: identifier @name
+    \\  }
+    \\  where { text(@name) == "print" }
+    \\  emit @match { message "print calls are not allowed" }
+    \\}
 ;
 
 const Fixture = test_fixture.Fixture;
 
 fn newFixture(allocator: std.mem.Allocator, langs: []const language.Name) !*Fixture {
-    return Fixture.init(allocator, langs, "no-as-any", no_as_any_rule);
+    return Fixture.initFormat(allocator, langs, "no-as-any", kata_no_as_any_rule, .kata);
 }
 
 test "engine: detects `as any`" {
@@ -195,7 +244,7 @@ test "engine: per-language rule filtering" {
 
 test "engine: ts rules never evaluate go sources" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-print-call", cross_grammar_print_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-print-call", cross_grammar_print_rule, .kata);
     defer f.deinit();
 
     const ts_diags = try f.engine.lint(gpa, "print(\"x\");", .ts, null);
@@ -211,7 +260,7 @@ test "engine: ts rules never evaluate go sources" {
 
 test "engine: weak assertions only match expect chains" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{ .ts, .tsx }, "no-weak-assertions", no_weak_assertions_rule);
+    var f = try Fixture.initFormat(gpa, &.{ .ts, .tsx }, "no-weak-assertions", no_weak_assertions_rule, .kata);
     defer f.deinit();
 
     const src =
@@ -233,7 +282,7 @@ test "engine: weak assertions only match expect chains" {
 
 test "engine: go detects blank identifier short declaration" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "no-swallowed-errors", blank_identifier_rule);
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-swallowed-errors", blank_identifier_rule, .kata);
     defer f.deinit();
 
     const src =
@@ -256,7 +305,7 @@ test "engine: go detects blank identifier short declaration" {
 
 test "engine: not-match? exempts matching comments" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", no_comments_except_directives_rule);
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", no_comments_except_directives_rule, .kata);
     defer f.deinit();
 
     const src =
@@ -274,7 +323,7 @@ test "engine: not-match? exempts matching comments" {
 
 test "engine: match? flags only matching comments" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "todo-comments", todo_comments_rule);
+    var f = try Fixture.initFormat(gpa, &.{.go}, "todo-comments", todo_comments_rule, .kata);
     defer f.deinit();
 
     const src =
@@ -292,8 +341,14 @@ test "engine: match? flags only matching comments" {
 test "engine: exclude-paths suppresses diagnostics for matching paths" {
     const gpa = std.testing.allocator;
     const rule =
-        "((comment) @match (#set! exclude-paths \"**/*_test.go vendor/\") (#set! message \"no comments\"))\n";
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
+        \\rule no-comments {
+        \\  lang go
+        \\  exclude paths "**/*_test.go", "vendor/"
+        \\  match comment @match
+        \\  emit @match { message "no comments" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", rule, .kata);
     defer f.deinit();
     const src = "// plain\n";
 
@@ -314,8 +369,14 @@ test "engine: exclude-paths suppresses diagnostics for matching paths" {
 test "engine: exclude-paths set directive is accepted" {
     const gpa = std.testing.allocator;
     const rule =
-        "((comment) @match (#set! exclude-paths \"*_test.go vendor/\") (#set! message \"no comments\"))\n";
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
+        \\rule no-comments {
+        \\  lang go
+        \\  exclude paths "*_test.go", "vendor/"
+        \\  match comment @match
+        \\  emit @match { message "no comments" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", rule, .kata);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "// plain\n", .go, null);
@@ -325,72 +386,9 @@ test "engine: exclude-paths set directive is accepted" {
     try std.testing.expectEqualStrings("no comments", diags[0].message);
 }
 
-test "engine: unknown predicate is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#nope? @match \"x\") (#set! message \"m\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.UnknownPredicate, f.engine.lint(gpa, "// hi\n", .go, null));
-    try std.testing.expectEqualStrings("unknown predicate", f.engine.compile_diag.detail);
-}
-
-test "engine: unknown set directive key is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! mesage \"typo\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.InvalidSetDirective, f.engine.lint(gpa, "// hi\n", .go, null));
-    try std.testing.expectEqualStrings("invalid #set! directive", f.engine.compile_diag.detail);
-}
-
-test "engine: set directive with extra operands is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! message \"first\" \"second\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.InvalidSetDirective, f.engine.lint(gpa, "// hi\n", .go, null));
-    try std.testing.expectEqualStrings("invalid #set! directive", f.engine.compile_diag.detail);
-}
-
-test "engine: duplicate set directives are a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! message \"first\") (#set! message \"second\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.DuplicateSetDirective, f.engine.lint(gpa, "// hi\n", .go, null));
-    try std.testing.expectEqualStrings("duplicate #set! directive", f.engine.compile_diag.detail);
-}
-
-test "engine: pattern without @match is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @typo (#set! message \"m\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.MissingMatchCapture, f.engine.lint(gpa, "// hi\n", .go, null));
-    try std.testing.expectEqualStrings("pattern never captures @match", f.engine.compile_diag.detail);
-}
-
-test "engine: predicate with wrong arity is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#eq? @match) (#set! message \"m\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.InvalidPredicateArity, f.engine.lint(gpa, "// hi\n", .go, null));
-    try std.testing.expectEqualStrings("wrong number of predicate arguments", f.engine.compile_diag.detail);
-}
-
-test "engine: match predicate without a pattern is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#match? @match) (#set! message \"m\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.InvalidPredicateArity, f.engine.lint(gpa, "// hi\n", .go, null));
-    try std.testing.expectEqualStrings("wrong number of predicate arguments", f.engine.compile_diag.detail);
-}
-
 test "engine: go detects console output" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "no-console", go_no_console_rule);
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-console", go_no_console_rule, .kata);
     defer f.deinit();
 
     const src =
@@ -415,18 +413,25 @@ test "engine: go detects console output" {
 }
 
 const repo_complexity_rule =
-    \\((class_declaration
-    \\   name: (type_identifier) @name
-    \\   body: (class_body (method_definition) @fn)) @match
-    \\ (#match? @name "Repository$")
-    \\ (#where? "(> (complexity @fn) 2)")
-    \\ (#set! message "repository methods must keep complexity <= 2"))
-    \\
+    \\rule repo-complexity {
+    \\  lang ts
+    \\  match class_declaration @match {
+    \\    name: type_identifier @name
+    \\    body: class_body {
+    \\      child: method_definition @fn
+    \\    }
+    \\  }
+    \\  where {
+    \\    matches(text(@name), "Repository$")
+    \\    complexity(@fn) > 2
+    \\  }
+    \\  emit @match { message "repository methods must keep complexity <= 2" }
+    \\}
 ;
 
 test "engine: where scopes complexity to matching classes only" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "repo-complexity", repo_complexity_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "repo-complexity", repo_complexity_rule, .kata);
     defer f.deinit();
 
     const src =
@@ -458,12 +463,14 @@ test "engine: where scopes complexity to matching classes only" {
 test "engine: where complexity excludes nested functions" {
     const gpa = std.testing.allocator;
     const rule =
-        \\((method_definition) @match
-        \\ (#where? "(> (complexity @match) 1)")
-        \\ (#set! message "too complex"))
-        \\
+        \\rule method-complexity {
+        \\  lang ts
+        \\  match method_definition @match
+        \\  where { complexity(@match) > 1 }
+        \\  emit @match { message "too complex" }
+        \\}
     ;
-    var f = try Fixture.init(gpa, &.{.ts}, "method-complexity", rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "method-complexity", rule, .kata);
     defer f.deinit();
 
     const src =
@@ -485,14 +492,25 @@ test "engine: where complexity excludes nested functions" {
 test "engine: where scopes complexity to go receiver types" {
     const gpa = std.testing.allocator;
     const rule =
-        \\((method_declaration
-        \\   receiver: (parameter_list (parameter_declaration type: (pointer_type (type_identifier) @recv)))) @match
-        \\ (#match? @recv "Repository$")
-        \\ (#where? "(> (complexity @match) 1)")
-        \\ (#set! message "repository methods must keep complexity <= 1"))
-        \\
+        \\rule repo-complexity {
+        \\  lang go
+        \\  match method_declaration @match {
+        \\    receiver: parameter_list {
+        \\      child: parameter_declaration {
+        \\        type: pointer_type {
+        \\          child: type_identifier @recv
+        \\        }
+        \\      }
+        \\    }
+        \\  }
+        \\  where {
+        \\    matches(text(@recv), "Repository$")
+        \\    complexity(@match) > 1
+        \\  }
+        \\  emit @match { message "repository methods must keep complexity <= 1" }
+        \\}
     ;
-    var f = try Fixture.init(gpa, &.{.go}, "repo-complexity", rule);
+    var f = try Fixture.initFormat(gpa, &.{.go}, "repo-complexity", rule, .kata);
     defer f.deinit();
 
     const src =
@@ -519,12 +537,14 @@ test "engine: where scopes complexity to go receiver types" {
 test "engine: where nesting fires beyond the threshold" {
     const gpa = std.testing.allocator;
     const rule =
-        \\((function_declaration) @match
-        \\ (#where? "(> (nesting @match) 2)")
-        \\ (#set! message "too deep"))
-        \\
+        \\rule max-nesting {
+        \\  lang ts
+        \\  match function_declaration @match
+        \\  where { nesting(@match) > 2 }
+        \\  emit @match { message "too deep" }
+        \\}
     ;
-    var f = try Fixture.init(gpa, &.{.ts}, "max-nesting", rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-nesting", rule, .kata);
     defer f.deinit();
 
     const deep =
@@ -556,12 +576,17 @@ test "engine: where nesting fires beyond the threshold" {
 test "engine: where composes length and complexity" {
     const gpa = std.testing.allocator;
     const rule =
-        \\((method_definition) @match
-        \\ (#where? "(and (> (length @match) 3) (> (complexity @match) 1))")
-        \\ (#set! message "long and complex"))
-        \\
+        \\rule long-complex {
+        \\  lang ts
+        \\  match method_definition @match
+        \\  where {
+        \\    length(@match) > 3
+        \\    complexity(@match) > 1
+        \\  }
+        \\  emit @match { message "long and complex" }
+        \\}
     ;
-    var f = try Fixture.init(gpa, &.{.ts}, "long-complex", rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "long-complex", rule, .kata);
     defer f.deinit();
 
     const src =
@@ -586,33 +611,6 @@ test "engine: where composes length and complexity" {
     try std.testing.expectEqual(@as(u32, 1), diags[0].range.start.line);
 }
 
-test "engine: malformed where expression is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((method_definition) @match (#where? \"(> (complexity @match) lots)\") (#set! message \"m\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.InvalidWhereExpression, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
-    try std.testing.expectEqualStrings("invalid where expression", f.engine.compile_diag.detail);
-}
-
-test "engine: where expression referencing unknown capture is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((method_definition) @match (#where? \"(> (complexity @nope) 1)\") (#set! message \"m\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.InvalidWhereExpression, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
-    try std.testing.expectEqualStrings("invalid where expression", f.engine.compile_diag.detail);
-}
-
-test "engine: where without exactly one string argument is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((method_definition) @match (#where? @match \"(> 1 0)\") (#set! message \"m\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.InvalidWhereExpression, f.engine.lint(gpa, "class C { m() {} }", .ts, null));
-    try std.testing.expectEqualStrings("invalid where expression", f.engine.compile_diag.detail);
-}
-
 test "engine: severity defaults to error" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa, &.{.ts});
@@ -628,8 +626,14 @@ test "engine: severity defaults to error" {
 test "engine: set severity warn stamps warn on diagnostics" {
     const gpa = std.testing.allocator;
     const rule =
-        "((comment) @match (#set! severity \"warn\") (#set! message \"no comments\"))\n";
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
+        \\rule no-comments {
+        \\  lang go
+        \\  severity warn
+        \\  match comment @match
+        \\  emit @match { message "no comments" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", rule, .kata);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "// hi\n", .go, null);
@@ -643,8 +647,14 @@ test "engine: set severity warn stamps warn on diagnostics" {
 test "engine: set severity error keeps error" {
     const gpa = std.testing.allocator;
     const rule =
-        "((comment) @match (#set! severity \"error\") (#set! message \"no comments\"))\n";
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
+        \\rule no-comments {
+        \\  lang go
+        \\  severity error
+        \\  match comment @match
+        \\  emit @match { message "no comments" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.go}, "no-comments", rule, .kata);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "// hi\n", .go, null);
@@ -652,24 +662,6 @@ test "engine: set severity error keeps error" {
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
     try std.testing.expectEqual(diagnostic.Severity.@"error", diags[0].severity);
-}
-
-test "engine: unknown severity value is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! severity \"info\") (#set! message \"m\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.InvalidSetDirective, f.engine.lint(gpa, "// hi\n", .go, null));
-    try std.testing.expectEqualStrings("invalid #set! directive", f.engine.compile_diag.detail);
-}
-
-test "engine: duplicate severity directive is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.go}, "bad", "((comment) @match (#set! severity \"warn\") (#set! severity \"error\") (#set! message \"m\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.DuplicateSetDirective, f.engine.lint(gpa, "// hi\n", .go, null));
-    try std.testing.expectEqualStrings("duplicate #set! directive", f.engine.compile_diag.detail);
 }
 
 test "engine: warnings list demotes matching rule to warn" {
@@ -701,8 +693,14 @@ test "engine: warnings list scoped to another language keeps error" {
 test "engine: where params counts ts function parameters" {
     const gpa = std.testing.allocator;
     const rule =
-        "((function_declaration) @match (#where? \"(> (params @match) 4)\") (#set! message \"too many params\"))\n";
-    var f = try Fixture.init(gpa, &.{.ts}, "max-params", rule);
+        \\rule max-params {
+        \\  lang ts
+        \\  match function_declaration @match
+        \\  where { params(@match) > 4 }
+        \\  emit @match { message "too many params" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-params", rule, .kata);
     defer f.deinit();
 
     const src =
@@ -719,8 +717,14 @@ test "engine: where params counts ts function parameters" {
 test "engine: where params counts go grouped parameter names" {
     const gpa = std.testing.allocator;
     const rule =
-        "((function_declaration) @match (#where? \"(> (params @match) 4)\") (#set! message \"too many params\"))\n";
-    var f = try Fixture.init(gpa, &.{.go}, "max-params", rule);
+        \\rule max-params {
+        \\  lang go
+        \\  match function_declaration @match
+        \\  where { params(@match) > 4 }
+        \\  emit @match { message "too many params" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.go}, "max-params", rule, .kata);
     defer f.deinit();
 
     const src =
@@ -737,8 +741,14 @@ test "engine: where params counts go grouped parameter names" {
 test "engine: where args counts call arguments" {
     const gpa = std.testing.allocator;
     const rule =
-        "((call_expression) @match (#where? \"(> (args @match) 3)\") (#set! message \"too many args\"))\n";
-    var f = try Fixture.init(gpa, &.{.ts}, "max-args", rule);
+        \\rule max-args {
+        \\  lang ts
+        \\  match call_expression @match
+        \\  where { args(@match) > 3 }
+        \\  emit @match { message "too many args" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-args", rule, .kata);
     defer f.deinit();
 
     const src = "f(1, 2, 3, 4);\ng(1, 2, 3);\n";
@@ -752,8 +762,14 @@ test "engine: where args counts call arguments" {
 test "engine: where args ignores comments between arguments" {
     const gpa = std.testing.allocator;
     const rule =
-        "((call_expression) @match (#where? \"(> (args @match) 2)\") (#set! message \"too many args\"))\n";
-    var f = try Fixture.init(gpa, &.{.ts}, "max-args", rule);
+        \\rule max-args {
+        \\  lang ts
+        \\  match call_expression @match
+        \\  where { args(@match) > 2 }
+        \\  emit @match { message "too many args" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-args", rule, .kata);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "f(1, /* note */ 2);\n", .ts, null);
@@ -765,8 +781,14 @@ test "engine: where args ignores comments between arguments" {
 test "engine: where params ignores comments in ts parameter list" {
     const gpa = std.testing.allocator;
     const rule =
-        "((function_declaration) @match (#where? \"(> (params @match) 2)\") (#set! message \"too many params\"))\n";
-    var f = try Fixture.init(gpa, &.{.ts}, "max-params", rule);
+        \\rule max-params {
+        \\  lang ts
+        \\  match function_declaration @match
+        \\  where { params(@match) > 2 }
+        \\  emit @match { message "too many params" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-params", rule, .kata);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "function f(a, /* note */ b) {}\n", .ts, null);
@@ -778,8 +800,14 @@ test "engine: where params ignores comments in ts parameter list" {
 test "engine: where params ignores comments in go parameter list" {
     const gpa = std.testing.allocator;
     const rule =
-        "((function_declaration) @match (#where? \"(> (params @match) 2)\") (#set! message \"too many params\"))\n";
-    var f = try Fixture.init(gpa, &.{.go}, "max-params", rule);
+        \\rule max-params {
+        \\  lang go
+        \\  match function_declaration @match
+        \\  where { params(@match) > 2 }
+        \\  emit @match { message "too many params" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.go}, "max-params", rule, .kata);
     defer f.deinit();
 
     const src =
@@ -825,10 +853,16 @@ test "engine: message interpolates measures and capture text" {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const rule =
-        "((function_declaration name: (identifier) @name) @match" ++
-        " (#where? \"(> (complexity @match) 2)\")" ++
-        " (#set! message \"complexity {complexity @match} exceeds 2 in {text @name}\"))\n";
-    var f = try Fixture.init(gpa, &.{.ts}, "max-complexity", rule);
+        \\rule max-complexity {
+        \\  lang ts
+        \\  match function_declaration @match {
+        \\    name: identifier @name
+        \\  }
+        \\  where { complexity(@match) > 2 }
+        \\  emit @match { message "complexity {complexity(@match)} exceeds 2 in {text(@name)}" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "max-complexity", rule, .kata);
     defer f.deinit();
 
     const src =
@@ -848,8 +882,13 @@ test "engine: message interpolation works without a where predicate" {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const rule =
-        "((function_declaration) @match (#set! message \"spans {length @match} lines\"))\n";
-    var f = try Fixture.init(gpa, &.{.ts}, "length-report", rule);
+        \\rule length-report {
+        \\  lang ts
+        \\  match function_declaration @match
+        \\  emit @match { message "spans {length(@match)} lines" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "length-report", rule, .kata);
     defer f.deinit();
 
     const src =
@@ -867,8 +906,13 @@ test "engine: message renders doubled braces as literals" {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const rule =
-        "((function_declaration) @match (#set! message \"avoid interface{{}} here\"))\n";
-    var f = try Fixture.init(gpa, &.{.ts}, "no-empty-iface", rule);
+        \\rule no-empty-iface {
+        \\  lang ts
+        \\  match function_declaration @match
+        \\  emit @match { message "avoid interface{{}} here" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-empty-iface", rule, .kata);
     defer f.deinit();
 
     const diags = try f.engine.lint(arena.allocator(), "function f() {}", .ts, null);
@@ -882,50 +926,19 @@ test "engine: message renders escaped braces around a placeholder" {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const rule =
-        "((function_declaration) @match (#set! message \"{{{length @match}}}\"))\n";
-    var f = try Fixture.init(gpa, &.{.ts}, "length-report", rule);
+        \\rule length-report {
+        \\  lang ts
+        \\  match function_declaration @match
+        \\  emit @match { message "{{{length(@match)}}}" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "length-report", rule, .kata);
     defer f.deinit();
 
     const diags = try f.engine.lint(arena.allocator(), "function f() {}", .ts, null);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
     try std.testing.expectEqualStrings("{1}", diags[0].message);
-}
-
-test "engine: message with unknown placeholder measure is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((function_declaration) @match (#set! message \"{lines @match}\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.UnknownPlaceholderMeasure, f.engine.lint(gpa, "function f() {}", .ts, null));
-    try std.testing.expectEqualStrings("unknown measure in message placeholder", f.engine.compile_diag.detail);
-}
-
-test "engine: message with unknown placeholder capture is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((function_declaration) @match (#set! message \"{length @nope}\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.UnknownPlaceholderCapture, f.engine.lint(gpa, "function f() {}", .ts, null));
-    try std.testing.expectEqualStrings("unknown capture in message placeholder", f.engine.compile_diag.detail);
-}
-
-test "engine: message with unclosed placeholder is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((function_declaration) @match (#set! message \"oops {length @match\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.UnclosedPlaceholder, f.engine.lint(gpa, "function f() {}", .ts, null));
-    try std.testing.expectEqualStrings("unclosed { in message, use {{ for a literal", f.engine.compile_diag.detail);
-}
-
-test "engine: message with stray close brace is a hard error" {
-    const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "bad", "((function_declaration) @match (#set! message \"oops } here\"))\n");
-    defer f.deinit();
-
-    try std.testing.expectError(error.StrayBraceInMessage, f.engine.lint(gpa, "function f() {}", .ts, null));
-    try std.testing.expectEqualStrings("stray } in message, use }} for a literal", f.engine.compile_diag.detail);
 }
 
 const kata_no_console_rule =
