@@ -823,7 +823,7 @@ test "engine: where text compares numeric capture text" {
     const gpa = std.testing.allocator;
     const rule =
         "((variable_declarator value: (number) @n) @match (#where? \"(> (text @n) 30000)\") (#set! message \"timeout too long\"))\n";
-    var f = try Fixture.init(gpa, &.{.ts}, "short-timeouts", rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "short-timeouts", rule, .scm);
     defer f.deinit();
 
     const src = "const slow = 60000;\nconst fast = 100;\n";
@@ -839,7 +839,7 @@ test "engine: where text on non-numeric capture never fires" {
     const gpa = std.testing.allocator;
     const rule =
         "((variable_declarator name: (identifier) @n) @match (#where? \"(>= (text @n) 0)\") (#set! message \"m\"))\n";
-    var f = try Fixture.init(gpa, &.{.ts}, "never", rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "never", rule, .scm);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "const name = \"x\";\n", .ts, null);
@@ -973,7 +973,7 @@ test "engine: lints with a kata rule" {
 
 test "engine: scm and kata rules fire together" {
     const gpa = std.testing.allocator;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-as-any", no_as_any_rule);
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "no-as-any", no_as_any_rule, .scm);
     defer f.deinit();
     try f.add(.ts, "no-console", kata_no_console_rule, .kata);
 

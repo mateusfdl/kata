@@ -42,7 +42,7 @@ pub const Fixture = struct {
         id: []const u8,
         source: []const u8,
     ) !*Fixture {
-        return initFormat(allocator, langs, id, source, .scm);
+        return initFormat(allocator, langs, id, source, .kata);
     }
 
     pub fn initFormat(
