@@ -233,6 +233,32 @@ test "compile: translates numeric measures to where expressions" {
     try std.testing.expect(compiled.needs_measures);
 }
 
+test "compile: text compared with a number is a numeric measure" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule short-timeouts {
+        \\  lang ts
+        \\  match variable_declarator @match {
+        \\    value: number @n
+        \\  }
+        \\  where { text(@n) > 30000 }
+        \\  emit @match { message "too long" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].predicates;
+    try std.testing.expectEqual(@as(usize, 1), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.where, std.meta.activeTag(predicates[0]));
+    const where_expr = wherePredicate(predicates[0]);
+    try std.testing.expectEqual(expr.Measure.text, where_expr.compare.left.measure.measure);
+    try std.testing.expectEqual(@as(u32, 30000), where_expr.compare.right.number);
+    try std.testing.expect(compiled.needs_measures);
+}
+
 test "compile: builds message segments from call placeholders" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);

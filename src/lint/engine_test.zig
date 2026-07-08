@@ -822,8 +822,16 @@ test "engine: where params ignores comments in go parameter list" {
 test "engine: where text compares numeric capture text" {
     const gpa = std.testing.allocator;
     const rule =
-        "((variable_declarator value: (number) @n) @match (#where? \"(> (text @n) 30000)\") (#set! message \"timeout too long\"))\n";
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "short-timeouts", rule, .scm);
+        \\rule short-timeouts {
+        \\  lang ts
+        \\  match variable_declarator @match {
+        \\    value: number @n
+        \\  }
+        \\  where { text(@n) > 30000 }
+        \\  emit @match { message "timeout too long" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "short-timeouts", rule, .kata);
     defer f.deinit();
 
     const src = "const slow = 60000;\nconst fast = 100;\n";
@@ -838,8 +846,16 @@ test "engine: where text compares numeric capture text" {
 test "engine: where text on non-numeric capture never fires" {
     const gpa = std.testing.allocator;
     const rule =
-        "((variable_declarator name: (identifier) @n) @match (#where? \"(>= (text @n) 0)\") (#set! message \"m\"))\n";
-    var f = try Fixture.initFormat(gpa, &.{.ts}, "never", rule, .scm);
+        \\rule never {
+        \\  lang ts
+        \\  match variable_declarator @match {
+        \\    name: identifier @n
+        \\  }
+        \\  where { text(@n) >= 0 }
+        \\  emit @match { message "m" }
+        \\}
+    ;
+    var f = try Fixture.initFormat(gpa, &.{.ts}, "never", rule, .kata);
     defer f.deinit();
 
     const diags = try f.engine.lint(gpa, "const name = \"x\";\n", .ts, null);

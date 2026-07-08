@@ -716,7 +716,7 @@ fn comparePredicate(ctx: *Compiler, c: ast.Compare, negated: bool) Error!?rule.P
         args[1] = resolved_right;
         return if (wants_eq) .{ .eq = args } else .{ .not_eq = args };
     }
-    if (left != null or right != null) {
+    if (left != null and right != null) {
         ctx.fail("strings compare with == and != only");
         return error.InvalidStringComparison;
     }
@@ -789,8 +789,7 @@ fn numericTerm(ctx: *Compiler, expression: ast.Expression) Error!?expr.Term {
 }
 
 fn numericMeasure(name: []const u8) ?expr.Measure {
-    const measure = expr.Measure.fromString(name) orelse return null;
-    return if (measure == .text) null else measure;
+    return expr.Measure.fromString(name);
 }
 
 fn deferredPredicate(name: []const u8) bool {
