@@ -97,6 +97,21 @@ test "node: named symbol vs anonymous token" {
     try std.testing.expect(!semicolon.isNamed());
 }
 
+test "node: symbol is the grammar id for the kind" {
+    const src = "const x = 42;";
+    const tree = parse(src);
+    defer tree.destroy();
+
+    const root = Node.from(tree.rootNode());
+    const grammar = language.grammar(.ts);
+
+    try std.testing.expectEqual(grammar.idForNodeKind("program", true), root.symbol());
+
+    const name = root.namedChild(0).?.namedChild(0).?.childByFieldName("name").?;
+    try std.testing.expectEqual(grammar.idForNodeKind("identifier", true), name.symbol());
+    try std.testing.expect(root.symbol() != name.symbol());
+}
+
 test "node: text is null when span exceeds the given source" {
     const src = "const x = 42;";
     const tree = parse(src);

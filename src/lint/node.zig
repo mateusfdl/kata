@@ -20,6 +20,10 @@ pub const Node = struct {
         return self.inner.kind();
     }
 
+    pub fn symbol(self: Node) u16 {
+        return self.inner.kindId();
+    }
+
     pub fn startByte(self: Node) u32 {
         return self.inner.startByte();
     }
