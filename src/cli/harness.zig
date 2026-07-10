@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const dsl = @import("../dsl.zig");
+const dsl = @import("dsl");
 const fs = @import("../fs.zig");
 const lint = @import("../lint.zig");
 const sources = @import("../sources.zig");

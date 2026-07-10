@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const dsl = @import("dsl.zig");
+const dsl = @import("dsl");
 const lint = @import("lint.zig");
 const loader = @import("sources.zig").loader;
 

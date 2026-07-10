@@ -1,16 +1,16 @@
 const std = @import("std");
 const ts = @import("tree_sitter");
 
-const ast = @import("ast.zig");
-const compile = @import("compile.zig");
-const dsl_parser = @import("parser.zig");
+const ast = @import("dsl").ast;
+const compile = @import("dsl").compile;
+const dsl_parser = @import("dsl").parser;
 
 const diagnostic = @import("core").diagnostic;
-const engine = @import("../lint/Engine.zig");
+const engine = @import("Engine.zig");
 const expr = @import("core").expr;
 const language = @import("core").language;
 const rule = @import("core").rule;
-const test_tree = @import("../lint/test_tree.zig");
+const test_tree = @import("test_tree.zig");
 
 fn parseDsl(arena: std.mem.Allocator, source: []const u8) !ast.File {
     var diag: dsl_parser.Diagnostic = .{};

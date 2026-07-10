@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const check = @import("check.zig");
-const dsl = @import("../dsl.zig");
+const dsl = @import("dsl");
 const lint = @import("../lint.zig");
 const reports = @import("../reports.zig");
 

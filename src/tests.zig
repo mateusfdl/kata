@@ -16,12 +16,7 @@ comptime {
     _ = @import("lint/facts_test.zig");
     _ = @import("lint/project_rule_test.zig");
     _ = @import("lint/fact_rule_test.zig");
-    _ = @import("dsl.zig");
-    _ = @import("dsl/lower_test.zig");
-    _ = @import("dsl/compile_test.zig");
-    _ = @import("dsl/fact_compile_test.zig");
-    _ = @import("dsl/parser_test.zig");
-    _ = @import("dsl/tokenizer_test.zig");
+    _ = @import("lint/compile_test.zig");
     _ = @import("cli/check_test.zig");
     _ = @import("reports/text_test.zig");
     _ = @import("reports/json_test.zig");
