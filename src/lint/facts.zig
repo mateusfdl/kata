@@ -1,9 +1,9 @@
 const std = @import("std");
-const ts = @import("tree_sitter");
 
 const diagnostic = @import("diagnostic.zig");
 const fs_path = @import("../fs/path.zig");
 const language = @import("language.zig");
+const query = @import("query.zig");
 const Node = @import("node.zig").Node;
 
 pub const ClassDef = struct {
@@ -129,95 +129,194 @@ const Role = enum {
     import_source,
 };
 
-fn roleFromCaptureName(name: []const u8) ?Role {
-    const table = [_]struct { name: []const u8, role: Role }{
-        .{ .name = "class", .role = .class_node },
-        .{ .name = "class.name", .role = .class_name },
-        .{ .name = "method", .role = .method_node },
-        .{ .name = "method.name", .role = .method_name },
-        .{ .name = "method.recv", .role = .method_recv },
-        .{ .name = "decl.name", .role = .decl_name },
-        .{ .name = "decl.type", .role = .decl_type },
-        .{ .name = "decl.ctor", .role = .decl_ctor },
-        .{ .name = "call", .role = .call_node },
-        .{ .name = "call.receiver", .role = .call_receiver },
-        .{ .name = "call.method", .role = .call_method },
-        .{ .name = "import.name", .role = .import_name },
-        .{ .name = "import.source", .role = .import_source },
-    };
-    for (table) |entry| {
-        if (std.mem.eql(u8, name, entry.name)) return entry.role;
-    }
-    return null;
+const role_count = @typeInfo(Role).@"enum".fields.len;
+
+fn cap(role: Role) query.CaptureId {
+    return @intFromEnum(role);
 }
 
-const ts_query_source =
-    \\(class_declaration name: (type_identifier) @class.name) @class
-    \\(abstract_class_declaration name: (type_identifier) @class.name) @class
-    \\(method_definition name: (property_identifier) @method.name) @method
-    \\(public_field_definition name: (property_identifier) @decl.name type: (type_annotation (type_identifier) @decl.type))
-    \\(required_parameter pattern: (identifier) @decl.name type: (type_annotation (type_identifier) @decl.type))
-    \\(variable_declarator name: (identifier) @decl.name type: (type_annotation (type_identifier) @decl.type))
-    \\(variable_declarator name: (identifier) @decl.name value: (new_expression constructor: (identifier) @decl.type))
-    \\(assignment_expression left: (member_expression object: (this) property: (property_identifier) @decl.name) right: (new_expression constructor: (identifier) @decl.type))
-    \\(call_expression function: (member_expression object: (identifier) @call.receiver property: (property_identifier) @call.method)) @call
-    \\(call_expression function: (member_expression object: (member_expression object: (this) property: (property_identifier) @call.receiver) property: (property_identifier) @call.method)) @call
-    \\(import_statement (import_clause (named_imports (import_specifier name: (identifier) @import.name))) source: (string (string_fragment) @import.source))
-    \\(import_statement (import_clause (identifier) @import.name) source: (string (string_fragment) @import.source))
-;
-
-const go_query_source =
-    \\(type_declaration (type_spec name: (type_identifier) @class.name)) @class
-    \\(method_declaration receiver: (parameter_list (parameter_declaration type: [(type_identifier) @method.recv (pointer_type (type_identifier) @method.recv)])) name: (field_identifier) @method.name) @method
-    \\(parameter_declaration name: (identifier) @decl.name type: [(type_identifier) @decl.type (pointer_type (type_identifier) @decl.type)])
-    \\(field_declaration name: (field_identifier) @decl.name type: [(type_identifier) @decl.type (pointer_type (type_identifier) @decl.type)])
-    \\(var_spec name: (identifier) @decl.name type: [(type_identifier) @decl.type (pointer_type (type_identifier) @decl.type)])
-    \\(short_var_declaration left: (expression_list . (identifier) @decl.name) right: (expression_list (call_expression function: (identifier) @decl.ctor)))
-    \\(short_var_declaration left: (expression_list . (identifier) @decl.name) right: (expression_list (composite_literal type: (type_identifier) @decl.type)))
-    \\(short_var_declaration left: (expression_list . (identifier) @decl.name) right: (expression_list (unary_expression operand: (composite_literal type: (type_identifier) @decl.type))))
-    \\(call_expression function: (selector_expression operand: (identifier) @call.receiver field: (field_identifier) @call.method)) @call
-    \\(call_expression function: (selector_expression operand: (selector_expression field: (field_identifier) @call.receiver) field: (field_identifier) @call.method)) @call
-    \\(import_spec path: (interpreted_string_literal) @import.source)
-;
-
-pub fn querySource(lang: language.Name) []const u8 {
-    return switch (lang) {
-        .ts, .tsx => ts_query_source,
-        .go => go_query_source,
-    };
-}
-
-pub const Compiled = struct {
-    query: *ts.Query,
-    capture_roles: []const Role,
-
-    pub fn deinit(self: *Compiled, allocator: std.mem.Allocator) void {
-        self.query.destroy();
-        allocator.free(self.capture_roles);
-    }
+const ts_patterns: []const query.Pattern = &.{
+    .{ .kind = .{ .symbol = "class_declaration" }, .capture = cap(.class_node), .fields = &.{
+        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.class_name) } },
+    } },
+    .{ .kind = .{ .symbol = "abstract_class_declaration" }, .capture = cap(.class_node), .fields = &.{
+        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.class_name) } },
+    } },
+    .{ .kind = .{ .symbol = "method_definition" }, .capture = cap(.method_node), .fields = &.{
+        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = "property_identifier" }, .capture = cap(.method_name) } },
+    } },
+    .{ .kind = .{ .symbol = "public_field_definition" }, .fields = &.{
+        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = "property_identifier" }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .symbol = "type_annotation" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.decl_type) } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "required_parameter" }, .fields = &.{
+        .{ .relation = .{ .field = "pattern" }, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .symbol = "type_annotation" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.decl_type) } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "variable_declarator" }, .fields = &.{
+        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .symbol = "type_annotation" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.decl_type) } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "variable_declarator" }, .fields = &.{
+        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = "value" }, .pattern = .{ .kind = .{ .symbol = "new_expression" }, .fields = &.{
+            .{ .relation = .{ .field = "constructor" }, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.decl_type) } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "assignment_expression" }, .fields = &.{
+        .{ .relation = .{ .field = "left" }, .pattern = .{ .kind = .{ .symbol = "member_expression" }, .fields = &.{
+            .{ .relation = .{ .field = "object" }, .pattern = .{ .kind = .{ .symbol = "this" } } },
+            .{ .relation = .{ .field = "property" }, .pattern = .{ .kind = .{ .symbol = "property_identifier" }, .capture = cap(.decl_name) } },
+        } } },
+        .{ .relation = .{ .field = "right" }, .pattern = .{ .kind = .{ .symbol = "new_expression" }, .fields = &.{
+            .{ .relation = .{ .field = "constructor" }, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.decl_type) } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "call_expression" }, .capture = cap(.call_node), .fields = &.{
+        .{ .relation = .{ .field = "function" }, .pattern = .{ .kind = .{ .symbol = "member_expression" }, .fields = &.{
+            .{ .relation = .{ .field = "object" }, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.call_receiver) } },
+            .{ .relation = .{ .field = "property" }, .pattern = .{ .kind = .{ .symbol = "property_identifier" }, .capture = cap(.call_method) } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "call_expression" }, .capture = cap(.call_node), .fields = &.{
+        .{ .relation = .{ .field = "function" }, .pattern = .{ .kind = .{ .symbol = "member_expression" }, .fields = &.{
+            .{ .relation = .{ .field = "object" }, .pattern = .{ .kind = .{ .symbol = "member_expression" }, .fields = &.{
+                .{ .relation = .{ .field = "object" }, .pattern = .{ .kind = .{ .symbol = "this" } } },
+                .{ .relation = .{ .field = "property" }, .pattern = .{ .kind = .{ .symbol = "property_identifier" }, .capture = cap(.call_receiver) } },
+            } } },
+            .{ .relation = .{ .field = "property" }, .pattern = .{ .kind = .{ .symbol = "property_identifier" }, .capture = cap(.call_method) } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "import_statement" }, .fields = &.{
+        .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "import_clause" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "named_imports" }, .fields = &.{
+                .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "import_specifier" }, .fields = &.{
+                    .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.import_name) } },
+                } } },
+            } } },
+        } } },
+        .{ .relation = .{ .field = "source" }, .pattern = .{ .kind = .{ .symbol = "string" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "string_fragment" }, .capture = cap(.import_source) } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "import_statement" }, .fields = &.{
+        .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "import_clause" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.import_name) } },
+        } } },
+        .{ .relation = .{ .field = "source" }, .pattern = .{ .kind = .{ .symbol = "string" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "string_fragment" }, .capture = cap(.import_source) } },
+        } } },
+    } },
 };
 
-pub const CompileError = error{FactsQueryCompileFailed} || std.mem.Allocator.Error;
+const go_patterns: []const query.Pattern = &.{
+    .{ .kind = .{ .symbol = "type_declaration" }, .capture = cap(.class_node), .fields = &.{
+        .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "type_spec" }, .fields = &.{
+            .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.class_name) } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "method_declaration" }, .capture = cap(.method_node), .fields = &.{
+        .{ .relation = .{ .field = "receiver" }, .pattern = .{ .kind = .{ .symbol = "parameter_list" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "parameter_declaration" }, .fields = &.{
+                .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .alternation = &.{
+                    .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.method_recv) },
+                    .{ .kind = .{ .symbol = "pointer_type" }, .fields = &.{
+                        .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.method_recv) } },
+                    } },
+                } } } },
+            } } },
+        } } },
+        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = "field_identifier" }, .capture = cap(.method_name) } },
+    } },
+    .{ .kind = .{ .symbol = "parameter_declaration" }, .fields = &.{
+        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .alternation = &.{
+            .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.decl_type) },
+            .{ .kind = .{ .symbol = "pointer_type" }, .fields = &.{
+                .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.decl_type) } },
+            } },
+        } } } },
+    } },
+    .{ .kind = .{ .symbol = "field_declaration" }, .fields = &.{
+        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = "field_identifier" }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .alternation = &.{
+            .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.decl_type) },
+            .{ .kind = .{ .symbol = "pointer_type" }, .fields = &.{
+                .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.decl_type) } },
+            } },
+        } } } },
+    } },
+    .{ .kind = .{ .symbol = "var_spec" }, .fields = &.{
+        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .alternation = &.{
+            .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.decl_type) },
+            .{ .kind = .{ .symbol = "pointer_type" }, .fields = &.{
+                .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.decl_type) } },
+            } },
+        } } } },
+    } },
+    .{ .kind = .{ .symbol = "short_var_declaration" }, .fields = &.{
+        .{ .relation = .{ .field = "left" }, .pattern = .{ .kind = .{ .symbol = "expression_list" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.decl_name) } },
+        } } },
+        .{ .relation = .{ .field = "right" }, .pattern = .{ .kind = .{ .symbol = "expression_list" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "call_expression" }, .fields = &.{
+                .{ .relation = .{ .field = "function" }, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.decl_ctor) } },
+            } } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "short_var_declaration" }, .fields = &.{
+        .{ .relation = .{ .field = "left" }, .pattern = .{ .kind = .{ .symbol = "expression_list" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.decl_name) } },
+        } } },
+        .{ .relation = .{ .field = "right" }, .pattern = .{ .kind = .{ .symbol = "expression_list" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "composite_literal" }, .fields = &.{
+                .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.decl_type) } },
+            } } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "short_var_declaration" }, .fields = &.{
+        .{ .relation = .{ .field = "left" }, .pattern = .{ .kind = .{ .symbol = "expression_list" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.decl_name) } },
+        } } },
+        .{ .relation = .{ .field = "right" }, .pattern = .{ .kind = .{ .symbol = "expression_list" }, .fields = &.{
+            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = "unary_expression" }, .fields = &.{
+                .{ .relation = .{ .field = "operand" }, .pattern = .{ .kind = .{ .symbol = "composite_literal" }, .fields = &.{
+                    .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .symbol = "type_identifier" }, .capture = cap(.decl_type) } },
+                } } },
+            } } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "call_expression" }, .capture = cap(.call_node), .fields = &.{
+        .{ .relation = .{ .field = "function" }, .pattern = .{ .kind = .{ .symbol = "selector_expression" }, .fields = &.{
+            .{ .relation = .{ .field = "operand" }, .pattern = .{ .kind = .{ .symbol = "identifier" }, .capture = cap(.call_receiver) } },
+            .{ .relation = .{ .field = "field" }, .pattern = .{ .kind = .{ .symbol = "field_identifier" }, .capture = cap(.call_method) } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "call_expression" }, .capture = cap(.call_node), .fields = &.{
+        .{ .relation = .{ .field = "function" }, .pattern = .{ .kind = .{ .symbol = "selector_expression" }, .fields = &.{
+            .{ .relation = .{ .field = "operand" }, .pattern = .{ .kind = .{ .symbol = "selector_expression" }, .fields = &.{
+                .{ .relation = .{ .field = "field" }, .pattern = .{ .kind = .{ .symbol = "field_identifier" }, .capture = cap(.call_receiver) } },
+            } } },
+            .{ .relation = .{ .field = "field" }, .pattern = .{ .kind = .{ .symbol = "field_identifier" }, .capture = cap(.call_method) } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = "import_spec" }, .fields = &.{
+        .{ .relation = .{ .field = "path" }, .pattern = .{ .kind = .{ .symbol = "interpreted_string_literal" }, .capture = cap(.import_source) } },
+    } },
+};
 
-pub fn compile(
-    allocator: std.mem.Allocator,
-    ts_lang: *const ts.Language,
-    lang: language.Name,
-) CompileError!Compiled {
-    var error_offset: u32 = 0;
-    const query = ts.Query.create(ts_lang, querySource(lang), &error_offset) catch
-        return error.FactsQueryCompileFailed;
-    errdefer query.destroy();
-
-    const roles = try allocator.alloc(Role, query.captureCount());
-    errdefer allocator.free(roles);
-
-    for (roles, 0..) |*role, i| {
-        const cap_name = query.captureNameForId(@intCast(i)) orelse return error.FactsQueryCompileFailed;
-        role.* = roleFromCaptureName(cap_name) orelse return error.FactsQueryCompileFailed;
-    }
-
-    return .{ .query = query, .capture_roles = roles };
+fn patternsFor(lang: language.Name) []const query.Pattern {
+    return switch (lang) {
+        .ts, .tsx => ts_patterns,
+        .go => go_patterns,
+    };
 }
 
 const Lists = struct {
@@ -230,9 +329,7 @@ const Lists = struct {
 
 pub fn extract(
     gpa: std.mem.Allocator,
-    compiled: *const Compiled,
-    cursor: *ts.QueryCursor,
-    root: ts.Node,
+    root: Node,
     source: []const u8,
     path: []const u8,
     lang: language.Name,
@@ -247,15 +344,10 @@ pub fn extract(
 
     var lists: Lists = .{};
 
-    cursor.exec(compiled.query, root);
-    while (cursor.nextMatch()) |match| {
-        var nodes: std.EnumArray(Role, ?Node) = .initFill(null);
-
-        for (match.captures) |cap| {
-            nodes.set(compiled.capture_roles[cap.index], Node.from(cap.node));
+    for (patternsFor(lang)) |*pattern| {
+        for (try query.run(arena, pattern, role_count, root)) |match| {
+            try assemble(arena, source, match, &lists);
         }
-
-        try assemble(arena, source, nodes, &lists);
     }
 
     sortByStart(ClassDef, lists.classes.items);
@@ -281,15 +373,15 @@ pub fn extract(
 fn assemble(
     arena: std.mem.Allocator,
     source: []const u8,
-    nodes: std.EnumArray(Role, ?Node),
+    match: query.Match,
     lists: *Lists,
 ) !void {
-    if (nodes.get(.method_name)) |name_node| {
-        const span_node = nodes.get(.method_node) orelse name_node;
+    if (match.get(cap(.method_name))) |name_node| {
+        const span_node = match.get(cap(.method_node)) orelse name_node;
 
         try lists.methods.append(arena, .{
             .name = try nodeText(arena, source, name_node),
-            .container = if (nodes.get(.method_recv)) |recv| try nodeText(arena, source, recv) else "",
+            .container = if (match.get(cap(.method_recv))) |recv| try nodeText(arena, source, recv) else "",
             .start = span_node.startByte(),
             .end = span_node.endByte(),
             .range = rangeOf(span_node),
@@ -297,8 +389,8 @@ fn assemble(
 
         return;
     }
-    if (nodes.get(.class_name)) |name_node| {
-        const span_node = nodes.get(.class_node) orelse name_node;
+    if (match.get(cap(.class_name))) |name_node| {
+        const span_node = match.get(cap(.class_node)) orelse name_node;
 
         try lists.classes.append(arena, .{
             .name = try nodeText(arena, source, name_node),
@@ -309,8 +401,10 @@ fn assemble(
 
         return;
     }
-    if (nodes.get(.decl_name)) |name_node| {
-        const type_name = try declTypeName(arena, source, nodes) orelse return;
+    if (match.get(cap(.decl_name))) |name_node| {
+        if (!isFirstInExpressionList(name_node)) return;
+
+        const type_name = try declTypeName(arena, source, match) orelse return;
 
         try lists.typed_decls.append(arena, .{
             .name = try nodeText(arena, source, name_node),
@@ -321,11 +415,11 @@ fn assemble(
 
         return;
     }
-    if (nodes.get(.call_method)) |method_node| {
-        const span_node = nodes.get(.call_node) orelse method_node;
+    if (match.get(cap(.call_method))) |method_node| {
+        const span_node = match.get(cap(.call_node)) orelse method_node;
 
         try lists.calls.append(arena, .{
-            .receiver = if (nodes.get(.call_receiver)) |recv| try nodeText(arena, source, recv) else "",
+            .receiver = if (match.get(cap(.call_receiver))) |recv| try nodeText(arena, source, recv) else "",
             .method = try nodeText(arena, source, method_node),
             .container = "",
             .start = span_node.startByte(),
@@ -334,11 +428,11 @@ fn assemble(
 
         return;
     }
-    if (nodes.get(.import_source)) |source_node| {
+    if (match.get(cap(.import_source))) |source_node| {
         const raw = try nodeText(arena, source, source_node);
 
         try lists.imports.append(arena, .{
-            .name = if (nodes.get(.import_name)) |name| try nodeText(arena, source, name) else "",
+            .name = if (match.get(cap(.import_name))) |name| try nodeText(arena, source, name) else "",
             .source = std.mem.trim(u8, raw, "\""),
             .start = source_node.startByte(),
             .range = rangeOf(source_node),
@@ -348,14 +442,22 @@ fn assemble(
     }
 }
 
+fn isFirstInExpressionList(name_node: Node) bool {
+    const parent = name_node.parent() orelse return true;
+    if (!std.mem.eql(u8, parent.kind(), "expression_list")) return true;
+
+    const first = parent.namedChild(0) orelse return false;
+    return first.eql(name_node);
+}
+
 fn declTypeName(
     arena: std.mem.Allocator,
     source: []const u8,
-    nodes: std.EnumArray(Role, ?Node),
+    match: query.Match,
 ) !?[]const u8 {
-    if (nodes.get(.decl_type)) |type_node| return try nodeText(arena, source, type_node);
+    if (match.get(cap(.decl_type))) |type_node| return try nodeText(arena, source, type_node);
 
-    const ctor_node = nodes.get(.decl_ctor) orelse return null;
+    const ctor_node = match.get(cap(.decl_ctor)) orelse return null;
     const ctor = nodeSlice(source, ctor_node);
 
     if (!std.mem.startsWith(u8, ctor, go_constructor_prefix)) return null;
