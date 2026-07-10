@@ -106,6 +106,34 @@ test "query: anonymous token under a field" {
     try std.testing.expectEqualStrings("a && b", matches[0].get(0).?.text(src).?);
 }
 
+test "query: symbols set matches any member kind with fields applied once" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const src = "class C {} abstract class D {} function f() {}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    var members = [_]u16{ t.sym("class_declaration"), t.sym("abstract_class_declaration") };
+    std.mem.sort(u16, &members, {}, std.sort.asc(u16));
+
+    const pattern: Pattern = .{
+        .kind = .{ .symbols = &members },
+        .capture = 0,
+        .fields = &.{.{
+            .relation = .{ .field = t.field("name") },
+            .pattern = .{ .kind = .{ .symbol = t.sym("type_identifier") }, .capture = 1 },
+        }},
+    };
+    const matches = try query.run(arena.allocator(), &pattern, 2, t.root());
+
+    try std.testing.expectEqual(@as(usize, 2), matches.len);
+    try std.testing.expect(std.mem.startsWith(u8, matches[0].get(0).?.text(src).?, "class C"));
+    try std.testing.expectEqualStrings("C", matches[0].get(1).?.text(src).?);
+    try std.testing.expect(std.mem.startsWith(u8, matches[1].get(0).?.text(src).?, "abstract class D"));
+    try std.testing.expectEqualStrings("D", matches[1].get(1).?.text(src).?);
+}
+
 test "query: absent field excludes nodes that have it" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

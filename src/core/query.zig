@@ -11,11 +11,14 @@ pub const CaptureId = u16;
 /// by its kata kind id (u16); the two variants differ only so lowering can
 /// resolve a named kind against `idForNodeKind(name, true)` versus an anonymous
 /// token against `(name, false)`. Named and anonymous kata ids occupy disjoint
-/// ranges, so at match time both are a plain integer compare. `alternation`
-/// matches when any branch matches, binding this pattern's capture either way.
+/// ranges, so at match time both are a plain integer compare. `symbols` matches
+/// a node whose kata kind id is in the (sorted) set, used for a supertype
+/// expanded to its concrete member kinds. `alternation` matches when any branch
+/// matches, binding this pattern's capture either way.
 pub const Kind = union(enum) {
     symbol: u16,
     anonymous: u16,
+    symbols: []const u16,
     alternation: []const Pattern,
 };
 
@@ -226,10 +229,15 @@ fn invoke(cont: *const Cont, bindings: []?Node, collector: *Collector) Error!voi
     }
 }
 
+fn orderU16(key: u16, item: u16) std.math.Order {
+    return std.math.order(key, item);
+}
+
 fn kindMatches(pattern: *const Pattern, n: Node) bool {
     return switch (pattern.kind) {
         .symbol => |id| n.kindId() == id,
         .anonymous => |id| n.kindId() == id,
+        .symbols => |ids| std.sort.binarySearch(u16, ids, n.kindId(), orderU16) != null,
         .alternation => |branches| {
             for (branches) |*branch| {
                 if (kindMatches(branch, n)) return true;
