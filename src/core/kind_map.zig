@@ -12,6 +12,13 @@ pub const Kinds = struct {
     field_remap: []const u16,
 };
 
+pub fn supertypes(lang: language.Name) []const node_kinds.Supertype {
+    return switch (lang) {
+        .ts, .tsx => &node_kinds.ts_family.supertypes,
+        .go => &node_kinds.go.supertypes,
+    };
+}
+
 pub fn build(
     lang: language.Name,
     grammar: *const ts.Language,

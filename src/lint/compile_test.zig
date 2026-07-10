@@ -334,6 +334,30 @@ test "compile: matches alternation node kinds" {
     try std.testing.expectEqual(@as(usize, 1), diags.len);
 }
 
+test "compile: matches a supertype across its concrete member kinds" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule no-declaration {
+        \\  lang ts
+        \\  match declaration @match
+        \\  emit @match { message "no declaration" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const source = "class C {}\nconst x = 1;\nfunction f() {}\nx + 1;\n";
+    const diags = try runCompiled(gpa, &compiled, .ts, source, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 3), diags.len);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 1), diags[1].range.start.line);
+    try std.testing.expectEqual(@as(u32, 2), diags[2].range.start.line);
+}
+
 test "compile: distributes field patterns over alternation branches" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);

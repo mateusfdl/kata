@@ -2,6 +2,7 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 
 const ast = @import("ast.zig");
+const node_kinds = @import("node_kinds");
 const query = @import("core").query;
 
 pub const Error = error{
@@ -10,10 +11,6 @@ pub const Error = error{
     AnonymousWithChildren,
     TooManyCaptures,
 } || std.mem.Allocator.Error;
-
-/// A kata kind id no real node ever reports (ids live in `[0, kind_count)`), used
-/// for a supertype reference so its pattern compiles yet never matches.
-const unmatchable_kind: u16 = std.math.maxInt(u16);
 
 /// A lowered match pattern plus its capture table: `capture_names[id]` is the
 /// name bound to capture id `id`. tree-sitter no longer assigns capture ids, so
@@ -35,6 +32,7 @@ pub const Lowerer = struct {
     grammar: *const ts.Language,
     kind_remap: []const u16,
     field_remap: []const u16,
+    supertypes: []const node_kinds.Supertype,
     captures: std.ArrayList([]const u8) = .empty,
     /// The offending kind or field name when lowering fails, for diagnostics.
     detail: []const u8 = "",
@@ -44,21 +42,49 @@ pub const Lowerer = struct {
         grammar: *const ts.Language,
         kind_remap: []const u16,
         field_remap: []const u16,
+        supertypes: []const node_kinds.Supertype,
     ) Lowerer {
-        return .{ .arena = arena, .grammar = grammar, .kind_remap = kind_remap, .field_remap = field_remap };
+        return .{
+            .arena = arena,
+            .grammar = grammar,
+            .kind_remap = kind_remap,
+            .field_remap = field_remap,
+            .supertypes = supertypes,
+        };
     }
 
-    /// Resolve a grammar kind name to its kata kind id through the same remap the
-    /// matcher reads at runtime, so a lowered pattern id equals the node id it is
-    /// meant to match. A name the grammar does not know at all is a hard error. A
-    /// supertype (a real grammar symbol, but excluded from the kata enum) remaps
-    /// to 0; the matcher does not expand supertypes, so it lowers to a sentinel id
-    /// no node ever reports, reproducing the old name matcher's silent no-match.
-    fn kataKind(self: *Lowerer, name: []const u8, is_named: bool) Error!u16 {
-        const sym = self.grammar.idForNodeKind(name, is_named);
+    /// Resolve a named grammar kind to the kind gate the matcher reads at runtime.
+    /// A supertype expands to the sorted set of its transitive concrete member
+    /// ids, precomputed by the node-kinds generator (the vendored grammars ship
+    /// no runtime subtype map). A concrete kind lowers to a single `symbol` id
+    /// through the same remap the converter applied, so a lowered id equals the
+    /// node id it matches. A name that is neither a supertype nor a concrete kata
+    /// kind is a hard error.
+    fn resolveKind(self: *Lowerer, name: []const u8) Error!query.Kind {
+        if (self.supertypeMembers(name)) |members| return .{ .symbols = members };
+        const sym = self.grammar.idForNodeKind(name, true);
         if (sym == 0 or sym >= self.kind_remap.len) return self.failKind(name);
         const id = self.kind_remap[sym];
-        return if (id == 0) unmatchable_kind else id;
+        if (id == 0) return self.failKind(name);
+        return .{ .symbol = id };
+    }
+
+    fn supertypeMembers(self: *Lowerer, name: []const u8) ?[]const u16 {
+        for (self.supertypes) |entry| {
+            if (std.mem.eql(u8, entry.name, name)) return entry.members;
+        }
+        return null;
+    }
+
+    /// Resolve an anonymous grammar token to its single kata kind id. Anonymous
+    /// tokens are never supertypes; a token the grammar does not know, or one
+    /// absent from the kata enum, is a hard error.
+    fn kataAnonymous(self: *Lowerer, name: []const u8) Error!u16 {
+        const sym = self.grammar.idForNodeKind(name, false);
+        if (sym == 0 or sym >= self.kind_remap.len) return self.failKind(name);
+        const id = self.kind_remap[sym];
+        if (id == 0) return self.failKind(name);
+        return id;
     }
 
     /// Resolve a grammar field name to its kata Field id through the same remap
@@ -81,7 +107,7 @@ pub const Lowerer = struct {
         switch (pattern.node_kind) {
             .symbol => |kind| {
                 return .{
-                    .kind = .{ .symbol = try self.kataKind(kind, true) },
+                    .kind = try self.resolveKind(kind),
                     .capture = capture,
                     .fields = try self.lowerFields(pattern.fields),
                     .absent_fields = try self.lowerAbsent(pattern.absent_fields),
@@ -92,7 +118,7 @@ pub const Lowerer = struct {
                     self.detail = token;
                     return error.AnonymousWithChildren;
                 }
-                return .{ .kind = .{ .anonymous = try self.kataKind(token, false) }, .capture = capture };
+                return .{ .kind = .{ .anonymous = try self.kataAnonymous(token) }, .capture = capture };
             },
             .alternation => |branches| {
                 const lowered = try self.arena.alloc(query.Pattern, branches.len);
