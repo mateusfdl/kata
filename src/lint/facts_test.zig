@@ -1,9 +1,9 @@
 const std = @import("std");
 
-const facts = @import("facts.zig");
+const facts = @import("../core.zig").facts;
 const test_fixture = @import("../test_fixture.zig");
 
-const ProjectIndex = @import("ProjectIndex.zig").ProjectIndex;
+const ProjectIndex = @import("../core.zig").ProjectIndex.ProjectIndex;
 
 const Fixture = test_fixture.Fixture;
 

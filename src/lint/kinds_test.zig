@@ -2,7 +2,7 @@ const std = @import("std");
 const nk = @import("node_kinds");
 
 const kinds = @import("kinds.zig");
-const node = @import("node.zig");
+const node = @import("../core.zig").node;
 const test_tree = @import("test_tree.zig");
 const Node = node.Node;
 

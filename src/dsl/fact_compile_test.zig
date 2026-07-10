@@ -4,8 +4,8 @@ const ast = @import("ast.zig");
 const dsl_parser = @import("parser.zig");
 const fact_compile = @import("fact_compile.zig");
 
-const fact_rule = @import("../lint/fact_rule.zig");
-const rule = @import("../lint/rule.zig");
+const fact_rule = @import("../core.zig").fact_rule;
+const rule = @import("../core.zig").rule;
 
 fn parseDsl(arena: std.mem.Allocator, source: []const u8) !ast.File {
     var diag: dsl_parser.Diagnostic = .{};

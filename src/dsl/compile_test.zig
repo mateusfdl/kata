@@ -5,11 +5,11 @@ const ast = @import("ast.zig");
 const compile = @import("compile.zig");
 const dsl_parser = @import("parser.zig");
 
-const diagnostic = @import("../lint/diagnostic.zig");
+const diagnostic = @import("../core.zig").diagnostic;
 const engine = @import("../lint/Engine.zig");
-const expr = @import("../lint/expr.zig");
-const language = @import("../lint/language.zig");
-const rule = @import("../lint/rule.zig");
+const expr = @import("../core.zig").expr;
+const language = @import("../core.zig").language;
+const rule = @import("../core.zig").rule;
 const test_tree = @import("../lint/test_tree.zig");
 
 fn parseDsl(arena: std.mem.Allocator, source: []const u8) !ast.File {

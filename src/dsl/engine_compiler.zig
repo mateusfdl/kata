@@ -2,10 +2,10 @@ const std = @import("std");
 
 const compile = @import("compile.zig");
 const fact_compile = @import("fact_compile.zig");
-const fact_rule = @import("../lint/fact_rule.zig");
-const language = @import("../lint/language.zig");
-const rule = @import("../lint/rule.zig");
-const rule_compiler = @import("../lint/rule_compiler.zig");
+const fact_rule = @import("../core.zig").fact_rule;
+const language = @import("../core.zig").language;
+const rule = @import("../core.zig").rule;
+const rule_compiler = @import("../core.zig").rule_compiler;
 
 const CompileError = rule_compiler.CompileError;
 const RuleCompiler = rule_compiler.RuleCompiler;

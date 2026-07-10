@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const language = @import("language.zig");
+const language = @import("../core.zig").language;
 const test_fixture = @import("../test_fixture.zig");
 
 const Fixture = test_fixture.Fixture;
