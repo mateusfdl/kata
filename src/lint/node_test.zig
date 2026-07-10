@@ -1,31 +1,13 @@
 const std = @import("std");
-const ts = @import("tree_sitter");
 
-const kind_map = @import("kind_map.zig");
-const language = @import("language.zig");
-const node = @import("node.zig");
-
-const Node = node.Node;
-
-fn parse(source: []const u8) *ts.Tree {
-    const parser = ts.Parser.create();
-    defer parser.destroy();
-    parser.setLanguage(language.grammar(.ts)) catch unreachable;
-    return parser.parseString(source, null).?;
-}
-
-fn tsKinds() node.Kinds {
-    return kind_map.build(.ts, language.grammar(.ts), std.testing.allocator) catch unreachable;
-}
+const test_tree = @import("test_tree.zig");
 
 test "node: kind, byte span, and text of the root" {
     const src = "const x = 42;";
-    const tree = parse(src);
-    defer tree.destroy();
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
 
-    var kinds = tsKinds();
-    defer std.testing.allocator.free(kinds.kind_remap);
-    const root = Node.from(tree.rootNode(), &kinds);
+    const root = t.root();
     try std.testing.expectEqualStrings("program", root.kind());
     try std.testing.expectEqual(@as(u32, 0), root.startByte());
     try std.testing.expectEqual(@as(u32, src.len), root.endByte());
@@ -34,12 +16,10 @@ test "node: kind, byte span, and text of the root" {
 
 test "node: field child, points, parent identity" {
     const src = "const x = 42;\n";
-    const tree = parse(src);
-    defer tree.destroy();
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
 
-    var kinds = tsKinds();
-    defer std.testing.allocator.free(kinds.kind_remap);
-    const root = Node.from(tree.rootNode(), &kinds);
+    const root = t.root();
     const decl = root.namedChild(0).?;
     const declarator = decl.namedChild(0).?;
 
@@ -58,12 +38,10 @@ test "node: field child, points, parent identity" {
 
 test "node: named-sibling navigation and count" {
     const src = "f(a, b, c);";
-    const tree = parse(src);
-    defer tree.destroy();
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
 
-    var kinds = tsKinds();
-    defer std.testing.allocator.free(kinds.kind_remap);
-    const root = Node.from(tree.rootNode(), &kinds);
+    const root = t.root();
     const call = root.namedChild(0).?.namedChild(0).?;
     const args = call.childByFieldName("arguments").?;
 
@@ -76,12 +54,10 @@ test "node: named-sibling navigation and count" {
 
 test "node: comment inside params is extra" {
     const src = "function f(/* c */ a) {}";
-    const tree = parse(src);
-    defer tree.destroy();
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
 
-    var kinds = tsKinds();
-    defer std.testing.allocator.free(kinds.kind_remap);
-    const root = Node.from(tree.rootNode(), &kinds);
+    const root = t.root();
     const func = root.namedChild(0).?;
     const params = func.childByFieldName("parameters").?;
 
@@ -95,12 +71,10 @@ test "node: comment inside params is extra" {
 
 test "node: named symbol vs anonymous token" {
     const src = "x;";
-    const tree = parse(src);
-    defer tree.destroy();
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
 
-    var kinds = tsKinds();
-    defer std.testing.allocator.free(kinds.kind_remap);
-    const root = Node.from(tree.rootNode(), &kinds);
+    const root = t.root();
     const stmt = root.namedChild(0).?;
 
     const identifier = stmt.child(0).?;
@@ -112,30 +86,10 @@ test "node: named symbol vs anonymous token" {
     try std.testing.expect(!semicolon.isNamed());
 }
 
-test "node: symbol is the grammar id for the kind" {
-    const src = "const x = 42;";
-    const tree = parse(src);
-    defer tree.destroy();
-
-    var kinds = tsKinds();
-    defer std.testing.allocator.free(kinds.kind_remap);
-    const root = Node.from(tree.rootNode(), &kinds);
-    const grammar = language.grammar(.ts);
-
-    try std.testing.expectEqual(grammar.idForNodeKind("program", true), root.symbol());
-
-    const name = root.namedChild(0).?.namedChild(0).?.childByFieldName("name").?;
-    try std.testing.expectEqual(grammar.idForNodeKind("identifier", true), name.symbol());
-    try std.testing.expect(root.symbol() != name.symbol());
-}
-
 test "node: text is null when span exceeds the given source" {
     const src = "const x = 42;";
-    const tree = parse(src);
-    defer tree.destroy();
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
 
-    var kinds = tsKinds();
-    defer std.testing.allocator.free(kinds.kind_remap);
-    const root = Node.from(tree.rootNode(), &kinds);
-    try std.testing.expectEqual(@as(?[]const u8, null), root.text("short"));
+    try std.testing.expectEqual(@as(?[]const u8, null), t.root().text("short"));
 }

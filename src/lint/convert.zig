@@ -1,28 +1,23 @@
 const std = @import("std");
 const ts = @import("tree_sitter");
-const node_kinds = @import("node_kinds");
 
 const ast = @import("ast.zig");
 const language = @import("language.zig");
 
 /// Clone a finished tree-sitter CST rooted at `root` into a flat kata `Ast`. The
 /// walk is an iterative pre-order DFS (depth-safe on adversarial nesting), and it
-/// stores kata kind/field ids resolved through the same per-grammar remaps the
-/// matcher reads, so a converted node's kind equals `Node.kindId()` on the same
-/// ts node by construction. Anonymous tokens keep their field ids, which the
-/// bool-op metric refinement depends on.
+/// stores kata kind/field ids resolved through the caller's per-grammar remaps
+/// (the same tables the engine caches), so a converted node's kind equals what
+/// the matcher expects by construction. Anonymous tokens keep their field ids,
+/// which the bool-op metric refinement depends on.
 pub fn build(
     lang: language.Name,
-    grammar: *const ts.Language,
+    kind_remap: []const u16,
+    field_remap: []const u16,
     root: ts.Node,
     source: []const u8,
     gpa: std.mem.Allocator,
 ) !ast.Ast {
-    const kind_remap = try buildKindRemap(lang, grammar, gpa);
-    defer gpa.free(kind_remap);
-    const field_remap = try buildFieldRemap(lang, grammar, gpa);
-    defer gpa.free(field_remap);
-
     var nodes: std.ArrayList(ast.StoredNode) = .empty;
     errdefer nodes.deinit(gpa);
 
@@ -73,20 +68,6 @@ pub fn build(
 /// funnels to kata id 0 (`.unknown`/`.none`) instead of indexing out of bounds.
 fn remap(table: []const u16, id: u16) u16 {
     return if (id < table.len) table[id] else 0;
-}
-
-fn buildKindRemap(lang: language.Name, grammar: *const ts.Language, gpa: std.mem.Allocator) ![]u16 {
-    return switch (lang) {
-        .ts, .tsx => node_kinds.ts_family.buildKindRemap(grammar, gpa),
-        .go => node_kinds.go.buildKindRemap(grammar, gpa),
-    };
-}
-
-fn buildFieldRemap(lang: language.Name, grammar: *const ts.Language, gpa: std.mem.Allocator) ![]u16 {
-    return switch (lang) {
-        .ts, .tsx => node_kinds.ts_family.buildFieldRemap(grammar, gpa),
-        .go => node_kinds.go.buildFieldRemap(grammar, gpa),
-    };
 }
 
 fn buildLineStarts(source: []const u8, gpa: std.mem.Allocator) ![]u32 {

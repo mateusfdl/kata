@@ -8,10 +8,9 @@ const dsl_parser = @import("parser.zig");
 const diagnostic = @import("../lint/diagnostic.zig");
 const engine = @import("../lint/Engine.zig");
 const expr = @import("../lint/expr.zig");
-const kind_map = @import("../lint/kind_map.zig");
 const language = @import("../lint/language.zig");
 const rule = @import("../lint/rule.zig");
-const Node = @import("../lint/node.zig").Node;
+const test_tree = @import("../lint/test_tree.zig");
 
 fn parseDsl(arena: std.mem.Allocator, source: []const u8) !ast.File {
     var diag: dsl_parser.Diagnostic = .{};
@@ -82,21 +81,15 @@ fn runCompiled(
     source: []const u8,
     path: ?[]const u8,
 ) ![]diagnostic.Diagnostic {
-    const parser = ts.Parser.create();
-    defer parser.destroy();
-    try parser.setLanguage(language.grammar(lang));
-    const tree = parser.parseString(source, null) orelse return error.ParseFailed;
-    defer tree.destroy();
-
-    var kinds = try kind_map.build(lang, language.grammar(lang), gpa);
-    defer gpa.free(kinds.kind_remap);
+    var t = test_tree.build(gpa, lang, source);
+    defer t.deinit(gpa);
 
     var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
     errdefer out.deinit(gpa);
     try engine.runRule(gpa, compiled, .{
         .allocator = gpa,
         .source = source,
-        .root = Node.from(tree.rootNode(), &kinds),
+        .root = t.root(),
     }, lang, path, &out);
     return out.toOwnedSlice(gpa);
 }

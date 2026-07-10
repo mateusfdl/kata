@@ -1,25 +1,12 @@
 const std = @import("std");
-const ts = @import("tree_sitter");
 const nk = @import("node_kinds");
 
-const kind_map = @import("kind_map.zig");
 const kinds = @import("kinds.zig");
-const language = @import("language.zig");
 const node = @import("node.zig");
+const test_tree = @import("test_tree.zig");
 const Node = node.Node;
 
 const MetricKind = kinds.MetricKind;
-
-fn parse(lang: language.Name, source: []const u8) *ts.Tree {
-    const parser = ts.Parser.create();
-    defer parser.destroy();
-    parser.setLanguage(language.grammar(lang)) catch unreachable;
-    return parser.parseString(source, null).?;
-}
-
-fn kindsFor(lang: language.Name) node.Kinds {
-    return kind_map.build(lang, language.grammar(lang), std.testing.allocator) catch unreachable;
-}
 
 fn tsId(comptime name: []const u8) u16 {
     return @intFromEnum(@field(nk.ts_family.Kind, name));
@@ -94,15 +81,12 @@ test "kinds: bool-op refinement counts only logical binary operators in ts" {
     const table = try kinds.buildTsTable(gpa);
     defer gpa.free(table);
 
-    var kinds_ctx = kindsFor(.ts);
-    defer gpa.free(kinds_ctx.kind_remap);
-
-    const tree = parse(.ts, "const x = a && b || (c ?? d); const y = a + b;");
-    defer tree.destroy();
+    var t = test_tree.build(gpa, .ts, "const x = a && b || (c ?? d); const y = a + b;");
+    defer t.deinit(gpa);
 
     var binaries: std.ArrayList(Node) = .empty;
     defer binaries.deinit(gpa);
-    try collectBinary(Node.from(tree.rootNode(), &kinds_ctx), &binaries, gpa);
+    try collectBinary(t.root(), &binaries, gpa);
 
     var logical: usize = 0;
     var arithmetic: usize = 0;
@@ -126,15 +110,12 @@ test "kinds: bool-op refinement counts only logical binary operators in go" {
     const table = try kinds.buildGoTable(gpa);
     defer gpa.free(table);
 
-    var kinds_ctx = kindsFor(.go);
-    defer gpa.free(kinds_ctx.kind_remap);
-
-    const tree = parse(.go, "package main\nfunc f(a bool, b int) {\n\t_ = a && a\n\t_ = b + b\n}\n");
-    defer tree.destroy();
+    var t = test_tree.build(gpa, .go, "package main\nfunc f(a bool, b int) {\n\t_ = a && a\n\t_ = b + b\n}\n");
+    defer t.deinit(gpa);
 
     var binaries: std.ArrayList(Node) = .empty;
     defer binaries.deinit(gpa);
-    try collectBinary(Node.from(tree.rootNode(), &kinds_ctx), &binaries, gpa);
+    try collectBinary(t.root(), &binaries, gpa);
 
     try std.testing.expectEqual(@as(usize, 2), binaries.items.len);
     for (binaries.items) |bin| {
@@ -153,11 +134,8 @@ test "kinds: classify tolerates error nodes without indexing out of range" {
     const table = try kinds.buildTsTable(gpa);
     defer gpa.free(table);
 
-    var kinds_ctx = kindsFor(.ts);
-    defer gpa.free(kinds_ctx.kind_remap);
+    var t = test_tree.build(gpa, .ts, "function (");
+    defer t.deinit(gpa);
 
-    const tree = parse(.ts, "function (");
-    defer tree.destroy();
-
-    walkClassifyAll(Node.from(tree.rootNode(), &kinds_ctx), table);
+    walkClassifyAll(t.root(), table);
 }

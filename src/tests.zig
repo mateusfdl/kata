@@ -11,7 +11,6 @@ comptime {
     _ = @import("lint/kinds_test.zig");
     _ = @import("lint/query_test.zig");
     _ = @import("lint/convert_test.zig");
-    _ = @import("lint/parity_test.zig");
     _ = @import("lint/language_test.zig");
     _ = @import("lint/engine_test.zig");
     _ = @import("lint/expr_test.zig");

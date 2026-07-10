@@ -1,12 +1,10 @@
 const std = @import("std");
 const ts = @import("tree_sitter");
-const nk = @import("node_kinds");
 
 const ast = @import("ast.zig");
 const convert = @import("convert.zig");
 const kind_map = @import("kind_map.zig");
 const language = @import("language.zig");
-const node = @import("node.zig");
 
 fn parse(grammar: *const ts.Language, source: []const u8) *ts.Tree {
     const parser = ts.Parser.create();
@@ -15,17 +13,14 @@ fn parse(grammar: *const ts.Language, source: []const u8) *ts.Tree {
     return parser.parseString(source, null).?;
 }
 
-fn fieldRemap(lang: language.Name, grammar: *const ts.Language) []u16 {
-    return switch (lang) {
-        .ts, .tsx => nk.ts_family.buildFieldRemap(grammar, std.testing.allocator) catch unreachable,
-        .go => nk.go.buildFieldRemap(grammar, std.testing.allocator) catch unreachable,
-    };
+fn remapId(table: []const u16, id: u16) u16 {
+    return if (id < table.len) table[id] else 0;
 }
 
 const Walker = struct {
     tree: ast.Ast,
     grammar: *const ts.Language,
-    kinds: *const node.Kinds,
+    kind_remap: []const u16,
     field_remap: []const u16,
     next: ast.NodeIndex = 0,
 
@@ -34,7 +29,7 @@ const Walker = struct {
         self.next += 1;
         const stored = self.tree.nodes[index];
 
-        try std.testing.expectEqual(node.Node.from(tsn, self.kinds).kindId(), stored.kind);
+        try std.testing.expectEqual(remapId(self.kind_remap, tsn.kindId()), stored.kind);
         try std.testing.expectEqual(expected_field, stored.field_id);
         try std.testing.expectEqual(tsn.startByte(), stored.start_byte);
         try std.testing.expectEqual(tsn.endByte(), stored.end_byte);
@@ -66,16 +61,19 @@ fn expectClone(lang: language.Name, source: []const u8) !void {
     const tree = parse(grammar, source);
     defer tree.destroy();
 
-    var kinds = try kind_map.build(lang, grammar, std.testing.allocator);
+    const kinds = try kind_map.build(lang, grammar, std.testing.allocator);
     defer std.testing.allocator.free(kinds.kind_remap);
+    defer std.testing.allocator.free(kinds.field_remap);
 
-    const remap = fieldRemap(lang, grammar);
-    defer std.testing.allocator.free(remap);
-
-    var cloned = try convert.build(lang, grammar, tree.rootNode(), source, std.testing.allocator);
+    var cloned = try convert.build(lang, kinds.kind_remap, kinds.field_remap, tree.rootNode(), source, std.testing.allocator);
     defer cloned.deinit(std.testing.allocator);
 
-    var walker: Walker = .{ .tree = cloned, .grammar = grammar, .kinds = &kinds, .field_remap = remap };
+    var walker: Walker = .{
+        .tree = cloned,
+        .grammar = grammar,
+        .kind_remap = kinds.kind_remap,
+        .field_remap = kinds.field_remap,
+    };
     try walker.visit(tree.rootNode(), ast.no_parent, 0);
 
     try std.testing.expectEqual(tree.rootNode().descendantCount(), cloned.nodes.len);
@@ -122,7 +120,11 @@ test "convert: syntax error funnels ERROR to kata kind 0 without panic" {
     const tree = parse(grammar, source);
     defer tree.destroy();
 
-    var cloned = try convert.build(.ts, grammar, tree.rootNode(), source, std.testing.allocator);
+    const kinds = try kind_map.build(.ts, grammar, std.testing.allocator);
+    defer std.testing.allocator.free(kinds.kind_remap);
+    defer std.testing.allocator.free(kinds.field_remap);
+
+    var cloned = try convert.build(.ts, kinds.kind_remap, kinds.field_remap, tree.rootNode(), source, std.testing.allocator);
     defer cloned.deinit(std.testing.allocator);
 
     var saw_error = false;
@@ -137,7 +139,11 @@ test "convert: empty source is a single childless root" {
     const tree = parse(grammar, "");
     defer tree.destroy();
 
-    var cloned = try convert.build(.ts, grammar, tree.rootNode(), "", std.testing.allocator);
+    const kinds = try kind_map.build(.ts, grammar, std.testing.allocator);
+    defer std.testing.allocator.free(kinds.kind_remap);
+    defer std.testing.allocator.free(kinds.field_remap);
+
+    var cloned = try convert.build(.ts, kinds.kind_remap, kinds.field_remap, tree.rootNode(), "", std.testing.allocator);
     defer cloned.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 1), cloned.nodes.len);
