@@ -1,5 +1,4 @@
 const std = @import("std");
-const ts = @import("tree_sitter");
 
 const node_kinds = @import("node_kinds");
 const Node = @import("node.zig").Node;
@@ -60,35 +59,37 @@ fn goClassify(k: node_kinds.go.Kind) ?MetricKind {
     };
 }
 
-pub fn buildTsTable(grammar: *const ts.Language, gpa: std.mem.Allocator) ![]?MetricKind {
-    return buildTable(node_kinds.ts_family.Kind, tsClassify, grammar, gpa);
+pub fn buildTsTable(gpa: std.mem.Allocator) ![]?MetricKind {
+    return buildTable(node_kinds.ts_family.Kind, node_kinds.ts_family.kind_count, tsClassify, gpa);
 }
 
-pub fn buildGoTable(grammar: *const ts.Language, gpa: std.mem.Allocator) ![]?MetricKind {
-    return buildTable(node_kinds.go.Kind, goClassify, grammar, gpa);
+pub fn buildGoTable(gpa: std.mem.Allocator) ![]?MetricKind {
+    return buildTable(node_kinds.go.Kind, node_kinds.go.kind_count, goClassify, gpa);
 }
 
+/// Indexed by kata kind id: the enum field value IS the id, so the table is a
+/// pure compile-time projection of the classifier over the family's named kinds.
+/// The anonymous range stays null (no metric is an anonymous token).
 fn buildTable(
     comptime Kind: type,
+    comptime size: u16,
     comptime classifyKind: fn (Kind) ?MetricKind,
-    grammar: *const ts.Language,
     gpa: std.mem.Allocator,
 ) ![]?MetricKind {
-    const table = try gpa.alloc(?MetricKind, grammar.nodeKindCount());
+    const table = try gpa.alloc(?MetricKind, size);
     @memset(table, null);
     inline for (@typeInfo(Kind).@"enum".fields) |f| {
-        if (classifyKind(@enumFromInt(f.value))) |mk| {
-            const sym = grammar.idForNodeKind(f.name, true);
-            if (sym != 0) table[sym] = mk;
+        if (f.value != 0) {
+            if (classifyKind(@enumFromInt(f.value))) |mk| table[f.value] = mk;
         }
     }
     return table;
 }
 
 pub fn classify(table: []const ?MetricKind, node: Node) ?MetricKind {
-    const sym = node.symbol();
-    if (sym >= table.len) return null;
-    const mk = table[sym] orelse return null;
+    const id = node.kindId();
+    if (id >= table.len) return null;
+    const mk = table[id] orelse return null;
     if (mk == .bool_op) {
         const op = node.childByFieldName("operator") orelse return null;
         if (!isLogicalOperator(op.kind())) return null;

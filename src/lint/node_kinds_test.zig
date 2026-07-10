@@ -1,4 +1,5 @@
 const std = @import("std");
+const ts = @import("tree_sitter");
 const nk = @import("node_kinds");
 
 const language = @import("language.zig");
@@ -8,6 +9,40 @@ fn anonId(comptime family: type, token: []const u8) u16 {
         if (std.mem.eql(u8, name, token)) return family.anon_base + @as(u16, @intCast(i));
     }
     unreachable;
+}
+
+fn remapFor(lang: language.Name, grammar: *const ts.Language) ![]u16 {
+    return switch (lang) {
+        .ts, .tsx => nk.ts_family.buildKindRemap(grammar, std.testing.allocator),
+        .go => nk.go.buildKindRemap(grammar, std.testing.allocator),
+    };
+}
+
+fn walkRoundTrip(grammar: *const ts.Language, remap: []const u16, n: ts.Node) !void {
+    const symbol = n.kindId();
+    if (symbol < remap.len) {
+        const resolved = grammar.idForNodeKind(n.kind(), n.isNamed());
+        const via_name = if (resolved < remap.len) remap[resolved] else 0;
+        try std.testing.expectEqual(remap[symbol], via_name);
+    }
+    var i: u32 = 0;
+    while (i < n.childCount()) : (i += 1) {
+        if (n.child(i)) |c| try walkRoundTrip(grammar, remap, c);
+    }
+}
+
+fn roundTrip(lang: language.Name, source: []const u8) !void {
+    const grammar = language.grammar(lang);
+    const remap = try remapFor(lang, grammar);
+    defer std.testing.allocator.free(remap);
+
+    const parser = ts.Parser.create();
+    defer parser.destroy();
+    try parser.setLanguage(grammar);
+    const tree = parser.parseString(source, null).?;
+    defer tree.destroy();
+
+    try walkRoundTrip(grammar, remap, tree.rootNode());
 }
 
 test "node_kinds: id-space layout per family" {
@@ -75,6 +110,12 @@ test "node_kinds: field remap maps grammar field ids to kata field ids" {
     try std.testing.expectEqual(@as(u16, 0), @intFromEnum(nk.ts_family.Field.none));
     try std.testing.expectEqual(@intFromEnum(nk.ts_family.Field.name), remap[grammar.fieldIdForName("name")]);
     try std.testing.expectEqual(@intFromEnum(nk.ts_family.Field.value), remap[grammar.fieldIdForName("value")]);
+}
+
+test "node_kinds: remap round-trips for every parsed node (alias guard)" {
+    try roundTrip(.ts, "class C { foo() { if (a && b) return a ? b : c; for (;;) {} switch (a) {} } }");
+    try roundTrip(.tsx, "const x = <div className={y}>{z}</div>; function f<T>(a: T): T { return a; }");
+    try roundTrip(.go, "package main\nimport \"x\"\nfunc f() { if a && b { for {} switch {} } }\n");
 }
 
 test "node_kinds: go remap is its own id space" {

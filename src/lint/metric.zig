@@ -1,5 +1,4 @@
 const std = @import("std");
-const ts = @import("tree_sitter");
 
 const diagnostic = @import("diagnostic.zig");
 const kinds = @import("kinds.zig");
@@ -65,12 +64,11 @@ pub const Compiled = struct {
 
 pub fn compile(
     allocator: std.mem.Allocator,
-    ts_lang: *const ts.Language,
     lang: language.Name,
 ) std.mem.Allocator.Error!Compiled {
     const table = switch (lang) {
-        .ts, .tsx => try kinds.buildTsTable(ts_lang, allocator),
-        .go => try kinds.buildGoTable(ts_lang, allocator),
+        .ts, .tsx => try kinds.buildTsTable(allocator),
+        .go => try kinds.buildGoTable(allocator),
     };
     return .{ .table = table };
 }

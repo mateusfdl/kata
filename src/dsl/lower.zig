@@ -11,6 +11,10 @@ pub const Error = error{
     TooManyCaptures,
 } || std.mem.Allocator.Error;
 
+/// A kata kind id no real node ever reports (ids live in `[0, kind_count)`), used
+/// for a supertype reference so its pattern compiles yet never matches.
+const unmatchable_kind: u16 = std.math.maxInt(u16);
+
 /// A lowered match pattern plus its capture table: `capture_names[id]` is the
 /// name bound to capture id `id`. tree-sitter no longer assigns capture ids, so
 /// lowering assigns them by first occurrence.
@@ -29,12 +33,26 @@ pub const Lowered = struct {
 pub const Lowerer = struct {
     arena: std.mem.Allocator,
     grammar: *const ts.Language,
+    kind_remap: []const u16,
     captures: std.ArrayList([]const u8) = .empty,
     /// The offending kind or field name when lowering fails, for diagnostics.
     detail: []const u8 = "",
 
-    pub fn init(arena: std.mem.Allocator, grammar: *const ts.Language) Lowerer {
-        return .{ .arena = arena, .grammar = grammar };
+    pub fn init(arena: std.mem.Allocator, grammar: *const ts.Language, kind_remap: []const u16) Lowerer {
+        return .{ .arena = arena, .grammar = grammar, .kind_remap = kind_remap };
+    }
+
+    /// Resolve a grammar kind name to its kata kind id through the same remap the
+    /// matcher reads at runtime, so a lowered pattern id equals the node id it is
+    /// meant to match. A name the grammar does not know at all is a hard error. A
+    /// supertype (a real grammar symbol, but excluded from the kata enum) remaps
+    /// to 0; the matcher does not expand supertypes, so it lowers to a sentinel id
+    /// no node ever reports, reproducing the old name matcher's silent no-match.
+    fn kataKind(self: *Lowerer, name: []const u8, is_named: bool) Error!u16 {
+        const sym = self.grammar.idForNodeKind(name, is_named);
+        if (sym == 0 or sym >= self.kind_remap.len) return self.failKind(name);
+        const id = self.kind_remap[sym];
+        return if (id == 0) unmatchable_kind else id;
     }
 
     pub fn finish(self: *Lowerer, pattern: query.Pattern) Error!Lowered {
@@ -46,9 +64,8 @@ pub const Lowerer = struct {
 
         switch (pattern.node_kind) {
             .symbol => |kind| {
-                if (self.grammar.idForNodeKind(kind, true) == 0) return self.failKind(kind);
                 return .{
-                    .kind = .{ .symbol = try self.arena.dupe(u8, kind) },
+                    .kind = .{ .symbol = try self.kataKind(kind, true) },
                     .capture = capture,
                     .fields = try self.lowerFields(pattern.fields),
                     .absent_fields = try self.lowerAbsent(pattern.absent_fields),
@@ -59,8 +76,7 @@ pub const Lowerer = struct {
                     self.detail = token;
                     return error.AnonymousWithChildren;
                 }
-                if (self.grammar.idForNodeKind(token, false) == 0) return self.failKind(token);
-                return .{ .kind = .{ .anonymous = try self.arena.dupe(u8, token) }, .capture = capture };
+                return .{ .kind = .{ .anonymous = try self.kataKind(token, false) }, .capture = capture };
             },
             .alternation => |branches| {
                 const lowered = try self.arena.alloc(query.Pattern, branches.len);

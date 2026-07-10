@@ -7,12 +7,15 @@ const Error = std.mem.Allocator.Error;
 
 pub const CaptureId = u16;
 
-/// The kind gate for a pattern node. `symbol` matches a named grammar node by
-/// kind name; `anonymous` matches an anonymous token; `alternation` matches when
-/// any branch matches, binding this pattern's capture to the node either way.
+/// The kind gate for a pattern node. `symbol` and `anonymous` both match a node
+/// by its kata kind id (u16); the two variants differ only so lowering can
+/// resolve a named kind against `idForNodeKind(name, true)` versus an anonymous
+/// token against `(name, false)`. Named and anonymous kata ids occupy disjoint
+/// ranges, so at match time both are a plain integer compare. `alternation`
+/// matches when any branch matches, binding this pattern's capture either way.
 pub const Kind = union(enum) {
-    symbol: []const u8,
-    anonymous: []const u8,
+    symbol: u16,
+    anonymous: u16,
     alternation: []const Pattern,
 };
 
@@ -224,8 +227,8 @@ fn invoke(cont: *const Cont, bindings: []?Node, collector: *Collector) Error!voi
 
 fn kindMatches(pattern: *const Pattern, n: Node) bool {
     return switch (pattern.kind) {
-        .symbol => |k| n.isNamed() and std.mem.eql(u8, n.kind(), k),
-        .anonymous => |k| !n.isNamed() and std.mem.eql(u8, n.kind(), k),
+        .symbol => |id| n.kindId() == id,
+        .anonymous => |id| n.kindId() == id,
         .alternation => |branches| {
             for (branches) |*branch| {
                 if (kindMatches(branch, n)) return true;

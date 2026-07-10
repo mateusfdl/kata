@@ -6,14 +6,23 @@ pub const Point = struct {
     column: u32,
 };
 
+/// Per-grammar `ts symbol id -> kata kind id` table, built once at startup and
+/// shared by every node of that grammar. It is the single source of truth for
+/// kata kind ids: the same table lowers pattern kind names to ids and answers
+/// `kindId()`, so a pattern id and a node id agree by construction.
+pub const Kinds = struct {
+    kind_remap: []const u16,
+};
+
 /// A handle over a single syntax node. Today it wraps a tree-sitter node; the
 /// engine talks to this surface instead of `ts.Node` so the backing tree can be
 /// swapped for kata's own AST without touching the matcher, metrics, or facts.
 pub const Node = struct {
     inner: ts.Node,
+    kinds: *const Kinds,
 
-    pub fn from(inner: ts.Node) Node {
-        return .{ .inner = inner };
+    pub fn from(inner: ts.Node, kinds: *const Kinds) Node {
+        return .{ .inner = inner, .kinds = kinds };
     }
 
     pub fn kind(self: Node) []const u8 {
@@ -22,6 +31,12 @@ pub const Node = struct {
 
     pub fn symbol(self: Node) u16 {
         return self.inner.kindId();
+    }
+
+    pub fn kindId(self: Node) u16 {
+        const sym = self.inner.kindId();
+        const remap = self.kinds.kind_remap;
+        return if (sym < remap.len) remap[sym] else 0;
     }
 
     pub fn startByte(self: Node) u32 {
@@ -43,11 +58,11 @@ pub const Node = struct {
     }
 
     pub fn parent(self: Node) ?Node {
-        return wrap(self.inner.parent());
+        return self.wrap(self.inner.parent());
     }
 
     pub fn child(self: Node, index: u32) ?Node {
-        return wrap(self.inner.child(index));
+        return self.wrap(self.inner.child(index));
     }
 
     pub fn childCount(self: Node) u32 {
@@ -55,7 +70,7 @@ pub const Node = struct {
     }
 
     pub fn namedChild(self: Node, index: u32) ?Node {
-        return wrap(self.inner.namedChild(index));
+        return self.wrap(self.inner.namedChild(index));
     }
 
     pub fn namedChildCount(self: Node) u32 {
@@ -63,7 +78,7 @@ pub const Node = struct {
     }
 
     pub fn childByFieldName(self: Node, name: []const u8) ?Node {
-        return wrap(self.inner.childByFieldName(name));
+        return self.wrap(self.inner.childByFieldName(name));
     }
 
     pub fn fieldNameForChild(self: Node, index: u32) ?[]const u8 {
@@ -71,7 +86,7 @@ pub const Node = struct {
     }
 
     pub fn prevNamedSibling(self: Node) ?Node {
-        return wrap(self.inner.prevNamedSibling());
+        return self.wrap(self.inner.prevNamedSibling());
     }
 
     pub fn isNamed(self: Node) bool {
@@ -93,8 +108,8 @@ pub const Node = struct {
         if (end > source.len) return null;
         return source[self.startByte()..end];
     }
-};
 
-fn wrap(maybe: ?ts.Node) ?Node {
-    return if (maybe) |n| .{ .inner = n } else null;
-}
+    fn wrap(self: Node, maybe: ?ts.Node) ?Node {
+        return if (maybe) |n| .{ .inner = n, .kinds = self.kinds } else null;
+    }
+};

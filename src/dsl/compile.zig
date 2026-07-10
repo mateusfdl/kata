@@ -6,6 +6,7 @@ const lower = @import("lower.zig");
 const diagnostic = @import("../lint/diagnostic.zig");
 const dsl_parser = @import("parser.zig");
 const expr = @import("../lint/expr.zig");
+const kind_map = @import("../lint/kind_map.zig");
 const language = @import("../lint/language.zig");
 const query = @import("../lint/query.zig");
 const rule = @import("../lint/rule.zig");
@@ -38,6 +39,7 @@ const Compiler = struct {
     arena: std.mem.Allocator,
     lang: language.Name,
     diag: *rule.Diagnostic,
+    kind_remap: []const u16,
     rule_id: []const u8 = "",
     captures: []const []const u8 = &.{},
 
@@ -120,7 +122,8 @@ pub fn compile(
     errdefer arena_ptr.deinit();
     const arena = arena_ptr.allocator();
 
-    var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag };
+    const kinds = try kind_map.build(lang, language.grammar(lang), arena);
+    var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag, .kind_remap = kinds.kind_remap };
 
     var patterns: std.ArrayList(rule.CompiledPattern) = .empty;
     for (file.rules) |*r| {
@@ -164,7 +167,7 @@ fn compileRule(ctx: *Compiler, r: ast.Rule) Error!rule.CompiledPattern {
         return error.EmitCaptureConflict;
     }
 
-    var lowerer = lower.Lowerer.init(ctx.arena, language.grammar(ctx.lang));
+    var lowerer = lower.Lowerer.init(ctx.arena, language.grammar(ctx.lang), ctx.kind_remap);
     const lowered_pattern = lowerer.lowerPattern(pattern) catch |err| return mapLowerError(ctx, err);
     const lowered = lowerer.finish(lowered_pattern) catch |err| return mapLowerError(ctx, err);
     ctx.captures = lowered.capture_names;
@@ -347,7 +350,7 @@ fn compileNestedMatcher(ctx: *Compiler, matcher: ast.NestedMatcher) Error!*const
     if (pattern.capture == null) pattern.capture = .{ .name = nested_root_capture, .range = pattern.range };
     const root_name = pattern.capture.?.name;
 
-    var lowerer = lower.Lowerer.init(ctx.arena, language.grammar(ctx.lang));
+    var lowerer = lower.Lowerer.init(ctx.arena, language.grammar(ctx.lang), ctx.kind_remap);
     const lowered_pattern = lowerer.lowerPattern(pattern) catch |err| return mapLowerError(ctx, err);
     const lowered = lowerer.finish(lowered_pattern) catch |err| return mapLowerError(ctx, err);
 

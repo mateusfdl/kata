@@ -1,9 +1,12 @@
 const std = @import("std");
 const ts = @import("tree_sitter");
+const nk = @import("node_kinds");
 
+const kind_map = @import("kind_map.zig");
 const kinds = @import("kinds.zig");
 const language = @import("language.zig");
-const Node = @import("node.zig").Node;
+const node = @import("node.zig");
+const Node = node.Node;
 
 const MetricKind = kinds.MetricKind;
 
@@ -14,81 +17,92 @@ fn parse(lang: language.Name, source: []const u8) *ts.Tree {
     return parser.parseString(source, null).?;
 }
 
-fn collectBinary(node: Node, out: *std.ArrayList(Node), gpa: std.mem.Allocator) !void {
-    if (std.mem.eql(u8, node.kind(), "binary_expression")) try out.append(gpa, node);
+fn kindsFor(lang: language.Name) node.Kinds {
+    return kind_map.build(lang, language.grammar(lang), std.testing.allocator) catch unreachable;
+}
+
+fn tsId(comptime name: []const u8) u16 {
+    return @intFromEnum(@field(nk.ts_family.Kind, name));
+}
+
+fn goId(comptime name: []const u8) u16 {
+    return @intFromEnum(@field(nk.go.Kind, name));
+}
+
+fn collectBinary(n: Node, out: *std.ArrayList(Node), gpa: std.mem.Allocator) !void {
+    if (std.mem.eql(u8, n.kind(), "binary_expression")) try out.append(gpa, n);
     var i: u32 = 0;
-    while (i < node.childCount()) : (i += 1) {
-        if (node.child(i)) |c| try collectBinary(c, out, gpa);
+    while (i < n.childCount()) : (i += 1) {
+        if (n.child(i)) |c| try collectBinary(c, out, gpa);
     }
 }
 
-fn walkClassifyAll(node: Node, table: []const ?MetricKind) void {
-    _ = kinds.classify(table, node);
+fn walkClassifyAll(n: Node, table: []const ?MetricKind) void {
+    _ = kinds.classify(table, n);
     var i: u32 = 0;
-    while (i < node.childCount()) : (i += 1) {
-        if (node.child(i)) |c| walkClassifyAll(c, table);
+    while (i < n.childCount()) : (i += 1) {
+        if (n.child(i)) |c| walkClassifyAll(c, table);
     }
 }
 
 test "kinds: ts table classifies decision points by kind" {
     const gpa = std.testing.allocator;
-    const grammar = language.grammar(.ts);
-    const table = try kinds.buildTsTable(grammar, gpa);
+    const table = try kinds.buildTsTable(gpa);
     defer gpa.free(table);
 
-    try std.testing.expectEqual(MetricKind.branch, table[grammar.idForNodeKind("if_statement", true)].?);
-    try std.testing.expectEqual(MetricKind.function, table[grammar.idForNodeKind("arrow_function", true)].?);
-    try std.testing.expectEqual(MetricKind.function, table[grammar.idForNodeKind("method_definition", true)].?);
-    try std.testing.expectEqual(MetricKind.ternary, table[grammar.idForNodeKind("ternary_expression", true)].?);
-    try std.testing.expectEqual(MetricKind.loop, table[grammar.idForNodeKind("while_statement", true)].?);
-    try std.testing.expectEqual(MetricKind.loop, table[grammar.idForNodeKind("for_in_statement", true)].?);
-    try std.testing.expectEqual(MetricKind.switch_stmt, table[grammar.idForNodeKind("switch_statement", true)].?);
-    try std.testing.expectEqual(MetricKind.case, table[grammar.idForNodeKind("switch_case", true)].?);
-    try std.testing.expectEqual(MetricKind.catch_clause, table[grammar.idForNodeKind("catch_clause", true)].?);
-    try std.testing.expectEqual(MetricKind.bool_op, table[grammar.idForNodeKind("binary_expression", true)].?);
-    try std.testing.expectEqual(@as(?MetricKind, null), table[grammar.idForNodeKind("identifier", true)]);
+    try std.testing.expectEqual(MetricKind.branch, table[tsId("if_statement")].?);
+    try std.testing.expectEqual(MetricKind.function, table[tsId("arrow_function")].?);
+    try std.testing.expectEqual(MetricKind.function, table[tsId("method_definition")].?);
+    try std.testing.expectEqual(MetricKind.ternary, table[tsId("ternary_expression")].?);
+    try std.testing.expectEqual(MetricKind.loop, table[tsId("while_statement")].?);
+    try std.testing.expectEqual(MetricKind.loop, table[tsId("for_in_statement")].?);
+    try std.testing.expectEqual(MetricKind.switch_stmt, table[tsId("switch_statement")].?);
+    try std.testing.expectEqual(MetricKind.case, table[tsId("switch_case")].?);
+    try std.testing.expectEqual(MetricKind.catch_clause, table[tsId("catch_clause")].?);
+    try std.testing.expectEqual(MetricKind.bool_op, table[tsId("binary_expression")].?);
+    try std.testing.expectEqual(@as(?MetricKind, null), table[tsId("identifier")]);
 }
 
-test "kinds: tsx table shares the ts_family classification" {
+test "kinds: tsx-only kinds share the ts_family table" {
     const gpa = std.testing.allocator;
-    const grammar = language.grammar(.tsx);
-    const table = try kinds.buildTsTable(grammar, gpa);
+    const table = try kinds.buildTsTable(gpa);
     defer gpa.free(table);
 
-    try std.testing.expectEqual(MetricKind.branch, table[grammar.idForNodeKind("if_statement", true)].?);
-    try std.testing.expectEqual(MetricKind.function, table[grammar.idForNodeKind("arrow_function", true)].?);
-    try std.testing.expectEqual(@as(?MetricKind, null), table[grammar.idForNodeKind("jsx_element", true)]);
+    try std.testing.expectEqual(MetricKind.branch, table[tsId("if_statement")].?);
+    try std.testing.expectEqual(MetricKind.function, table[tsId("arrow_function")].?);
+    try std.testing.expectEqual(@as(?MetricKind, null), table[tsId("jsx_element")]);
 }
 
 test "kinds: go table classifies decision points by kind" {
     const gpa = std.testing.allocator;
-    const grammar = language.grammar(.go);
-    const table = try kinds.buildGoTable(grammar, gpa);
+    const table = try kinds.buildGoTable(gpa);
     defer gpa.free(table);
 
-    try std.testing.expectEqual(MetricKind.function, table[grammar.idForNodeKind("method_declaration", true)].?);
-    try std.testing.expectEqual(MetricKind.function, table[grammar.idForNodeKind("func_literal", true)].?);
-    try std.testing.expectEqual(MetricKind.branch, table[grammar.idForNodeKind("if_statement", true)].?);
-    try std.testing.expectEqual(MetricKind.loop, table[grammar.idForNodeKind("for_statement", true)].?);
-    try std.testing.expectEqual(MetricKind.switch_stmt, table[grammar.idForNodeKind("expression_switch_statement", true)].?);
-    try std.testing.expectEqual(MetricKind.switch_stmt, table[grammar.idForNodeKind("select_statement", true)].?);
-    try std.testing.expectEqual(MetricKind.case, table[grammar.idForNodeKind("communication_case", true)].?);
-    try std.testing.expectEqual(MetricKind.bool_op, table[grammar.idForNodeKind("binary_expression", true)].?);
-    try std.testing.expectEqual(@as(?MetricKind, null), table[grammar.idForNodeKind("identifier", true)]);
+    try std.testing.expectEqual(MetricKind.function, table[goId("method_declaration")].?);
+    try std.testing.expectEqual(MetricKind.function, table[goId("func_literal")].?);
+    try std.testing.expectEqual(MetricKind.branch, table[goId("if_statement")].?);
+    try std.testing.expectEqual(MetricKind.loop, table[goId("for_statement")].?);
+    try std.testing.expectEqual(MetricKind.switch_stmt, table[goId("expression_switch_statement")].?);
+    try std.testing.expectEqual(MetricKind.switch_stmt, table[goId("select_statement")].?);
+    try std.testing.expectEqual(MetricKind.case, table[goId("communication_case")].?);
+    try std.testing.expectEqual(MetricKind.bool_op, table[goId("binary_expression")].?);
+    try std.testing.expectEqual(@as(?MetricKind, null), table[goId("identifier")]);
 }
 
 test "kinds: bool-op refinement counts only logical binary operators in ts" {
     const gpa = std.testing.allocator;
-    const grammar = language.grammar(.ts);
-    const table = try kinds.buildTsTable(grammar, gpa);
+    const table = try kinds.buildTsTable(gpa);
     defer gpa.free(table);
+
+    var kinds_ctx = kindsFor(.ts);
+    defer gpa.free(kinds_ctx.kind_remap);
 
     const tree = parse(.ts, "const x = a && b || (c ?? d); const y = a + b;");
     defer tree.destroy();
 
     var binaries: std.ArrayList(Node) = .empty;
     defer binaries.deinit(gpa);
-    try collectBinary(Node.from(tree.rootNode()), &binaries, gpa);
+    try collectBinary(Node.from(tree.rootNode(), &kinds_ctx), &binaries, gpa);
 
     var logical: usize = 0;
     var arithmetic: usize = 0;
@@ -109,16 +123,18 @@ test "kinds: bool-op refinement counts only logical binary operators in ts" {
 
 test "kinds: bool-op refinement counts only logical binary operators in go" {
     const gpa = std.testing.allocator;
-    const grammar = language.grammar(.go);
-    const table = try kinds.buildGoTable(grammar, gpa);
+    const table = try kinds.buildGoTable(gpa);
     defer gpa.free(table);
+
+    var kinds_ctx = kindsFor(.go);
+    defer gpa.free(kinds_ctx.kind_remap);
 
     const tree = parse(.go, "package main\nfunc f(a bool, b int) {\n\t_ = a && a\n\t_ = b + b\n}\n");
     defer tree.destroy();
 
     var binaries: std.ArrayList(Node) = .empty;
     defer binaries.deinit(gpa);
-    try collectBinary(Node.from(tree.rootNode()), &binaries, gpa);
+    try collectBinary(Node.from(tree.rootNode(), &kinds_ctx), &binaries, gpa);
 
     try std.testing.expectEqual(@as(usize, 2), binaries.items.len);
     for (binaries.items) |bin| {
@@ -134,12 +150,14 @@ test "kinds: bool-op refinement counts only logical binary operators in go" {
 
 test "kinds: classify tolerates error nodes without indexing out of range" {
     const gpa = std.testing.allocator;
-    const grammar = language.grammar(.ts);
-    const table = try kinds.buildTsTable(grammar, gpa);
+    const table = try kinds.buildTsTable(gpa);
     defer gpa.free(table);
+
+    var kinds_ctx = kindsFor(.ts);
+    defer gpa.free(kinds_ctx.kind_remap);
 
     const tree = parse(.ts, "function (");
     defer tree.destroy();
 
-    walkClassifyAll(Node.from(tree.rootNode()), table);
+    walkClassifyAll(Node.from(tree.rootNode(), &kinds_ctx), table);
 }

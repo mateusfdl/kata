@@ -10,9 +10,11 @@ const glob = @import("glob.zig");
 const language = @import("language.zig");
 const matcher = @import("matcher.zig");
 const metric = @import("metric.zig");
+const kind_map = @import("kind_map.zig");
 const query = @import("query.zig");
 const rule = @import("rule.zig");
 const Node = @import("node.zig").Node;
+const Kinds = @import("node.zig").Kinds;
 
 const RuleSet = @import("RuleSet.zig").RuleSet;
 
@@ -34,6 +36,7 @@ pub const Engine = struct {
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
     metrics: metric.Set = metric.empty,
     metric_queries: std.EnumArray(language.Name, ?metric.Compiled) = .initFill(null),
+    kinds: std.EnumArray(language.Name, ?Kinds) = .initFill(null),
     compiled_fact: ?[]const fact_rule.CompiledFactRule = null,
     fact_arena: ?*std.heap.ArenaAllocator = null,
     warnings: []const rule.ScopedId = &.{},
@@ -66,6 +69,11 @@ pub const Engine = struct {
         var mit = self.metric_queries.iterator();
         while (mit.next()) |entry| {
             if (entry.value.*) |*compiled| compiled.deinit(self.allocator);
+        }
+
+        var kit = self.kinds.iterator();
+        while (kit.next()) |entry| {
+            if (entry.value.*) |k| self.allocator.free(k.kind_remap);
         }
 
         if (self.fact_arena) |arena_ptr| {
@@ -153,7 +161,16 @@ pub const Engine = struct {
         const slot = self.metric_queries.getPtr(lang);
         if (slot.*) |*cached| return cached;
 
-        slot.* = try metric.compile(self.allocator, language.grammar(lang), lang);
+        slot.* = try metric.compile(self.allocator, lang);
+
+        return &slot.*.?;
+    }
+
+    fn ensureKinds(self: *Engine, lang: language.Name) !*const Kinds {
+        const slot = self.kinds.getPtr(lang);
+        if (slot.*) |*cached| return cached;
+
+        slot.* = try kind_map.build(lang, language.grammar(lang), self.allocator);
 
         return &slot.*.?;
     }
@@ -165,11 +182,12 @@ pub const Engine = struct {
         lang: language.Name,
         path: []const u8,
     ) !facts.FileFacts {
+        const kinds = try self.ensureKinds(lang);
         const parser = try self.ensureParser(lang);
         const tree = parser.parseString(source, null) orelse return error.ParseFailed;
         defer tree.destroy();
 
-        return facts.extract(gpa, Node.from(tree.rootNode()), source, path, lang);
+        return facts.extract(gpa, Node.from(tree.rootNode(), kinds), source, path, lang);
     }
 
     pub fn lint(
@@ -180,6 +198,7 @@ pub const Engine = struct {
         path: ?[]const u8,
     ) ![]diagnostic.Diagnostic {
         const compiled_dsl = try self.ensureCompiledDsl(lang);
+        const kinds = try self.ensureKinds(lang);
         const parser = try self.ensureParser(lang);
         const tree = parser.parseString(source, null) orelse return error.ParseFailed;
         defer tree.destroy();
@@ -196,7 +215,7 @@ pub const Engine = struct {
         const eval_ctx: matcher.EvalContext = .{
             .allocator = allocator,
             .source = source,
-            .root = Node.from(tree.rootNode()),
+            .root = Node.from(tree.rootNode(), kinds),
             .metric = metric_ctx,
         };
 
@@ -204,7 +223,7 @@ pub const Engine = struct {
 
         if (metric.anyEnabled(self.metrics)) {
             const metric_query = try self.ensureMetricQuery(lang);
-            try metric.run(allocator, self.metrics, metric_query, Node.from(tree.rootNode()), lang, &out);
+            try metric.run(allocator, self.metrics, metric_query, Node.from(tree.rootNode(), kinds), lang, &out);
         }
 
         demoteWarnings(self.warnings, lang, out.items);

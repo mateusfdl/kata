@@ -8,6 +8,7 @@ const dsl_parser = @import("parser.zig");
 const diagnostic = @import("../lint/diagnostic.zig");
 const engine = @import("../lint/Engine.zig");
 const expr = @import("../lint/expr.zig");
+const kind_map = @import("../lint/kind_map.zig");
 const language = @import("../lint/language.zig");
 const rule = @import("../lint/rule.zig");
 const Node = @import("../lint/node.zig").Node;
@@ -87,12 +88,15 @@ fn runCompiled(
     const tree = parser.parseString(source, null) orelse return error.ParseFailed;
     defer tree.destroy();
 
+    var kinds = try kind_map.build(lang, language.grammar(lang), gpa);
+    defer gpa.free(kinds.kind_remap);
+
     var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
     errdefer out.deinit(gpa);
     try engine.runRule(gpa, compiled, .{
         .allocator = gpa,
         .source = source,
-        .root = Node.from(tree.rootNode()),
+        .root = Node.from(tree.rootNode(), &kinds),
     }, lang, path, &out);
     return out.toOwnedSlice(gpa);
 }
