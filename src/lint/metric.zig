@@ -2,8 +2,11 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 
 const diagnostic = @import("diagnostic.zig");
+const kinds = @import("kinds.zig");
 const language = @import("language.zig");
 const Node = @import("node.zig").Node;
+
+const MetricKind = kinds.MetricKind;
 
 pub const Name = enum {
     complexity,
@@ -38,123 +41,42 @@ pub fn anyEnabled(set: Set) bool {
     return false;
 }
 
-const Kind = enum {
-    function,
-    branch,
-    ternary,
-    loop,
-    case,
-    switch_stmt,
-    catch_clause,
-    bool_op,
-};
-
-fn kindFromCaptureName(name: []const u8) ?Kind {
-    if (std.mem.eql(u8, name, "function")) return .function;
-    if (std.mem.eql(u8, name, "branch")) return .branch;
-    if (std.mem.eql(u8, name, "ternary")) return .ternary;
-    if (std.mem.eql(u8, name, "loop")) return .loop;
-    if (std.mem.eql(u8, name, "case")) return .case;
-    if (std.mem.eql(u8, name, "switch")) return .switch_stmt;
-    if (std.mem.eql(u8, name, "catch")) return .catch_clause;
-    if (std.mem.eql(u8, name, "bool-op")) return .bool_op;
-
-    return null;
-}
-
-fn isComplexityPoint(kind: Kind) bool {
+fn isComplexityPoint(kind: MetricKind) bool {
     return switch (kind) {
         .branch, .ternary, .loop, .case, .catch_clause, .bool_op => true,
         .function, .switch_stmt => false,
     };
 }
 
-fn isNestingConstruct(kind: Kind) bool {
+fn isNestingConstruct(kind: MetricKind) bool {
     return switch (kind) {
         .branch, .loop, .switch_stmt, .catch_clause => true,
         .function, .ternary, .case, .bool_op => false,
     };
 }
 
-const ts_query_source =
-    \\(function_declaration) @function
-    \\(function_expression) @function
-    \\(generator_function_declaration) @function
-    \\(generator_function) @function
-    \\(arrow_function) @function
-    \\(method_definition) @function
-    \\(if_statement) @branch
-    \\(ternary_expression) @ternary
-    \\(for_statement) @loop
-    \\(for_in_statement) @loop
-    \\(while_statement) @loop
-    \\(do_statement) @loop
-    \\(switch_statement) @switch
-    \\(switch_case) @case
-    \\(catch_clause) @catch
-    \\(binary_expression operator: "&&") @bool-op
-    \\(binary_expression operator: "||") @bool-op
-    \\(binary_expression operator: "??") @bool-op
-;
-
-const go_query_source =
-    \\(function_declaration) @function
-    \\(method_declaration) @function
-    \\(func_literal) @function
-    \\(if_statement) @branch
-    \\(for_statement) @loop
-    \\(expression_switch_statement) @switch
-    \\(type_switch_statement) @switch
-    \\(select_statement) @switch
-    \\(expression_case) @case
-    \\(type_case) @case
-    \\(communication_case) @case
-    \\(binary_expression operator: "&&") @bool-op
-    \\(binary_expression operator: "||") @bool-op
-;
-
-pub fn querySource(lang: language.Name) []const u8 {
-    return switch (lang) {
-        .ts, .tsx => ts_query_source,
-        .go => go_query_source,
-    };
-}
-
 pub const Compiled = struct {
-    query: *ts.Query,
-    capture_kinds: []const Kind,
+    table: []const ?MetricKind,
 
     pub fn deinit(self: *Compiled, allocator: std.mem.Allocator) void {
-        self.query.destroy();
-        allocator.free(self.capture_kinds);
+        allocator.free(self.table);
     }
 };
-
-pub const CompileError = error{MetricQueryCompileFailed} || std.mem.Allocator.Error;
 
 pub fn compile(
     allocator: std.mem.Allocator,
     ts_lang: *const ts.Language,
     lang: language.Name,
-) CompileError!Compiled {
-    var error_offset: u32 = 0;
-    const query = ts.Query.create(ts_lang, querySource(lang), &error_offset) catch
-        return error.MetricQueryCompileFailed;
-    errdefer query.destroy();
-
-    const kinds = try allocator.alloc(Kind, query.captureCount());
-    errdefer allocator.free(kinds);
-
-    for (kinds, 0..) |*kind, i| {
-        const cap_name = query.captureNameForId(@intCast(i)) orelse return error.MetricQueryCompileFailed;
-        kind.* = kindFromCaptureName(cap_name) orelse return error.MetricQueryCompileFailed;
-    }
-
-    return .{ .query = query, .capture_kinds = kinds };
+) std.mem.Allocator.Error!Compiled {
+    const table = switch (lang) {
+        .ts, .tsx => try kinds.buildTsTable(ts_lang, allocator),
+        .go => try kinds.buildGoTable(ts_lang, allocator),
+    };
+    return .{ .table = table };
 }
 
 const Span = struct {
-    kind: Kind,
+    kind: MetricKind,
     start: u32,
     end: u32,
     range: diagnostic.Range,
@@ -177,12 +99,11 @@ const Analysis = struct {
 fn analyze(
     allocator: std.mem.Allocator,
     compiled: *const Compiled,
-    cursor: *ts.QueryCursor,
-    root: ts.Node,
+    root: Node,
 ) std.mem.Allocator.Error!Analysis {
     var list: std.ArrayList(Span) = .empty;
     errdefer list.deinit(allocator);
-    try collectSpans(allocator, compiled, cursor, root, &list);
+    try collectSpans(allocator, compiled, root, &list);
     std.mem.sort(Span, list.items, {}, spanLessThan);
 
     const spans = try list.toOwnedSlice(allocator);
@@ -233,12 +154,11 @@ pub fn run(
     allocator: std.mem.Allocator,
     set: Set,
     compiled: *const Compiled,
-    cursor: *ts.QueryCursor,
-    root: ts.Node,
+    root: Node,
     lang: language.Name,
     out: *std.ArrayList(diagnostic.Diagnostic),
 ) !void {
-    const analysis = try analyze(allocator, compiled, cursor, root);
+    const analysis = try analyze(allocator, compiled, root);
     defer analysis.deinit(allocator);
 
     const lang_str = lang.toString();
@@ -251,10 +171,9 @@ pub fn run(
 pub fn complexityOf(
     allocator: std.mem.Allocator,
     compiled: *const Compiled,
-    cursor: *ts.QueryCursor,
     node: Node,
 ) std.mem.Allocator.Error!u32 {
-    const analysis = try analyze(allocator, compiled, cursor, node.inner);
+    const analysis = try analyze(allocator, compiled, node);
     defer analysis.deinit(allocator);
 
     var cc: u32 = 1;
@@ -270,10 +189,9 @@ pub fn complexityOf(
 pub fn nestingOf(
     allocator: std.mem.Allocator,
     compiled: *const Compiled,
-    cursor: *ts.QueryCursor,
     node: Node,
 ) std.mem.Allocator.Error!u32 {
-    const analysis = try analyze(allocator, compiled, cursor, node.inner);
+    const analysis = try analyze(allocator, compiled, node);
     defer analysis.deinit(allocator);
 
     // Collapse ownership to one class: constructs belonging to `node` share a
@@ -380,24 +298,31 @@ pub fn argsOf(node: Node) ?u32 {
 fn collectSpans(
     allocator: std.mem.Allocator,
     compiled: *const Compiled,
-    cursor: *ts.QueryCursor,
-    root: ts.Node,
+    root: Node,
     spans: *std.ArrayList(Span),
 ) !void {
-    cursor.exec(compiled.query, root);
-    while (cursor.nextMatch()) |match| {
-        for (match.captures) |cap| {
-            const sp = cap.node.startPoint();
-            const ep = cap.node.endPoint();
+    var stack: std.ArrayList(Node) = .empty;
+    defer stack.deinit(allocator);
+    try stack.append(allocator, root);
+
+    while (stack.pop()) |node| {
+        if (kinds.classify(compiled.table, node)) |kind| {
+            const sp = node.startPoint();
+            const ep = node.endPoint();
             try spans.append(allocator, .{
-                .kind = compiled.capture_kinds[cap.index],
-                .start = cap.node.startByte(),
-                .end = cap.node.endByte(),
+                .kind = kind,
+                .start = node.startByte(),
+                .end = node.endByte(),
                 .range = .{
                     .start = .{ .line = sp.row, .column = sp.column },
                     .end = .{ .line = ep.row, .column = ep.column },
                 },
             });
+        }
+
+        var i: u32 = 0;
+        while (i < node.childCount()) : (i += 1) {
+            if (node.child(i)) |child| try stack.append(allocator, child);
         }
     }
 }
@@ -456,7 +381,7 @@ fn checkComplexity(
 }
 
 const Container = struct {
-    kind: Kind,
+    kind: MetricKind,
     end: u32,
 };
 

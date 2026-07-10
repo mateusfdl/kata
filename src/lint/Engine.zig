@@ -36,7 +36,6 @@ pub const Engine = struct {
     metric_queries: std.EnumArray(language.Name, ?metric.Compiled) = .initFill(null),
     facts_queries: std.EnumArray(language.Name, ?facts.Compiled) = .initFill(null),
     cursor: *ts.QueryCursor,
-    metric_cursor: *ts.QueryCursor,
     compiled_fact: ?[]const fact_rule.CompiledFactRule = null,
     fact_arena: ?*std.heap.ArenaAllocator = null,
     warnings: []const rule.ScopedId = &.{},
@@ -50,7 +49,6 @@ pub const Engine = struct {
             .allocator = allocator,
             .rules = rules,
             .cursor = ts.QueryCursor.create(),
-            .metric_cursor = ts.QueryCursor.create(),
         };
     }
 
@@ -82,7 +80,6 @@ pub const Engine = struct {
             self.allocator.destroy(arena_ptr);
         }
         self.cursor.destroy();
-        self.metric_cursor.destroy();
     }
 
     pub fn prewarm(self: *Engine) !void {
@@ -211,7 +208,6 @@ pub const Engine = struct {
         const metric_ctx: ?matcher.MetricContext = if (needsMeasures(compiled_dsl)) .{
             .allocator = allocator,
             .compiled = try self.ensureMetricQuery(lang),
-            .cursor = self.metric_cursor,
             .lang = lang,
         } else null;
 
@@ -226,7 +222,7 @@ pub const Engine = struct {
 
         if (metric.anyEnabled(self.metrics)) {
             const metric_query = try self.ensureMetricQuery(lang);
-            try metric.run(allocator, self.metrics, metric_query, self.cursor, tree.rootNode(), lang, &out);
+            try metric.run(allocator, self.metrics, metric_query, Node.from(tree.rootNode()), lang, &out);
         }
 
         demoteWarnings(self.warnings, lang, out.items);

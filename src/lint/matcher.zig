@@ -1,5 +1,4 @@
 const std = @import("std");
-const ts = @import("tree_sitter");
 
 const expr = @import("expr.zig");
 const glob = @import("glob.zig");
@@ -12,7 +11,6 @@ const Node = @import("node.zig").Node;
 pub const MetricContext = struct {
     allocator: std.mem.Allocator,
     compiled: *const metric.Compiled,
-    cursor: *ts.QueryCursor,
     lang: language.Name,
 };
 
@@ -217,8 +215,8 @@ const NodeMeasures = struct {
         const node = self.match.get(capture_id) orelse return null;
 
         return switch (m) {
-            .complexity => try metric.complexityOf(self.ctx.allocator, self.ctx.compiled, self.ctx.cursor, node),
-            .nesting => try metric.nestingOf(self.ctx.allocator, self.ctx.compiled, self.ctx.cursor, node),
+            .complexity => try metric.complexityOf(self.ctx.allocator, self.ctx.compiled, node),
+            .nesting => try metric.nestingOf(self.ctx.allocator, self.ctx.compiled, node),
             .length => metric.lengthOf(node),
             .text => self.numericText(node),
             .params => metric.paramsOf(node, self.ctx.lang),
