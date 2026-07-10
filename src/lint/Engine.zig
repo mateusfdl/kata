@@ -197,11 +197,26 @@ pub const Engine = struct {
         lang: language.Name,
         path: ?[]const u8,
     ) ![]diagnostic.Diagnostic {
-        const compiled_dsl = try self.ensureCompiledDsl(lang);
         const kinds = try self.ensureKinds(lang);
         const parser = try self.ensureParser(lang);
         const tree = parser.parseString(source, null) orelse return error.ParseFailed;
         defer tree.destroy();
+
+        return self.lintRoot(allocator, Node.from(tree.rootNode(), kinds), source, lang, path);
+    }
+
+    /// Lint a subtree given its root, independent of the backend that produced
+    /// it. `lint` builds a tree-sitter root; the parity harness runs this over a
+    /// kata root too, and step 10 flips `lint` itself to a kata root.
+    pub fn lintRoot(
+        self: *Engine,
+        allocator: std.mem.Allocator,
+        root: Node,
+        source: []const u8,
+        lang: language.Name,
+        path: ?[]const u8,
+    ) ![]diagnostic.Diagnostic {
+        const compiled_dsl = try self.ensureCompiledDsl(lang);
 
         var out: std.ArrayList(diagnostic.Diagnostic) = try .initCapacity(allocator, initial_diagnostic_capacity);
         errdefer out.deinit(allocator);
@@ -215,7 +230,7 @@ pub const Engine = struct {
         const eval_ctx: matcher.EvalContext = .{
             .allocator = allocator,
             .source = source,
-            .root = Node.from(tree.rootNode(), kinds),
+            .root = root,
             .metric = metric_ctx,
         };
 
@@ -223,7 +238,7 @@ pub const Engine = struct {
 
         if (metric.anyEnabled(self.metrics)) {
             const metric_query = try self.ensureMetricQuery(lang);
-            try metric.run(allocator, self.metrics, metric_query, Node.from(tree.rootNode(), kinds), lang, &out);
+            try metric.run(allocator, self.metrics, metric_query, root, lang, &out);
         }
 
         demoteWarnings(self.warnings, lang, out.items);
