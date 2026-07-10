@@ -3,6 +3,7 @@ const std = @import("std");
 const fs = @import("../fs.zig");
 const lint = @import("../lint.zig");
 const config = @import("config.zig");
+const dsl = @import("../dsl.zig");
 const loader = @import("loader.zig");
 
 const Engine = lint.Engine;
@@ -106,7 +107,7 @@ pub const Resolver = struct {
             .rule_set = rule_set,
             .engine = undefined,
         };
-        ctx.engine = Engine.init(self.gpa, &ctx.rule_set);
+        ctx.engine = Engine.init(self.gpa, &ctx.rule_set, dsl.engine_compiler.ruleCompiler());
         ctx.engine.metrics = resolved.metrics;
         ctx.engine.warnings = resolved.warnings;
 

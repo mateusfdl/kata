@@ -1017,7 +1017,7 @@ test "engine: kata parse error reports the rule id and position" {
     var f = try Fixture.init(gpa, &.{.ts}, "no-x", "rule no-x {\n  lang ts\n");
     defer f.deinit();
 
-    try std.testing.expectError(error.ExpectedRightBrace, f.engine.lint(gpa, "x;\n", .ts, null));
+    try std.testing.expectError(error.CompileFailed, f.engine.lint(gpa, "x;\n", .ts, null));
     try std.testing.expectEqual(language.Name.ts, f.engine.compile_diag.lang.?);
     try std.testing.expectEqualStrings("no-x", f.engine.compile_diag.rule_id);
     try std.testing.expectEqualStrings("invalid rule syntax", f.engine.compile_diag.detail);
@@ -1030,7 +1030,7 @@ test "engine: kata rule id must match the file name" {
     var f = try Fixture.init(gpa, &.{.ts}, "other-name", kata_no_console_rule);
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleIdMismatch, f.engine.lint(gpa, "x;\n", .ts, null));
+    try std.testing.expectError(error.CompileFailed, f.engine.lint(gpa, "x;\n", .ts, null));
     try std.testing.expectEqualStrings("other-name", f.engine.compile_diag.rule_id);
     try std.testing.expectEqualStrings("rule id does not match the file name", f.engine.compile_diag.detail);
 }
@@ -1040,7 +1040,7 @@ test "engine: kata rule must declare the directory language" {
     var f = try Fixture.init(gpa, &.{.go}, "no-console", kata_no_console_rule);
     defer f.deinit();
 
-    try std.testing.expectError(error.UndeclaredLanguage, f.engine.lint(gpa, "package main\n", .go, null));
+    try std.testing.expectError(error.CompileFailed, f.engine.lint(gpa, "package main\n", .go, null));
     try std.testing.expectEqual(language.Name.go, f.engine.compile_diag.lang.?);
     try std.testing.expectEqualStrings("rule does not declare this language", f.engine.compile_diag.detail);
 }
@@ -1095,7 +1095,7 @@ test "engine: kata variant with a different id fails" {
     var f = try Fixture.init(gpa, &.{.ts}, "no-a", two_rules);
     defer f.deinit();
 
-    try std.testing.expectError(error.RuleIdMismatch, f.engine.lint(gpa, "x;\n", .ts, null));
+    try std.testing.expectError(error.CompileFailed, f.engine.lint(gpa, "x;\n", .ts, null));
     try std.testing.expectEqualStrings("rule id does not match the file name", f.engine.compile_diag.detail);
 }
 
@@ -1110,7 +1110,7 @@ test "engine: project kata rules cannot load from language dirs" {
     var f = try Fixture.init(gpa, &.{.ts}, "boundaries", project_rule);
     defer f.deinit();
 
-    try std.testing.expectError(error.ProjectRuleInLocalDir, f.engine.lint(gpa, "x;\n", .ts, null));
+    try std.testing.expectError(error.CompileFailed, f.engine.lint(gpa, "x;\n", .ts, null));
     try std.testing.expectEqualStrings("project rules are not supported yet", f.engine.compile_diag.detail);
 }
 

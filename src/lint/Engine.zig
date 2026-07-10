@@ -2,8 +2,6 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 
 const diagnostic = @import("diagnostic.zig");
-const dsl_compile = @import("../dsl/compile.zig");
-const fact_compile = @import("../dsl/fact_compile.zig");
 const fact_rule = @import("fact_rule.zig");
 const facts = @import("facts.zig");
 const glob = @import("glob.zig");
@@ -15,6 +13,7 @@ const convert = @import("convert.zig");
 const kind_map = @import("kind_map.zig");
 const query = @import("query.zig");
 const rule = @import("rule.zig");
+const rule_compiler = @import("rule_compiler.zig");
 const Node = @import("node.zig").Node;
 const Kinds = kind_map.Kinds;
 
@@ -34,6 +33,7 @@ const DslSlot = union(enum) {
 pub const Engine = struct {
     allocator: std.mem.Allocator,
     rules: *RuleSet,
+    compiler: rule_compiler.RuleCompiler,
     compiled_dsl: std.EnumArray(language.Name, DslSlot) = .initFill(.not_compiled),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
     metrics: metric.Set = metric.empty,
@@ -47,10 +47,12 @@ pub const Engine = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         rules: *RuleSet,
+        compiler: rule_compiler.RuleCompiler,
     ) Engine {
         return .{
             .allocator = allocator,
             .rules = rules,
+            .compiler = compiler,
         };
     }
 
@@ -114,7 +116,7 @@ pub const Engine = struct {
         arena_ptr.* = std.heap.ArenaAllocator.init(self.allocator);
         errdefer arena_ptr.deinit();
 
-        const compiled = try fact_compile.compileRaws(arena_ptr.allocator(), raws, &self.compile_diag);
+        const compiled = try self.compiler.compileFacts(arena_ptr.allocator(), raws, &self.compile_diag);
         self.fact_arena = arena_ptr;
         self.compiled_fact = compiled;
 
@@ -153,7 +155,7 @@ pub const Engine = struct {
             .not_compiled => {},
         }
 
-        const compiled = (try dsl_compile.compileRaws(self.allocator, lang, self.rules.get(lang), &self.compile_diag)) orelse {
+        const compiled = (try self.compiler.compileLang(self.allocator, lang, self.rules.get(lang), &self.compile_diag)) orelse {
             slot.* = .none;
             return null;
         };

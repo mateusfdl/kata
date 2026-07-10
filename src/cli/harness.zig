@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const dsl = @import("../dsl.zig");
 const fs = @import("../fs.zig");
 const lint = @import("../lint.zig");
 const sources = @import("../sources.zig");
@@ -37,7 +38,7 @@ pub fn run(
     };
     defer rule_set.deinit();
 
-    var engine = Engine.init(gpa, &rule_set);
+    var engine = Engine.init(gpa, &rule_set, dsl.engine_compiler.ruleCompiler());
     defer engine.deinit();
     if (!try engine.prewarmOrReport("kata test", stderr)) return .invalid;
 

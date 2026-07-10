@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const dsl = @import("dsl.zig");
 const lint = @import("lint.zig");
 const loader = @import("sources.zig").loader;
 
@@ -50,7 +51,7 @@ pub const Fixture = struct {
         };
         for (langs) |l| try self.add(l, id, source);
 
-        self.engine = Engine.init(allocator, &self.rule_set);
+        self.engine = Engine.init(allocator, &self.rule_set, dsl.engine_compiler.ruleCompiler());
         return self;
     }
 

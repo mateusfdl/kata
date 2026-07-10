@@ -7,6 +7,7 @@ test {
 comptime {
     _ = @import("lint/diagnostic_test.zig");
     _ = @import("lint/node_test.zig");
+    _ = @import("lint/rule_compiler_test.zig");
     _ = @import("lint/node_kinds_test.zig");
     _ = @import("lint/kinds_test.zig");
     _ = @import("lint/query_test.zig");

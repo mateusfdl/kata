@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const check = @import("check.zig");
+const dsl = @import("../dsl.zig");
 const lint = @import("../lint.zig");
 const reports = @import("../reports.zig");
 
@@ -52,7 +53,7 @@ pub fn run(
         try rule_set.append(lang, .{ .id = rule_id, .source = opts.text });
     }
 
-    var engine = Engine.init(gpa, &rule_set);
+    var engine = Engine.init(gpa, &rule_set, dsl.engine_compiler.ruleCompiler());
     defer engine.deinit();
 
     if (!try engine.prewarmOrReport("kata", stderr)) return .usage;
