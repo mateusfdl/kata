@@ -15,6 +15,7 @@
         .tree_sitter_typescript = .{ .path = "pkg/tree-sitter-typescript" },
         .tree_sitter_go = .{ .path = "pkg/tree-sitter-go" },
         .gen_embedded_rules = .{ .path = "pkg/gen-embedded-rules" },
+        .gen_node_kinds = .{ .path = "pkg/gen-node-kinds" },
     },
     .paths = .{
         "build.zig",

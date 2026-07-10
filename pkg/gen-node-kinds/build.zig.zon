@@ -1,0 +1,12 @@
+.{
+    .name = .gen_node_kinds,
+    .version = "1.0.0",
+    .fingerprint = 0x1f4938da21ff3124,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "main.zig",
+    },
+}

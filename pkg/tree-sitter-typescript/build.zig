@@ -5,6 +5,9 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const upstream = b.dependency("tree_sitter_typescript_src", .{});
 
+    b.addNamedLazyPath("typescript_node_types", upstream.path("typescript/src/node-types.json"));
+    b.addNamedLazyPath("tsx_node_types", upstream.path("tsx/src/node-types.json"));
+
     const typescript = addGrammar(b, .{
         .name = "ts_typescript",
         .target = target,

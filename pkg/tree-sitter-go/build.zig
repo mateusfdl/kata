@@ -5,6 +5,8 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const upstream = b.dependency("tree_sitter_go_src", .{});
 
+    b.addNamedLazyPath("go_node_types", upstream.path("src/node-types.json"));
+
     const go = addGrammar(b, .{
         .name = "ts_go",
         .target = target,
