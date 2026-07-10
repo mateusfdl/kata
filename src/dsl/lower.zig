@@ -34,12 +34,18 @@ pub const Lowerer = struct {
     arena: std.mem.Allocator,
     grammar: *const ts.Language,
     kind_remap: []const u16,
+    field_remap: []const u16,
     captures: std.ArrayList([]const u8) = .empty,
     /// The offending kind or field name when lowering fails, for diagnostics.
     detail: []const u8 = "",
 
-    pub fn init(arena: std.mem.Allocator, grammar: *const ts.Language, kind_remap: []const u16) Lowerer {
-        return .{ .arena = arena, .grammar = grammar, .kind_remap = kind_remap };
+    pub fn init(
+        arena: std.mem.Allocator,
+        grammar: *const ts.Language,
+        kind_remap: []const u16,
+        field_remap: []const u16,
+    ) Lowerer {
+        return .{ .arena = arena, .grammar = grammar, .kind_remap = kind_remap, .field_remap = field_remap };
     }
 
     /// Resolve a grammar kind name to its kata kind id through the same remap the
@@ -53,6 +59,16 @@ pub const Lowerer = struct {
         if (sym == 0 or sym >= self.kind_remap.len) return self.failKind(name);
         const id = self.kind_remap[sym];
         return if (id == 0) unmatchable_kind else id;
+    }
+
+    /// Resolve a grammar field name to its kata Field id through the same remap
+    /// the converter applied to stored nodes, so a lowered relation id equals the
+    /// `field_id` its target child reports. Fields have no aliases or supertypes,
+    /// so a known field always remaps to a real nonzero id.
+    fn kataField(self: *Lowerer, name: []const u8) Error!u16 {
+        const sym = self.grammar.fieldIdForName(name);
+        if (sym == 0 or sym >= self.field_remap.len) return self.failField(name);
+        return self.field_remap[sym];
     }
 
     pub fn finish(self: *Lowerer, pattern: query.Pattern) Error!Lowered {
@@ -93,10 +109,7 @@ pub const Lowerer = struct {
         const out = try self.arena.alloc(query.Field, fields.len);
         for (fields, out) |field, *slot| {
             const relation: query.Relation = switch (field.relation) {
-                .field => |name| blk: {
-                    if (self.grammar.fieldIdForName(name) == 0) return self.failField(name);
-                    break :blk .{ .field = try self.arena.dupe(u8, name) };
-                },
+                .field => |name| .{ .field = try self.kataField(name) },
                 .child => .child,
                 .children => .children,
             };
@@ -105,11 +118,10 @@ pub const Lowerer = struct {
         return out;
     }
 
-    fn lowerAbsent(self: *Lowerer, absent: []const []const u8) Error![]const []const u8 {
-        const out = try self.arena.alloc([]const u8, absent.len);
+    fn lowerAbsent(self: *Lowerer, absent: []const []const u8) Error![]const u16 {
+        const out = try self.arena.alloc(u16, absent.len);
         for (absent, out) |name, *slot| {
-            if (self.grammar.fieldIdForName(name) == 0) return self.failField(name);
-            slot.* = try self.arena.dupe(u8, name);
+            slot.* = try self.kataField(name);
         }
         return out;
     }

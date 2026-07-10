@@ -32,7 +32,7 @@ test "query: field relation binds the field child" {
     const pattern: Pattern = .{
         .kind = .{ .symbol = t.sym("variable_declarator") },
         .fields = &.{.{
-            .relation = .{ .field = "name" },
+            .relation = .{ .field = t.field("name") },
             .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 },
         }},
     };
@@ -96,7 +96,7 @@ test "query: anonymous token under a field" {
         .kind = .{ .symbol = t.sym("binary_expression") },
         .capture = 0,
         .fields = &.{.{
-            .relation = .{ .field = "operator" },
+            .relation = .{ .field = t.field("operator") },
             .pattern = .{ .kind = .{ .anonymous = t.tok("&&") } },
         }},
     };
@@ -117,7 +117,7 @@ test "query: absent field excludes nodes that have it" {
     const pattern: Pattern = .{
         .kind = .{ .symbol = t.sym("variable_declarator") },
         .capture = 0,
-        .absent_fields = &.{"value"},
+        .absent_fields = &.{t.field("value")},
     };
     const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
 

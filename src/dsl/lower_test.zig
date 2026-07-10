@@ -12,9 +12,12 @@ fn tsId(comptime name: []const u8) u16 {
     return @intFromEnum(@field(nk.ts_family.Kind, name));
 }
 
-fn tsRemap(arena: std.mem.Allocator) []const u16 {
-    const kinds = kind_map.build(.ts, language.grammar(.ts), arena) catch unreachable;
-    return kinds.kind_remap;
+fn tsFieldId(comptime name: []const u8) u16 {
+    return @intFromEnum(@field(nk.ts_family.Field, name));
+}
+
+fn tsKinds(arena: std.mem.Allocator) kind_map.Kinds {
+    return kind_map.build(.ts, language.grammar(.ts), arena) catch unreachable;
 }
 
 fn matchPattern(arena: std.mem.Allocator, src: []const u8) ast.NodePattern {
@@ -26,7 +29,8 @@ fn matchPattern(arena: std.mem.Allocator, src: []const u8) ast.NodePattern {
 
 fn lowerSrc(arena: std.mem.Allocator, src: []const u8) lower.Error!lower.Lowered {
     const pattern = matchPattern(arena, src);
-    var lowerer = lower.Lowerer.init(arena, language.grammar(.ts), tsRemap(arena));
+    const kinds = tsKinds(arena);
+    var lowerer = lower.Lowerer.init(arena, language.grammar(.ts), kinds.kind_remap, kinds.field_remap);
     const lowered = try lowerer.lowerPattern(pattern);
     return lowerer.finish(lowered);
 }
@@ -53,7 +57,7 @@ test "lower: field pattern assigns capture ids by occurrence" {
     try std.testing.expectEqual(@as(?query.CaptureId, 0), result.pattern.capture);
 
     const field = result.pattern.fields[0];
-    try std.testing.expectEqualStrings("name", field.relation.field);
+    try std.testing.expectEqual(tsFieldId("name"), field.relation.field);
     try std.testing.expectEqual(tsId("identifier"), field.pattern.kind.symbol);
     try std.testing.expectEqual(@as(?query.CaptureId, 1), field.pattern.capture);
 }
@@ -107,7 +111,8 @@ test "lower: unknown node kind fails with the offending name" {
         \\  emit @match { message "m" }
         \\}
     );
-    var lowerer = lower.Lowerer.init(arena.allocator(), language.grammar(.ts), tsRemap(arena.allocator()));
+    const kinds = tsKinds(arena.allocator());
+    var lowerer = lower.Lowerer.init(arena.allocator(), language.grammar(.ts), kinds.kind_remap, kinds.field_remap);
 
     try std.testing.expectError(error.UnknownNodeKind, lowerer.lowerPattern(pattern));
     try std.testing.expectEqualStrings("faketype", lowerer.detail);
@@ -126,7 +131,8 @@ test "lower: unknown field fails with the offending name" {
         \\  emit @match { message "m" }
         \\}
     );
-    var lowerer = lower.Lowerer.init(arena.allocator(), language.grammar(.ts), tsRemap(arena.allocator()));
+    const kinds = tsKinds(arena.allocator());
+    var lowerer = lower.Lowerer.init(arena.allocator(), language.grammar(.ts), kinds.kind_remap, kinds.field_remap);
 
     try std.testing.expectError(error.UnknownField, lowerer.lowerPattern(pattern));
     try std.testing.expectEqualStrings("fakefield", lowerer.detail);

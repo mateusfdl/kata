@@ -27,6 +27,10 @@ pub const Tree = struct {
         return self.kinds.kind_remap[language.grammar(self.lang).idForNodeKind(name, false)];
     }
 
+    pub fn field(self: Tree, name: []const u8) u16 {
+        return self.kinds.field_remap[language.grammar(self.lang).fieldIdForName(name)];
+    }
+
     pub fn deinit(self: *Tree, gpa: std.mem.Allocator) void {
         self.ast.deinit(gpa);
         gpa.free(self.kinds.kind_remap);

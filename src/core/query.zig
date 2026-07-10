@@ -20,10 +20,11 @@ pub const Kind = union(enum) {
 };
 
 /// How a field pattern relates to its parent. `field` is a tree-sitter
-/// field-tagged child; `child` is any immediate named child (unanchored);
-/// `children` is zero-or-more immediate named children.
+/// field-tagged child, keyed by its kata Field id (resolved at lower time);
+/// `child` is any immediate named child (unanchored); `children` is zero-or-more
+/// immediate named children.
 pub const Relation = union(enum) {
-    field: []const u8,
+    field: u16,
     child,
     children,
 };
@@ -37,7 +38,7 @@ pub const Pattern = struct {
     kind: Kind,
     capture: ?CaptureId = null,
     fields: []const Field = &.{},
-    absent_fields: []const []const u8 = &.{},
+    absent_fields: []const u16 = &.{},
 };
 
 /// A single successful match: capture id -> bound node. Slots left null were not
@@ -135,8 +136,8 @@ fn matchNode(
         bindings[c] = saved;
     };
 
-    for (pattern.absent_fields) |field_name| {
-        if (n.childByFieldName(field_name) != null) return;
+    for (pattern.absent_fields) |field_id| {
+        if (n.childByFieldId(field_id) != null) return;
     }
 
     try matchFields(pattern.fields, 0, n, 0, bindings, cont, collector);
@@ -160,8 +161,8 @@ fn matchFields(
     const field = &fields[index];
 
     switch (field.relation) {
-        .field => |name| {
-            const child = parent.childByFieldName(name) orelse return;
+        .field => |field_id| {
+            const child = parent.childByFieldId(field_id) orelse return;
             const cont = fieldsCont(fields, index, parent, min_child, next);
             try matchNode(&field.pattern, child, bindings, &cont, collector);
         },

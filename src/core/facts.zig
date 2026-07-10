@@ -15,6 +15,14 @@ fn gok(comptime name: []const u8) u16 {
     return @intFromEnum(@field(node_kinds.go.Kind, name));
 }
 
+fn tsf(comptime f: node_kinds.ts_family.Field) u16 {
+    return @intFromEnum(f);
+}
+
+fn gof(comptime f: node_kinds.go.Field) u16 {
+    return @intFromEnum(f);
+}
+
 pub const ClassDef = struct {
     name: []const u8,
     start: u32,
@@ -146,71 +154,71 @@ fn cap(role: Role) query.CaptureId {
 
 const ts_patterns: []const query.Pattern = &.{
     .{ .kind = .{ .symbol = tsk("class_declaration") }, .capture = cap(.class_node), .fields = &.{
-        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = tsk("type_identifier") }, .capture = cap(.class_name) } },
+        .{ .relation = .{ .field = tsf(.name) }, .pattern = .{ .kind = .{ .symbol = tsk("type_identifier") }, .capture = cap(.class_name) } },
     } },
     .{ .kind = .{ .symbol = tsk("abstract_class_declaration") }, .capture = cap(.class_node), .fields = &.{
-        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = tsk("type_identifier") }, .capture = cap(.class_name) } },
+        .{ .relation = .{ .field = tsf(.name) }, .pattern = .{ .kind = .{ .symbol = tsk("type_identifier") }, .capture = cap(.class_name) } },
     } },
     .{ .kind = .{ .symbol = tsk("method_definition") }, .capture = cap(.method_node), .fields = &.{
-        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = tsk("property_identifier") }, .capture = cap(.method_name) } },
+        .{ .relation = .{ .field = tsf(.name) }, .pattern = .{ .kind = .{ .symbol = tsk("property_identifier") }, .capture = cap(.method_name) } },
     } },
     .{ .kind = .{ .symbol = tsk("public_field_definition") }, .fields = &.{
-        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = tsk("property_identifier") }, .capture = cap(.decl_name) } },
-        .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .symbol = tsk("type_annotation") }, .fields = &.{
+        .{ .relation = .{ .field = tsf(.name) }, .pattern = .{ .kind = .{ .symbol = tsk("property_identifier") }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = tsf(.type) }, .pattern = .{ .kind = .{ .symbol = tsk("type_annotation") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = tsk("type_identifier") }, .capture = cap(.decl_type) } },
         } } },
     } },
     .{ .kind = .{ .symbol = tsk("required_parameter") }, .fields = &.{
-        .{ .relation = .{ .field = "pattern" }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.decl_name) } },
-        .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .symbol = tsk("type_annotation") }, .fields = &.{
+        .{ .relation = .{ .field = tsf(.pattern) }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = tsf(.type) }, .pattern = .{ .kind = .{ .symbol = tsk("type_annotation") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = tsk("type_identifier") }, .capture = cap(.decl_type) } },
         } } },
     } },
     .{ .kind = .{ .symbol = tsk("variable_declarator") }, .fields = &.{
-        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.decl_name) } },
-        .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .symbol = tsk("type_annotation") }, .fields = &.{
+        .{ .relation = .{ .field = tsf(.name) }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = tsf(.type) }, .pattern = .{ .kind = .{ .symbol = tsk("type_annotation") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = tsk("type_identifier") }, .capture = cap(.decl_type) } },
         } } },
     } },
     .{ .kind = .{ .symbol = tsk("variable_declarator") }, .fields = &.{
-        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.decl_name) } },
-        .{ .relation = .{ .field = "value" }, .pattern = .{ .kind = .{ .symbol = tsk("new_expression") }, .fields = &.{
-            .{ .relation = .{ .field = "constructor" }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.decl_type) } },
+        .{ .relation = .{ .field = tsf(.name) }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = tsf(.value) }, .pattern = .{ .kind = .{ .symbol = tsk("new_expression") }, .fields = &.{
+            .{ .relation = .{ .field = tsf(.constructor) }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.decl_type) } },
         } } },
     } },
     .{ .kind = .{ .symbol = tsk("assignment_expression") }, .fields = &.{
-        .{ .relation = .{ .field = "left" }, .pattern = .{ .kind = .{ .symbol = tsk("member_expression") }, .fields = &.{
-            .{ .relation = .{ .field = "object" }, .pattern = .{ .kind = .{ .symbol = tsk("this") } } },
-            .{ .relation = .{ .field = "property" }, .pattern = .{ .kind = .{ .symbol = tsk("property_identifier") }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = tsf(.left) }, .pattern = .{ .kind = .{ .symbol = tsk("member_expression") }, .fields = &.{
+            .{ .relation = .{ .field = tsf(.object) }, .pattern = .{ .kind = .{ .symbol = tsk("this") } } },
+            .{ .relation = .{ .field = tsf(.property) }, .pattern = .{ .kind = .{ .symbol = tsk("property_identifier") }, .capture = cap(.decl_name) } },
         } } },
-        .{ .relation = .{ .field = "right" }, .pattern = .{ .kind = .{ .symbol = tsk("new_expression") }, .fields = &.{
-            .{ .relation = .{ .field = "constructor" }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.decl_type) } },
-        } } },
-    } },
-    .{ .kind = .{ .symbol = tsk("call_expression") }, .capture = cap(.call_node), .fields = &.{
-        .{ .relation = .{ .field = "function" }, .pattern = .{ .kind = .{ .symbol = tsk("member_expression") }, .fields = &.{
-            .{ .relation = .{ .field = "object" }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.call_receiver) } },
-            .{ .relation = .{ .field = "property" }, .pattern = .{ .kind = .{ .symbol = tsk("property_identifier") }, .capture = cap(.call_method) } },
+        .{ .relation = .{ .field = tsf(.right) }, .pattern = .{ .kind = .{ .symbol = tsk("new_expression") }, .fields = &.{
+            .{ .relation = .{ .field = tsf(.constructor) }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.decl_type) } },
         } } },
     } },
     .{ .kind = .{ .symbol = tsk("call_expression") }, .capture = cap(.call_node), .fields = &.{
-        .{ .relation = .{ .field = "function" }, .pattern = .{ .kind = .{ .symbol = tsk("member_expression") }, .fields = &.{
-            .{ .relation = .{ .field = "object" }, .pattern = .{ .kind = .{ .symbol = tsk("member_expression") }, .fields = &.{
-                .{ .relation = .{ .field = "object" }, .pattern = .{ .kind = .{ .symbol = tsk("this") } } },
-                .{ .relation = .{ .field = "property" }, .pattern = .{ .kind = .{ .symbol = tsk("property_identifier") }, .capture = cap(.call_receiver) } },
+        .{ .relation = .{ .field = tsf(.function) }, .pattern = .{ .kind = .{ .symbol = tsk("member_expression") }, .fields = &.{
+            .{ .relation = .{ .field = tsf(.object) }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.call_receiver) } },
+            .{ .relation = .{ .field = tsf(.property) }, .pattern = .{ .kind = .{ .symbol = tsk("property_identifier") }, .capture = cap(.call_method) } },
+        } } },
+    } },
+    .{ .kind = .{ .symbol = tsk("call_expression") }, .capture = cap(.call_node), .fields = &.{
+        .{ .relation = .{ .field = tsf(.function) }, .pattern = .{ .kind = .{ .symbol = tsk("member_expression") }, .fields = &.{
+            .{ .relation = .{ .field = tsf(.object) }, .pattern = .{ .kind = .{ .symbol = tsk("member_expression") }, .fields = &.{
+                .{ .relation = .{ .field = tsf(.object) }, .pattern = .{ .kind = .{ .symbol = tsk("this") } } },
+                .{ .relation = .{ .field = tsf(.property) }, .pattern = .{ .kind = .{ .symbol = tsk("property_identifier") }, .capture = cap(.call_receiver) } },
             } } },
-            .{ .relation = .{ .field = "property" }, .pattern = .{ .kind = .{ .symbol = tsk("property_identifier") }, .capture = cap(.call_method) } },
+            .{ .relation = .{ .field = tsf(.property) }, .pattern = .{ .kind = .{ .symbol = tsk("property_identifier") }, .capture = cap(.call_method) } },
         } } },
     } },
     .{ .kind = .{ .symbol = tsk("import_statement") }, .fields = &.{
         .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = tsk("import_clause") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = tsk("named_imports") }, .fields = &.{
                 .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = tsk("import_specifier") }, .fields = &.{
-                    .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.import_name) } },
+                    .{ .relation = .{ .field = tsf(.name) }, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.import_name) } },
                 } } },
             } } },
         } } },
-        .{ .relation = .{ .field = "source" }, .pattern = .{ .kind = .{ .symbol = tsk("string") }, .fields = &.{
+        .{ .relation = .{ .field = tsf(.source) }, .pattern = .{ .kind = .{ .symbol = tsk("string") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = tsk("string_fragment") }, .capture = cap(.import_source) } },
         } } },
     } },
@@ -218,7 +226,7 @@ const ts_patterns: []const query.Pattern = &.{
         .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = tsk("import_clause") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = tsk("identifier") }, .capture = cap(.import_name) } },
         } } },
-        .{ .relation = .{ .field = "source" }, .pattern = .{ .kind = .{ .symbol = tsk("string") }, .fields = &.{
+        .{ .relation = .{ .field = tsf(.source) }, .pattern = .{ .kind = .{ .symbol = tsk("string") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = tsk("string_fragment") }, .capture = cap(.import_source) } },
         } } },
     } },
@@ -227,13 +235,13 @@ const ts_patterns: []const query.Pattern = &.{
 const go_patterns: []const query.Pattern = &.{
     .{ .kind = .{ .symbol = gok("type_declaration") }, .capture = cap(.class_node), .fields = &.{
         .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = gok("type_spec") }, .fields = &.{
-            .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.class_name) } },
+            .{ .relation = .{ .field = gof(.name) }, .pattern = .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.class_name) } },
         } } },
     } },
     .{ .kind = .{ .symbol = gok("method_declaration") }, .capture = cap(.method_node), .fields = &.{
-        .{ .relation = .{ .field = "receiver" }, .pattern = .{ .kind = .{ .symbol = gok("parameter_list") }, .fields = &.{
+        .{ .relation = .{ .field = gof(.receiver) }, .pattern = .{ .kind = .{ .symbol = gok("parameter_list") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = gok("parameter_declaration") }, .fields = &.{
-                .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .alternation = &.{
+                .{ .relation = .{ .field = gof(.type) }, .pattern = .{ .kind = .{ .alternation = &.{
                     .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.method_recv) },
                     .{ .kind = .{ .symbol = gok("pointer_type") }, .fields = &.{
                         .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.method_recv) } },
@@ -241,11 +249,11 @@ const go_patterns: []const query.Pattern = &.{
                 } } } },
             } } },
         } } },
-        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = gok("field_identifier") }, .capture = cap(.method_name) } },
+        .{ .relation = .{ .field = gof(.name) }, .pattern = .{ .kind = .{ .symbol = gok("field_identifier") }, .capture = cap(.method_name) } },
     } },
     .{ .kind = .{ .symbol = gok("parameter_declaration") }, .fields = &.{
-        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = gok("identifier") }, .capture = cap(.decl_name) } },
-        .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .alternation = &.{
+        .{ .relation = .{ .field = gof(.name) }, .pattern = .{ .kind = .{ .symbol = gok("identifier") }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = gof(.type) }, .pattern = .{ .kind = .{ .alternation = &.{
             .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.decl_type) },
             .{ .kind = .{ .symbol = gok("pointer_type") }, .fields = &.{
                 .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.decl_type) } },
@@ -253,8 +261,8 @@ const go_patterns: []const query.Pattern = &.{
         } } } },
     } },
     .{ .kind = .{ .symbol = gok("field_declaration") }, .fields = &.{
-        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = gok("field_identifier") }, .capture = cap(.decl_name) } },
-        .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .alternation = &.{
+        .{ .relation = .{ .field = gof(.name) }, .pattern = .{ .kind = .{ .symbol = gok("field_identifier") }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = gof(.type) }, .pattern = .{ .kind = .{ .alternation = &.{
             .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.decl_type) },
             .{ .kind = .{ .symbol = gok("pointer_type") }, .fields = &.{
                 .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.decl_type) } },
@@ -262,8 +270,8 @@ const go_patterns: []const query.Pattern = &.{
         } } } },
     } },
     .{ .kind = .{ .symbol = gok("var_spec") }, .fields = &.{
-        .{ .relation = .{ .field = "name" }, .pattern = .{ .kind = .{ .symbol = gok("identifier") }, .capture = cap(.decl_name) } },
-        .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .alternation = &.{
+        .{ .relation = .{ .field = gof(.name) }, .pattern = .{ .kind = .{ .symbol = gok("identifier") }, .capture = cap(.decl_name) } },
+        .{ .relation = .{ .field = gof(.type) }, .pattern = .{ .kind = .{ .alternation = &.{
             .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.decl_type) },
             .{ .kind = .{ .symbol = gok("pointer_type") }, .fields = &.{
                 .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.decl_type) } },
@@ -271,53 +279,53 @@ const go_patterns: []const query.Pattern = &.{
         } } } },
     } },
     .{ .kind = .{ .symbol = gok("short_var_declaration") }, .fields = &.{
-        .{ .relation = .{ .field = "left" }, .pattern = .{ .kind = .{ .symbol = gok("expression_list") }, .fields = &.{
+        .{ .relation = .{ .field = gof(.left) }, .pattern = .{ .kind = .{ .symbol = gok("expression_list") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = gok("identifier") }, .capture = cap(.decl_name) } },
         } } },
-        .{ .relation = .{ .field = "right" }, .pattern = .{ .kind = .{ .symbol = gok("expression_list") }, .fields = &.{
+        .{ .relation = .{ .field = gof(.right) }, .pattern = .{ .kind = .{ .symbol = gok("expression_list") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = gok("call_expression") }, .fields = &.{
-                .{ .relation = .{ .field = "function" }, .pattern = .{ .kind = .{ .symbol = gok("identifier") }, .capture = cap(.decl_ctor) } },
+                .{ .relation = .{ .field = gof(.function) }, .pattern = .{ .kind = .{ .symbol = gok("identifier") }, .capture = cap(.decl_ctor) } },
             } } },
         } } },
     } },
     .{ .kind = .{ .symbol = gok("short_var_declaration") }, .fields = &.{
-        .{ .relation = .{ .field = "left" }, .pattern = .{ .kind = .{ .symbol = gok("expression_list") }, .fields = &.{
+        .{ .relation = .{ .field = gof(.left) }, .pattern = .{ .kind = .{ .symbol = gok("expression_list") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = gok("identifier") }, .capture = cap(.decl_name) } },
         } } },
-        .{ .relation = .{ .field = "right" }, .pattern = .{ .kind = .{ .symbol = gok("expression_list") }, .fields = &.{
+        .{ .relation = .{ .field = gof(.right) }, .pattern = .{ .kind = .{ .symbol = gok("expression_list") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = gok("composite_literal") }, .fields = &.{
-                .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.decl_type) } },
+                .{ .relation = .{ .field = gof(.type) }, .pattern = .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.decl_type) } },
             } } },
         } } },
     } },
     .{ .kind = .{ .symbol = gok("short_var_declaration") }, .fields = &.{
-        .{ .relation = .{ .field = "left" }, .pattern = .{ .kind = .{ .symbol = gok("expression_list") }, .fields = &.{
+        .{ .relation = .{ .field = gof(.left) }, .pattern = .{ .kind = .{ .symbol = gok("expression_list") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = gok("identifier") }, .capture = cap(.decl_name) } },
         } } },
-        .{ .relation = .{ .field = "right" }, .pattern = .{ .kind = .{ .symbol = gok("expression_list") }, .fields = &.{
+        .{ .relation = .{ .field = gof(.right) }, .pattern = .{ .kind = .{ .symbol = gok("expression_list") }, .fields = &.{
             .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = gok("unary_expression") }, .fields = &.{
-                .{ .relation = .{ .field = "operand" }, .pattern = .{ .kind = .{ .symbol = gok("composite_literal") }, .fields = &.{
-                    .{ .relation = .{ .field = "type" }, .pattern = .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.decl_type) } },
+                .{ .relation = .{ .field = gof(.operand) }, .pattern = .{ .kind = .{ .symbol = gok("composite_literal") }, .fields = &.{
+                    .{ .relation = .{ .field = gof(.type) }, .pattern = .{ .kind = .{ .symbol = gok("type_identifier") }, .capture = cap(.decl_type) } },
                 } } },
             } } },
         } } },
     } },
     .{ .kind = .{ .symbol = gok("call_expression") }, .capture = cap(.call_node), .fields = &.{
-        .{ .relation = .{ .field = "function" }, .pattern = .{ .kind = .{ .symbol = gok("selector_expression") }, .fields = &.{
-            .{ .relation = .{ .field = "operand" }, .pattern = .{ .kind = .{ .symbol = gok("identifier") }, .capture = cap(.call_receiver) } },
-            .{ .relation = .{ .field = "field" }, .pattern = .{ .kind = .{ .symbol = gok("field_identifier") }, .capture = cap(.call_method) } },
+        .{ .relation = .{ .field = gof(.function) }, .pattern = .{ .kind = .{ .symbol = gok("selector_expression") }, .fields = &.{
+            .{ .relation = .{ .field = gof(.operand) }, .pattern = .{ .kind = .{ .symbol = gok("identifier") }, .capture = cap(.call_receiver) } },
+            .{ .relation = .{ .field = gof(.field) }, .pattern = .{ .kind = .{ .symbol = gok("field_identifier") }, .capture = cap(.call_method) } },
         } } },
     } },
     .{ .kind = .{ .symbol = gok("call_expression") }, .capture = cap(.call_node), .fields = &.{
-        .{ .relation = .{ .field = "function" }, .pattern = .{ .kind = .{ .symbol = gok("selector_expression") }, .fields = &.{
-            .{ .relation = .{ .field = "operand" }, .pattern = .{ .kind = .{ .symbol = gok("selector_expression") }, .fields = &.{
-                .{ .relation = .{ .field = "field" }, .pattern = .{ .kind = .{ .symbol = gok("field_identifier") }, .capture = cap(.call_receiver) } },
+        .{ .relation = .{ .field = gof(.function) }, .pattern = .{ .kind = .{ .symbol = gok("selector_expression") }, .fields = &.{
+            .{ .relation = .{ .field = gof(.operand) }, .pattern = .{ .kind = .{ .symbol = gok("selector_expression") }, .fields = &.{
+                .{ .relation = .{ .field = gof(.field) }, .pattern = .{ .kind = .{ .symbol = gok("field_identifier") }, .capture = cap(.call_receiver) } },
             } } },
-            .{ .relation = .{ .field = "field" }, .pattern = .{ .kind = .{ .symbol = gok("field_identifier") }, .capture = cap(.call_method) } },
+            .{ .relation = .{ .field = gof(.field) }, .pattern = .{ .kind = .{ .symbol = gok("field_identifier") }, .capture = cap(.call_method) } },
         } } },
     } },
     .{ .kind = .{ .symbol = gok("import_spec") }, .fields = &.{
-        .{ .relation = .{ .field = "path" }, .pattern = .{ .kind = .{ .symbol = gok("interpreted_string_literal") }, .capture = cap(.import_source) } },
+        .{ .relation = .{ .field = gof(.path) }, .pattern = .{ .kind = .{ .symbol = gok("interpreted_string_literal") }, .capture = cap(.import_source) } },
     } },
 };
 
