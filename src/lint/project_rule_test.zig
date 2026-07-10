@@ -1,10 +1,10 @@
 const std = @import("std");
 
-const lint_diagnostic = @import("../core.zig").diagnostic;
-const project_rule = @import("../core.zig").ProjectRule;
+const lint_diagnostic = @import("core").diagnostic;
+const project_rule = @import("core").ProjectRule;
 const test_fixture = @import("../test_fixture.zig");
 
-const ProjectIndex = @import("../core.zig").ProjectIndex.ProjectIndex;
+const ProjectIndex = @import("core").ProjectIndex.ProjectIndex;
 
 const Fixture = test_fixture.Fixture;
 

@@ -2,7 +2,7 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 const nk = @import("node_kinds");
 
-const language = @import("../core.zig").language;
+const language = @import("core").language;
 
 fn anonId(comptime family: type, token: []const u8) u16 {
     for (family.anon_names, 0..) |name, i| {

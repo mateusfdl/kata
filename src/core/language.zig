@@ -1,5 +1,5 @@
 const std = @import("std");
-const path = @import("../fs/path.zig");
+const path = @import("path");
 const ts = @import("tree_sitter");
 
 extern fn tree_sitter_typescript() callconv(.c) *const ts.Language;

@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const file = @import("file.zig");
-const paths = @import("path.zig");
+const paths = @import("path");
 
 pub const max_config_bytes: usize = 64 * 1024;
 

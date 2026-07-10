@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const diagnostic = @import("diagnostic.zig");
-const fs_path = @import("../fs/path.zig");
+const fs_path = @import("path");
 const language = @import("language.zig");
 const node_kinds = @import("node_kinds");
 const query = @import("query.zig");

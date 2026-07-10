@@ -49,6 +49,29 @@ pub fn build(b: *std.Build) void {
 
     const strip = b.option(bool, "strip", "Strip debug info from the executable") orelse false;
 
+    const grammar_libs: []const *std.Build.Step.Compile = &.{ typescript_lib, tsx_lib, go_lib };
+
+    const path_module = b.createModule(.{
+        .root_source_file = b.path("src/fs/path.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const node_kinds_module = b.createModule(.{
+        .root_source_file = node_kinds_zig,
+        .target = target,
+        .optimize = optimize,
+    });
+    node_kinds_module.addImport("tree_sitter", tree_sitter_module);
+
+    const core_module = b.createModule(.{
+        .root_source_file = b.path("src/core/core.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    wireCoreModule(core_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
+
     const exe_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -56,7 +79,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .strip = strip,
     });
-    wireKataModule(exe_module, tree_sitter_module, mvzr_module, embedded_rules_zig, node_kinds_zig, &.{ typescript_lib, tsx_lib, go_lib });
+    wireKataModule(exe_module, core_module, path_module, tree_sitter_module, mvzr_module, embedded_rules_zig, node_kinds_module);
     const exe = b.addExecutable(.{
         .name = "kata",
         .root_module = exe_module,
@@ -69,7 +92,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    wireKataModule(test_module, tree_sitter_module, mvzr_module, embedded_rules_zig, node_kinds_zig, &.{ typescript_lib, tsx_lib, go_lib });
+    wireKataModule(test_module, core_module, path_module, tree_sitter_module, mvzr_module, embedded_rules_zig, node_kinds_module);
     const unit_tests = b.addTest(.{
         .root_module = test_module,
     });
@@ -77,6 +100,18 @@ pub fn build(b: *std.Build) void {
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run all unit tests");
     test_step.dependOn(&run_unit_tests.step);
+
+    const core_test_module = b.createModule(.{
+        .root_source_file = b.path("src/core/tests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    wireCoreModule(core_test_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
+    const core_unit_tests = b.addTest(.{
+        .root_module = core_test_module,
+    });
+    test_step.dependOn(&b.addRunArtifact(core_unit_tests).step);
 
     const run_rule_tests = b.addRunArtifact(exe);
     run_rule_tests.addArg("test");
@@ -89,20 +124,34 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_exe.step);
 }
 
+fn wireCoreModule(
+    module: *std.Build.Module,
+    path_module: *std.Build.Module,
+    tree_sitter_module: *std.Build.Module,
+    mvzr_module: *std.Build.Module,
+    node_kinds_module: *std.Build.Module,
+    libs: []const *std.Build.Step.Compile,
+) void {
+    module.addImport("path", path_module);
+    module.addImport("tree_sitter", tree_sitter_module);
+    module.addImport("mvzr", mvzr_module);
+    module.addImport("node_kinds", node_kinds_module);
+    for (libs) |lib| module.linkLibrary(lib);
+}
+
 fn wireKataModule(
     module: *std.Build.Module,
+    core_module: *std.Build.Module,
+    path_module: *std.Build.Module,
     tree_sitter_module: *std.Build.Module,
     mvzr_module: *std.Build.Module,
     embedded_rules_zig: std.Build.LazyPath,
-    node_kinds_zig: std.Build.LazyPath,
-    libs: []const *std.Build.Step.Compile,
+    node_kinds_module: *std.Build.Module,
 ) void {
+    module.addImport("core", core_module);
+    module.addImport("path", path_module);
     module.addImport("tree_sitter", tree_sitter_module);
     module.addImport("mvzr", mvzr_module);
     module.addAnonymousImport("embedded_rules", .{ .root_source_file = embedded_rules_zig });
-    module.addAnonymousImport("node_kinds", .{
-        .root_source_file = node_kinds_zig,
-        .imports = &.{.{ .name = "tree_sitter", .module = tree_sitter_module }},
-    });
-    for (libs) |lib| module.linkLibrary(lib);
+    module.addImport("node_kinds", node_kinds_module);
 }

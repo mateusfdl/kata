@@ -1,10 +1,10 @@
 const std = @import("std");
 const ts = @import("tree_sitter");
 
-const ast = @import("../core.zig").ast;
+const ast = @import("core").ast;
 const convert = @import("convert.zig");
-const kind_map = @import("../core.zig").kind_map;
-const language = @import("../core.zig").language;
+const kind_map = @import("core").kind_map;
+const language = @import("core").language;
 
 fn parse(grammar: *const ts.Language, source: []const u8) *ts.Tree {
     const parser = ts.Parser.create();

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const query = @import("../core.zig").query;
+const query = @import("core").query;
 const test_tree = @import("test_tree.zig");
 
 const Pattern = query.Pattern;

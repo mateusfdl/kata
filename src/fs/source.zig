@@ -2,7 +2,7 @@ const std = @import("std");
 
 const lint = @import("../lint.zig");
 const file = @import("file.zig");
-const paths = @import("path.zig");
+const paths = @import("path");
 
 const language = lint.language;
 

@@ -1,6 +1,6 @@
 const std = @import("std");
-const diagnostic = @import("../core.zig").diagnostic;
-const language = @import("../core.zig").language;
+const diagnostic = @import("core").diagnostic;
+const language = @import("core").language;
 const test_fixture = @import("../test_fixture.zig");
 
 const kata_no_as_any_rule =

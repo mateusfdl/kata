@@ -5,8 +5,8 @@ const ast = @import("ast.zig");
 const dsl_parser = @import("parser.zig");
 const tokenizer = @import("tokenizer.zig");
 
-const fact_rule = @import("../core.zig").fact_rule;
-const rule = @import("../core.zig").rule;
+const fact_rule = @import("core").fact_rule;
+const rule = @import("core").rule;
 
 pub const Error = error{
     OutOfMemory,

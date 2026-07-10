@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const paths = @import("path.zig");
+const paths = @import("path");
 
 pub const project_dir_name = ".kata";
 

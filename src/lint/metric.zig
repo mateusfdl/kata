@@ -1,9 +1,9 @@
 const std = @import("std");
 
-const diagnostic = @import("../core.zig").diagnostic;
+const diagnostic = @import("core").diagnostic;
 const kinds = @import("kinds.zig");
-const language = @import("../core.zig").language;
-const Node = @import("../core.zig").node.Node;
+const language = @import("core").language;
+const Node = @import("core").node.Node;
 
 const MetricKind = kinds.MetricKind;
 

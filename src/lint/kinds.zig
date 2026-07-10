@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const node_kinds = @import("node_kinds");
-const Node = @import("../core.zig").node.Node;
+const Node = @import("core").node.Node;
 
 pub const MetricKind = enum {
     function,
