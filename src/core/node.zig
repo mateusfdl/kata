@@ -69,6 +69,10 @@ pub const Node = struct {
     pub fn childByFieldName(self: Node, name: []const u8) ?Node {
         const field_id = fieldEnumId(self.tree.lang, name);
         if (field_id == 0) return null;
+        return self.childByFieldId(field_id);
+    }
+
+    pub fn childByFieldId(self: Node, field_id: u16) ?Node {
         const nodes = self.tree.nodes;
         const end = self.stored().subtree_end;
         var j = self.index + 1;

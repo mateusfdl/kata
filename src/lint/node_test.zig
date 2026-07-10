@@ -1,4 +1,5 @@
 const std = @import("std");
+const nk = @import("node_kinds");
 
 const test_tree = @import("test_tree.zig");
 
@@ -34,6 +35,23 @@ test "node: field child, points, parent identity" {
 
     try std.testing.expect(name.parent().?.eql(declarator));
     try std.testing.expect(!name.eql(value));
+}
+
+test "node: field child by id resolves the same node as by name" {
+    const src = "const x = 42;\n";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const declarator = t.root().namedChild(0).?.namedChild(0).?;
+    const name_field: u16 = @intFromEnum(nk.ts_family.Field.name);
+
+    const by_id = declarator.childByFieldId(name_field).?;
+    const by_name = declarator.childByFieldName("name").?;
+    try std.testing.expect(by_id.eql(by_name));
+    try std.testing.expectEqualStrings("x", by_id.text(src).?);
+
+    const missing_field: u16 = @intFromEnum(nk.ts_family.Field.condition);
+    try std.testing.expectEqual(@as(?@TypeOf(by_id), null), declarator.childByFieldId(missing_field));
 }
 
 test "node: named-sibling navigation and count" {
