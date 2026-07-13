@@ -18,3 +18,18 @@ function shallow(a) {
   }
   return 2;
 }
+
+function chained(a, b) {
+  if (a) {
+    return 1;
+  } else if (b) {
+    return 2;
+  } else if (a) {
+    return 3;
+  } else if (b) {
+    if (a) {
+      return 4;
+    }
+  }
+  return 5;
+}
