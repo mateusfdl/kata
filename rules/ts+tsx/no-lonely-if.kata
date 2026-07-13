@@ -1,0 +1,17 @@
+rule no-lonely-if {
+  lang ts, tsx
+
+  match else_clause {
+    child: statement_block {
+      child: if_statement @inner
+    }
+  }
+
+  where {
+    siblings(@inner) == 1
+  }
+
+  emit @inner {
+    message "If statement should not be the only statement in an else block - use else if"
+  }
+}
