@@ -184,7 +184,7 @@ test "context: project rules.yaml overrides global config per key" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\ndisabled:\n  - ts/drop-me\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
-    var global = try parseGlobal("metrics:\n  complexity: 10\nenabled:\n  - drop-me\n");
+    var global = try parseGlobal("enabled:\n  - drop-me\n");
     defer global.deinit();
 
     var r = s.resolver(try s.path("user"), &global);
@@ -192,7 +192,6 @@ test "context: project rules.yaml overrides global config per key" {
     defer ctx.deinit();
 
     try std.testing.expectEqual(true, ctx.resolved.ratchet);
-    try std.testing.expectEqual(@as(?u32, 10), ctx.resolved.metrics.get(.complexity));
     try std.testing.expectEqual(@as(?[]const u8, null), ruleSource(&ctx.rule_set, .ts, "drop-me"));
 }
 

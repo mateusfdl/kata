@@ -108,7 +108,6 @@ pub const Resolver = struct {
             .engine = undefined,
         };
         ctx.engine = Engine.init(self.gpa, &ctx.rule_set, dsl.engine_compiler.ruleCompiler());
-        ctx.engine.metrics = resolved.metrics;
         ctx.engine.warnings = resolved.warnings;
 
         return ctx;

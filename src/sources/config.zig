@@ -5,7 +5,6 @@ const lint = @import("../lint.zig");
 const loader = @import("loader.zig");
 
 const language = lint.language;
-const metric = lint.metric;
 const project_rule = lint.project_rule;
 const rule = lint.rule;
 
@@ -17,7 +16,6 @@ pub const Presence = struct {
     enabled: bool = false,
     disabled: bool = false,
     warnings: bool = false,
-    metrics: bool = false,
     project_rules: bool = false,
     ratchet: bool = false,
 };
@@ -26,7 +24,6 @@ pub const Config = struct {
     enabled: []const ScopedId,
     disabled: []const ScopedId,
     warnings: []const ScopedId,
-    metrics: metric.Set,
     project_rules: []const project_rule.ProjectRule,
     ratchet: bool,
     present: Presence,
@@ -43,7 +40,6 @@ pub const Resolved = struct {
     enabled: []const ScopedId = &.{},
     disabled: []const ScopedId = &.{},
     warnings: []const ScopedId = &.{},
-    metrics: metric.Set = metric.empty,
     project_rules: []const project_rule.ProjectRule = &.{},
     ratchet: bool = false,
 };
@@ -61,7 +57,6 @@ fn applyPresent(out: *Resolved, cfg_opt: ?*const Config) void {
     if (cfg.present.enabled) out.enabled = cfg.enabled;
     if (cfg.present.disabled) out.disabled = cfg.disabled;
     if (cfg.present.warnings) out.warnings = cfg.warnings;
-    if (cfg.present.metrics) out.metrics = cfg.metrics;
     if (cfg.present.project_rules) out.project_rules = cfg.project_rules;
     if (cfg.present.ratchet) out.ratchet = cfg.ratchet;
 }
@@ -75,9 +70,6 @@ pub const ParseError = error{
     UnknownLanguage,
     InvalidRuleId,
     UnexpectedListItem,
-    UnknownMetric,
-    InvalidThreshold,
-    MalformedMetricEntry,
     UnknownProjectRuleKind,
     MissingProjectRuleKind,
     IncompleteRestrictedCallers,
@@ -94,7 +86,7 @@ pub const Diagnostic = struct {
 
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
-        error.UnknownTopLevelKey => "unknown top-level key (expected 'enabled', 'disabled', 'warnings', 'metrics', 'project-rules', or 'ratchet')",
+        error.UnknownTopLevelKey => "unknown top-level key (expected 'enabled', 'disabled', 'warnings', 'project-rules', or 'ratchet')",
         error.TabInIndent => "tabs are not allowed in indentation",
         error.BadIndent => "indent must be 0 or 2 spaces",
         error.MalformedListItem => "list item must be '  - <rule-id>'",
@@ -102,9 +94,6 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.UnknownLanguage => "unknown language (expected " ++ language.supported_list ++ ")",
         error.InvalidRuleId => "rule id must match [A-Za-z0-9_-]+",
         error.UnexpectedListItem => "list item without a preceding key",
-        error.UnknownMetric => "unknown metric (expected 'complexity', 'nesting-depth', or 'function-length')",
-        error.InvalidThreshold => "metric threshold must be a positive integer",
-        error.MalformedMetricEntry => "metric entry must be '  <metric>: <threshold>'",
         error.UnknownProjectRuleKind => "unknown project rule kind (expected 'restricted-callers' or 'import-boundary')",
         error.MissingProjectRuleKind => "project rule is missing 'kind'",
         error.IncompleteRestrictedCallers => "restricted-callers requires 'callee-suffix' and 'caller-suffix'",
@@ -117,7 +106,7 @@ pub fn errorMessage(err: anyerror) []const u8 {
     };
 }
 
-const State = enum { top, in_enabled, in_disabled, in_warnings, in_metrics, in_project_rules };
+const State = enum { top, in_enabled, in_disabled, in_warnings, in_project_rules };
 
 const PendingProjectRule = struct {
     id: []const u8,
@@ -139,7 +128,6 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     var enabled: std.ArrayList(ScopedId) = .empty;
     var disabled: std.ArrayList(ScopedId) = .empty;
     var warnings: std.ArrayList(ScopedId) = .empty;
-    var metrics: metric.Set = metric.empty;
     var project_rules: std.ArrayList(project_rule.ProjectRule) = .empty;
     var ratchet = false;
     var present: Presence = .{};
@@ -183,7 +171,6 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
                 .in_enabled => try appendListItem(arena, &enabled, content),
                 .in_disabled => try appendListItem(arena, &disabled, content),
                 .in_warnings => try appendListItem(arena, &warnings, content),
-                .in_metrics => try setMetricEntry(&metrics, content),
                 .in_project_rules => {
                     try finalizePending(arena, &pending, &project_rules, diag);
                     diag.line = line_no;
@@ -213,7 +200,6 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
         .enabled = try enabled.toOwnedSlice(arena),
         .disabled = try disabled.toOwnedSlice(arena),
         .warnings = try warnings.toOwnedSlice(arena),
-        .metrics = metrics,
         .project_rules = try project_rules.toOwnedSlice(arena),
         .ratchet = ratchet,
         .present = present,
@@ -227,7 +213,6 @@ fn markPresent(present: *Presence, state: State) void {
         .in_enabled => present.enabled = true,
         .in_disabled => present.disabled = true,
         .in_warnings => present.warnings = true,
-        .in_metrics => present.metrics = true,
         .in_project_rules => present.project_rules = true,
     }
 }
@@ -369,22 +354,9 @@ fn sectionState(key: []const u8) ?State {
     if (std.mem.eql(u8, key, "enabled")) return .in_enabled;
     if (std.mem.eql(u8, key, "disabled")) return .in_disabled;
     if (std.mem.eql(u8, key, "warnings")) return .in_warnings;
-    if (std.mem.eql(u8, key, "metrics")) return .in_metrics;
     if (std.mem.eql(u8, key, "project-rules")) return .in_project_rules;
 
     return null;
-}
-
-fn setMetricEntry(metrics: *metric.Set, content: []const u8) ParseError!void {
-    const colon = std.mem.indexOfScalar(u8, content, ':') orelse return error.MalformedMetricEntry;
-    const key = std.mem.trimEnd(u8, content[0..colon], " ");
-    const value = std.mem.trim(u8, content[colon + 1 ..], " ");
-    const name = metric.Name.fromString(key) orelse return error.UnknownMetric;
-    const threshold = std.fmt.parseInt(u32, value, 10) catch return error.InvalidThreshold;
-
-    if (threshold == 0) return error.InvalidThreshold;
-
-    metrics.set(name, threshold);
 }
 
 fn appendListItem(

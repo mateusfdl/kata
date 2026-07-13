@@ -12,7 +12,6 @@ comptime {
     _ = @import("lint/query_test.zig");
     _ = @import("lint/convert_test.zig");
     _ = @import("lint/engine_test.zig");
-    _ = @import("lint/metric_test.zig");
     _ = @import("lint/facts_test.zig");
     _ = @import("lint/project_rule_test.zig");
     _ = @import("lint/fact_rule_test.zig");

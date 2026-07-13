@@ -435,77 +435,13 @@ test "errorMessage: returns descriptive text for known errors" {
         config.errorMessage(error.TabInIndent),
     );
     try std.testing.expectEqualStrings(
-        "unknown top-level key (expected 'enabled', 'disabled', 'warnings', 'metrics', 'project-rules', or 'ratchet')",
+        "unknown top-level key (expected 'enabled', 'disabled', 'warnings', 'project-rules', or 'ratchet')",
         config.errorMessage(error.UnknownTopLevelKey),
     );
 }
 
-test "config: no metrics block leaves all metrics disabled" {
-    var cfg = try expectParseOk("disabled:\n  - ts/no-console\n");
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(?u32, null), cfg.metrics.get(.function_length));
-}
-
-test "config: parses metrics block" {
-    var cfg = try expectParseOk("metrics:\n  function-length: 80\n");
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(?u32, 80), cfg.metrics.get(.function_length));
-    try std.testing.expectEqual(@as(usize, 0), cfg.disabled.len);
-}
-
-test "config: parses all metric names" {
-    const src =
-        \\metrics:
-        \\  complexity: 15
-        \\  nesting-depth: 4
-        \\  function-length: 80
-        \\
-    ;
-    var cfg = try expectParseOk(src);
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(?u32, 15), cfg.metrics.get(.complexity));
-    try std.testing.expectEqual(@as(?u32, 4), cfg.metrics.get(.nesting_depth));
-    try std.testing.expectEqual(@as(?u32, 80), cfg.metrics.get(.function_length));
-}
-
-test "config: metrics and disabled coexist" {
-    const src =
-        \\disabled:
-        \\  - ts/no-console
-        \\metrics:
-        \\  function-length: 40
-        \\
-    ;
-    var cfg = try expectParseOk(src);
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 1), cfg.disabled.len);
-    try std.testing.expectEqual(@as(?u32, 40), cfg.metrics.get(.function_length));
-}
-
-test "config: metric entry tolerates trailing comment" {
-    var cfg = try expectParseOk("metrics:\n  function-length: 80  # keep them short\n");
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(?u32, 80), cfg.metrics.get(.function_length));
-}
-
-test "config: unknown metric is rejected" {
-    try expectParseErr("metrics:\n  line-count: 80\n", error.UnknownMetric, 2);
-}
-
-test "config: non-numeric threshold is rejected" {
-    try expectParseErr("metrics:\n  function-length: many\n", error.InvalidThreshold, 2);
-}
-
-test "config: zero threshold is rejected" {
-    try expectParseErr("metrics:\n  function-length: 0\n", error.InvalidThreshold, 2);
-}
-
-test "config: metric entry without colon is rejected" {
-    try expectParseErr("metrics:\n  function-length 80\n", error.MalformedMetricEntry, 2);
-}
-
-test "config: metric entry without preceding key is rejected" {
-    try expectParseErr("  function-length: 80\n", error.UnexpectedListItem, 1);
+test "config: retired metrics key is an unknown top-level key" {
+    try expectParseErr("metrics:\n  function-length: 80\n", error.UnknownTopLevelKey, 1);
 }
 
 test "config: parses a project rule" {
@@ -539,14 +475,11 @@ test "config: parses multiple project rules alongside other sections" {
         \\    kind: restricted-callers
         \\    callee-suffix: Gateway
         \\    caller-suffix: Service
-        \\metrics:
-        \\  complexity: 15
         \\
     ;
     var cfg = try expectParseOk(src);
     defer cfg.deinit();
     try std.testing.expectEqual(@as(usize, 1), cfg.disabled.len);
-    try std.testing.expectEqual(@as(?u32, 15), cfg.metrics.get(.complexity));
     try std.testing.expectEqual(@as(usize, 2), cfg.project_rules.len);
     try std.testing.expectEqualStrings("gateway-isolation", cfg.project_rules[1].id);
     try std.testing.expectEqualStrings("Gateway", cfg.project_rules[1].kind.restricted_callers.callee_suffix);
@@ -586,12 +519,11 @@ test "config: project rule entry without colon is rejected" {
 }
 
 test "config: top-level keys record presence" {
-    var cfg = try expectParseOk("enabled:\ndisabled:\nwarnings:\nmetrics:\nproject-rules:\nratchet: false\n");
+    var cfg = try expectParseOk("enabled:\ndisabled:\nwarnings:\nproject-rules:\nratchet: false\n");
     defer cfg.deinit();
     try std.testing.expectEqual(true, cfg.present.enabled);
     try std.testing.expectEqual(true, cfg.present.disabled);
     try std.testing.expectEqual(true, cfg.present.warnings);
-    try std.testing.expectEqual(true, cfg.present.metrics);
     try std.testing.expectEqual(true, cfg.present.project_rules);
     try std.testing.expectEqual(true, cfg.present.ratchet);
 }
@@ -602,7 +534,6 @@ test "config: empty source records no presence" {
     try std.testing.expectEqual(false, cfg.present.enabled);
     try std.testing.expectEqual(false, cfg.present.disabled);
     try std.testing.expectEqual(false, cfg.present.warnings);
-    try std.testing.expectEqual(false, cfg.present.metrics);
     try std.testing.expectEqual(false, cfg.present.project_rules);
     try std.testing.expectEqual(false, cfg.present.ratchet);
 }
@@ -614,9 +545,6 @@ test "resolve: no configs yields defaults" {
     try std.testing.expectEqual(@as(usize, 0), r.warnings.len);
     try std.testing.expectEqual(@as(usize, 0), r.project_rules.len);
     try std.testing.expectEqual(false, r.ratchet);
-    try std.testing.expectEqual(@as(?u32, null), r.metrics.get(.complexity));
-    try std.testing.expectEqual(@as(?u32, null), r.metrics.get(.nesting_depth));
-    try std.testing.expectEqual(@as(?u32, null), r.metrics.get(.function_length));
 }
 
 test "resolve: global only passes through every key" {
@@ -627,8 +555,6 @@ test "resolve: global only passes through every key" {
         \\  - ts/no-console
         \\warnings:
         \\  - max-complexity
-        \\metrics:
-        \\  complexity: 10
         \\ratchet: true
         \\
     ;
@@ -642,7 +568,6 @@ test "resolve: global only passes through every key" {
     try std.testing.expectEqualStrings("no-console", r.disabled[0].id);
     try std.testing.expectEqual(@as(usize, 1), r.warnings.len);
     try std.testing.expectEqualStrings("max-complexity", r.warnings[0].id);
-    try std.testing.expectEqual(@as(?u32, 10), r.metrics.get(.complexity));
     try std.testing.expectEqual(true, r.ratchet);
 }
 
@@ -702,7 +627,7 @@ test "resolve: project empty disabled list clears global disables" {
 }
 
 test "resolve: omitted project keys fall through to global" {
-    var g = try expectParseOk("disabled:\n  - ts/no-console\nmetrics:\n  complexity: 10\n");
+    var g = try expectParseOk("disabled:\n  - ts/no-console\nwarnings:\n  - max-complexity\n");
     defer g.deinit();
     var p = try expectParseOk("ratchet: true\n");
     defer p.deinit();
@@ -710,20 +635,9 @@ test "resolve: omitted project keys fall through to global" {
     const r = config.resolve(&g, &p);
     try std.testing.expectEqual(@as(usize, 1), r.disabled.len);
     try std.testing.expectEqualStrings("no-console", r.disabled[0].id);
-    try std.testing.expectEqual(@as(?u32, 10), r.metrics.get(.complexity));
+    try std.testing.expectEqual(@as(usize, 1), r.warnings.len);
+    try std.testing.expectEqualStrings("max-complexity", r.warnings[0].id);
     try std.testing.expectEqual(true, r.ratchet);
-}
-
-test "resolve: project metrics replace the global set" {
-    var g = try expectParseOk("metrics:\n  complexity: 10\n  function-length: 50\n");
-    defer g.deinit();
-    var p = try expectParseOk("metrics:\n  nesting-depth: 3\n");
-    defer p.deinit();
-
-    const r = config.resolve(&g, &p);
-    try std.testing.expectEqual(@as(?u32, null), r.metrics.get(.complexity));
-    try std.testing.expectEqual(@as(?u32, null), r.metrics.get(.function_length));
-    try std.testing.expectEqual(@as(?u32, 3), r.metrics.get(.nesting_depth));
 }
 
 test "resolve: explicit project ratchet false overrides global true" {

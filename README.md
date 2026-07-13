@@ -138,8 +138,8 @@ without redeclaring everything.
 
 Schema:
 
-- Top-level keys: `enabled`, `disabled`, `warnings`, `metrics`,
-  `project-rules`, `ratchet`.
+- Top-level keys: `enabled`, `disabled`, `warnings`, `project-rules`,
+  `ratchet`.
 - `enabled:` and `disabled:` take lists of rule ids.
 - Scoped form `lang/id` targets that rule in one language.
 - Bare form `id` targets every rule with that id across all languages.
@@ -152,7 +152,7 @@ Schema:
 Errors are reported with a line number and abort startup:
 
 ```
-kata: rules.yaml: line 1: unknown top-level key (expected 'enabled', 'disabled', 'warnings', 'metrics', 'project-rules', or 'ratchet')
+kata: rules.yaml: line 1: unknown top-level key (expected 'enabled', 'disabled', 'warnings', 'project-rules', or 'ratchet')
 ```
 
 The daemon reads the global `rules.yaml` once at startup. Edit the file then

@@ -27,13 +27,6 @@
             key: ids:
             lib.optionalString (ids != [ ]) ("${key}:\n" + lib.concatMapStrings (id: "  - ${id}\n") ids);
 
-          renderMetrics =
-            metrics:
-            lib.optionalString (metrics != { }) (
-              "metrics:\n"
-              + lib.concatStrings (lib.mapAttrsToList (name: threshold: "  ${name}: ${toString threshold}\n") metrics)
-            );
-
           renderProjectRule =
             id: rule:
             "  ${id}:\n    kind: ${rule.kind}\n"
@@ -52,7 +45,6 @@
             renderIds "enabled" cfg.settings.enabled
             + renderIds "disabled" cfg.settings.disabled
             + renderIds "warnings" cfg.settings.warnings
-            + renderMetrics cfg.settings.metrics
             + renderProjectRules cfg.settings.projectRules
             + lib.optionalString cfg.settings.ratchet "ratchet: true\n";
         in
@@ -93,15 +85,6 @@
                 default = [ ];
                 example = [ "go/no-panic" ];
                 description = "Rule ids demoted to warnings, optionally scoped by language.";
-              };
-
-              metrics = lib.mkOption {
-                type = lib.types.attrsOf lib.types.ints.positive;
-                default = { };
-                example = {
-                  complexity = 10;
-                };
-                description = "Metric thresholds keyed by metric name.";
               };
 
               projectRules = lib.mkOption {

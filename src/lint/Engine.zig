@@ -36,7 +36,6 @@ pub const Engine = struct {
     compiler: rule_compiler.RuleCompiler,
     compiled_dsl: std.EnumArray(language.Name, DslSlot) = .initFill(.not_compiled),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
-    metrics: metric.Set = metric.empty,
     metric_queries: std.EnumArray(language.Name, ?metric.Compiled) = .initFill(null),
     kinds: std.EnumArray(language.Name, ?Kinds) = .initFill(null),
     compiled_fact: ?[]const fact_rule.CompiledFactRule = null,
@@ -93,7 +92,7 @@ pub const Engine = struct {
         for (std.enums.values(language.Name)) |lang| {
             const compiled_dsl = try self.ensureCompiledDsl(lang);
             _ = try self.ensureParser(lang);
-            if (metric.anyEnabled(self.metrics) or needsMeasures(compiled_dsl)) _ = try self.ensureMetricQuery(lang);
+            if (needsMeasures(compiled_dsl)) _ = try self.ensureMetricQuery(lang);
         }
         _ = try self.ensureCompiledFact();
     }
@@ -252,11 +251,6 @@ pub const Engine = struct {
         };
 
         if (compiled_dsl) |dsl| try runRule(allocator, dsl, eval_ctx, lang, path, &out);
-
-        if (metric.anyEnabled(self.metrics)) {
-            const metric_query = try self.ensureMetricQuery(lang);
-            try metric.run(allocator, self.metrics, metric_query, root, lang, &out);
-        }
 
         demoteWarnings(self.warnings, lang, out.items);
 

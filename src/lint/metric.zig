@@ -7,39 +7,6 @@ const Node = @import("core").node.Node;
 
 const MetricKind = kinds.MetricKind;
 
-pub const Name = enum {
-    complexity,
-    nesting_depth,
-    function_length,
-
-    pub fn toString(self: Name) []const u8 {
-        return switch (self) {
-            .complexity => "complexity",
-            .nesting_depth => "nesting-depth",
-            .function_length => "function-length",
-        };
-    }
-
-    pub fn fromString(s: []const u8) ?Name {
-        for (std.enums.values(Name)) |n| {
-            if (std.mem.eql(u8, s, n.toString())) return n;
-        }
-        return null;
-    }
-};
-
-pub const Set = std.EnumArray(Name, ?u32);
-
-pub const empty: Set = .initFill(null);
-
-pub fn anyEnabled(set: Set) bool {
-    for (std.enums.values(Name)) |n| {
-        if (set.get(n) != null) return true;
-    }
-
-    return false;
-}
-
 fn isComplexityPoint(kind: MetricKind) bool {
     return switch (kind) {
         .branch, .ternary, .loop, .case, .catch_clause, .bool_op => true,
@@ -146,24 +113,6 @@ fn innermostOpen(spans: []const Span, stack: []const usize, span: Span) ?usize {
         if (containsSpan(spans[stack[i]], span)) return stack[i];
     }
     return null;
-}
-
-pub fn run(
-    allocator: std.mem.Allocator,
-    set: Set,
-    compiled: *const Compiled,
-    root: Node,
-    lang: language.Name,
-    out: *std.ArrayList(diagnostic.Diagnostic),
-) !void {
-    const analysis = try analyze(allocator, compiled, root);
-    defer analysis.deinit(allocator);
-
-    const lang_str = lang.toString();
-
-    if (set.get(.function_length)) |max| try checkFunctionLength(allocator, analysis.spans, max, lang_str, out);
-    if (set.get(.complexity)) |max| try checkComplexity(allocator, analysis.spans, analysis.owners, max, lang_str, out);
-    if (set.get(.nesting_depth)) |max| try checkNestingDepth(allocator, analysis.spans, analysis.owners, max, lang_str, out);
 }
 
 pub fn complexityOf(
@@ -337,71 +286,10 @@ fn containsSpan(outer: Span, inner: Span) bool {
     return outer.start <= inner.start and inner.end <= outer.end;
 }
 
-fn checkFunctionLength(
-    allocator: std.mem.Allocator,
-    spans: []const Span,
-    max: u32,
-    lang_str: []const u8,
-    out: *std.ArrayList(diagnostic.Diagnostic),
-) !void {
-    for (spans) |span| {
-        if (span.kind != .function) continue;
-        const lines = span.range.end.line - span.range.start.line + 1;
-        if (lines <= max) continue;
-        try emit(allocator, out, .function_length, lang_str, span.range, "function length {d} exceeds max {d}", .{ lines, max });
-    }
-}
-
-fn checkComplexity(
-    allocator: std.mem.Allocator,
-    spans: []const Span,
-    owners: []const ?usize,
-    max: u32,
-    lang_str: []const u8,
-    out: *std.ArrayList(diagnostic.Diagnostic),
-) !void {
-    const counts = try allocator.alloc(u32, spans.len);
-    defer allocator.free(counts);
-    @memset(counts, 0);
-
-    for (spans, owners) |p, owner| {
-        if (!isComplexityPoint(p.kind)) continue;
-        const fi = owner orelse continue;
-        counts[fi] += 1;
-    }
-
-    for (spans, counts) |f, count| {
-        if (f.kind != .function) continue;
-        const cc = count + 1;
-        if (cc <= max) continue;
-        try emit(allocator, out, .complexity, lang_str, f.range, "cyclomatic complexity {d} exceeds max {d}", .{ cc, max });
-    }
-}
-
 const Container = struct {
     kind: MetricKind,
     end: u32,
 };
-
-fn checkNestingDepth(
-    allocator: std.mem.Allocator,
-    spans: []const Span,
-    owners: []const ?usize,
-    max: u32,
-    lang_str: []const u8,
-    out: *std.ArrayList(diagnostic.Diagnostic),
-) !void {
-    const depths = try nestingDepths(allocator, spans, owners);
-    defer allocator.free(depths);
-
-    for (spans, depths) |n, depth| {
-        // Report only the construct at exactly max + 1: any deeper chain
-        // always passes through max + 1 on the way down, so this yields one
-        // diagnostic per offending chain instead of one per extra level.
-        if (depth != max + 1) continue;
-        try emit(allocator, out, .nesting_depth, lang_str, n.range, "nesting depth {d} exceeds max {d}", .{ depth, max });
-    }
-}
 
 /// Depth of every nesting construct: 1 + the number of enclosing levels that
 /// share its owner key (spans with a null key, or that are not nesting
@@ -452,21 +340,4 @@ fn hasContainer(containers: []const Container, entry: Container) bool {
         if (c.kind == entry.kind and c.end == entry.end) return true;
     }
     return false;
-}
-
-fn emit(
-    allocator: std.mem.Allocator,
-    out: *std.ArrayList(diagnostic.Diagnostic),
-    name: Name,
-    lang_str: []const u8,
-    range: diagnostic.Range,
-    comptime fmt: []const u8,
-    args: anytype,
-) !void {
-    try out.append(allocator, .{
-        .rule_id = name.toString(),
-        .language = lang_str,
-        .message = try std.fmt.allocPrint(allocator, fmt, args),
-        .range = range,
-    });
 }
