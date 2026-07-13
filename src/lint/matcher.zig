@@ -97,13 +97,25 @@ fn evalHas(
 ) std.mem.Allocator.Error!bool {
     const subject = subjectNode(pred.args, match) orelse return false;
 
-    const matches = try query.run(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, subject);
-    for (matches) |nested_match| {
-        if (try nestedMatchPasses(pred.matcher, nested_match, subject, ctx)) return !negate;
-    }
+    var sink: ExistentialSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx };
+    try query.stream(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, subject, &sink);
 
-    return negate;
+    return sink.found != negate;
 }
+
+const ExistentialSink = struct {
+    matcher: *const rule.NestedMatcher,
+    subject: Node,
+    ctx: EvalContext,
+    found: bool = false,
+    done: bool = false,
+
+    pub fn emit(self: *ExistentialSink, bindings: []const ?Node) std.mem.Allocator.Error!void {
+        if (!try nestedMatchPasses(self.matcher, .{ .nodes = bindings }, self.subject, self.ctx)) return;
+        self.found = true;
+        self.done = true;
+    }
+};
 
 fn evalInside(
     pred: rule.NestedPredicate,
@@ -111,16 +123,7 @@ fn evalInside(
     ctx: EvalContext,
     negate: bool,
 ) std.mem.Allocator.Error!bool {
-    const subject = subjectNode(pred.args, match) orelse return false;
-
-    const matches = try query.run(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, ctx.root);
-    for (matches) |nested_match| {
-        const enclosing = nested_match.get(pred.matcher.root_capture_id) orelse continue;
-        if (!strictlyContains(enclosing, subject)) continue;
-        if (try evaluate(pred.matcher.predicates, nested_match, ctx)) return !negate;
-    }
-
-    return negate;
+    return evalEnclosing(pred, match, ctx, .ancestor, negate);
 }
 
 fn evalParent(
@@ -129,17 +132,47 @@ fn evalParent(
     ctx: EvalContext,
     negate: bool,
 ) std.mem.Allocator.Error!bool {
+    return evalEnclosing(pred, match, ctx, .direct_parent, negate);
+}
+
+fn evalEnclosing(
+    pred: rule.NestedPredicate,
+    match: query.Match,
+    ctx: EvalContext,
+    relation: EnclosingSink.Relation,
+    negate: bool,
+) std.mem.Allocator.Error!bool {
     const subject = subjectNode(pred.args, match) orelse return false;
 
-    const matches = try query.run(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, ctx.root);
-    for (matches) |nested_match| {
-        const candidate = nested_match.get(pred.matcher.root_capture_id) orelse continue;
-        if (!isDirectParent(candidate, subject)) continue;
-        if (try evaluate(pred.matcher.predicates, nested_match, ctx)) return !negate;
-    }
+    var sink: EnclosingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx, .relation = relation };
+    try query.stream(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, ctx.root, &sink);
 
-    return negate;
+    return sink.found != negate;
 }
+
+const EnclosingSink = struct {
+    matcher: *const rule.NestedMatcher,
+    subject: Node,
+    ctx: EvalContext,
+    relation: Relation,
+    found: bool = false,
+    done: bool = false,
+
+    const Relation = enum { ancestor, direct_parent };
+
+    pub fn emit(self: *EnclosingSink, bindings: []const ?Node) std.mem.Allocator.Error!void {
+        const nested_match: query.Match = .{ .nodes = bindings };
+        const candidate = nested_match.get(self.matcher.root_capture_id) orelse return;
+        const related = switch (self.relation) {
+            .ancestor => strictlyContains(candidate, self.subject),
+            .direct_parent => isDirectParent(candidate, self.subject),
+        };
+        if (!related) return;
+        if (!try evaluate(self.matcher.predicates, nested_match, self.ctx)) return;
+        self.found = true;
+        self.done = true;
+    }
+};
 
 fn isDirectParent(candidate: Node, subject: Node) bool {
     const p = subject.parent() orelse return false;
@@ -153,14 +186,23 @@ fn evalCount(
 ) std.mem.Allocator.Error!bool {
     const subject = subjectNode(pred.args, match) orelse return false;
 
-    const matches = try query.run(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, subject);
-    var total: u32 = 0;
-    for (matches) |nested_match| {
-        if (try nestedMatchPasses(pred.matcher, nested_match, subject, ctx)) total += 1;
-    }
+    var sink: CountingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx };
+    try query.stream(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, subject, &sink);
 
-    return compareCount(pred.compare.op, total, pred.compare.value);
+    return compareCount(pred.compare.op, sink.total, pred.compare.value);
 }
+
+const CountingSink = struct {
+    matcher: *const rule.NestedMatcher,
+    subject: Node,
+    ctx: EvalContext,
+    total: u32 = 0,
+    done: bool = false,
+
+    pub fn emit(self: *CountingSink, bindings: []const ?Node) std.mem.Allocator.Error!void {
+        if (try nestedMatchPasses(self.matcher, .{ .nodes = bindings }, self.subject, self.ctx)) self.total += 1;
+    }
+};
 
 fn nestedMatchPasses(
     nested: *const rule.NestedMatcher,

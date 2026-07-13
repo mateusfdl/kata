@@ -67,15 +67,32 @@ pub fn run(
     root: Node,
 ) Error![]Match {
     var collector: Collector = .{ .arena = arena };
-    const scratch = try arena.alloc(?Node, capture_count);
-    @memset(scratch, null);
-    try walk(pattern, root, scratch, &collector);
+    try stream(arena, pattern, capture_count, root, &collector);
     return collector.matches.toOwnedSlice(arena);
+}
+
+/// Run `pattern` like `run`, but hand each match to `sink.emit` as it is found
+/// instead of materializing a slice. The Match handed to `emit` views the live
+/// binding scratch and is only valid during that call. The sink stops the
+/// enumeration by setting its `done` flag. `scratch` only backs the binding
+/// slots and is released before returning.
+pub fn stream(
+    scratch: std.mem.Allocator,
+    pattern: *const Pattern,
+    capture_count: usize,
+    root: Node,
+    sink: anytype,
+) Error!void {
+    const bindings = try scratch.alloc(?Node, capture_count);
+    defer scratch.free(bindings);
+    @memset(bindings, null);
+    try walk(pattern, root, bindings, sink);
 }
 
 const Collector = struct {
     arena: std.mem.Allocator,
     matches: std.ArrayList(Match) = .empty,
+    done: bool = false,
 
     fn emit(self: *Collector, bindings: []const ?Node) Error!void {
         const owned = try self.arena.dupe(?Node, bindings);
@@ -98,12 +115,13 @@ const Cont = union(enum) {
     },
 };
 
-fn walk(pattern: *const Pattern, n: Node, scratch: []?Node, collector: *Collector) Error!void {
+fn walk(pattern: *const Pattern, n: Node, scratch: []?Node, collector: anytype) Error!void {
     const emit: Cont = .emit;
     try matchNode(pattern, n, scratch, &emit, collector);
 
     var i: u32 = 0;
     while (i < n.childCount()) : (i += 1) {
+        if (collector.done) return;
         try walk(pattern, n.child(i).?, scratch, collector);
     }
 }
@@ -113,8 +131,10 @@ fn matchNode(
     n: Node,
     bindings: []?Node,
     cont: *const Cont,
-    collector: *Collector,
+    collector: anytype,
 ) Error!void {
+    if (collector.done) return;
+
     if (pattern.kind == .alternation) {
         var saved: ?Node = undefined;
         if (pattern.capture) |c| {
@@ -159,7 +179,7 @@ fn matchFields(
     min_child: u32,
     bindings: []?Node,
     next: *const Cont,
-    collector: *Collector,
+    collector: anytype,
 ) Error!void {
     if (index == fields.len) return invoke(next, bindings, collector);
 
@@ -203,7 +223,7 @@ fn matchChildren(
     min_child: u32,
     bindings: []?Node,
     next: *const Cont,
-    collector: *Collector,
+    collector: anytype,
 ) Error!void {
     var fired = false;
     var k: u32 = min_child;
@@ -217,7 +237,7 @@ fn matchChildren(
     return matchFields(fields, index + 1, parent, min_child, bindings, next, collector);
 }
 
-fn invoke(cont: *const Cont, bindings: []?Node, collector: *Collector) Error!void {
+fn invoke(cont: *const Cont, bindings: []?Node, collector: anytype) Error!void {
     switch (cont.*) {
         .emit => try collector.emit(bindings),
         .fields => |f| {

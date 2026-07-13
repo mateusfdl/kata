@@ -3,6 +3,7 @@ const std = @import("std");
 const query = @import("core").query;
 const test_tree = @import("test_tree.zig");
 
+const Node = @import("core").node.Node;
 const Pattern = query.Pattern;
 
 test "query: symbol capture matches every occurrence" {
@@ -234,4 +235,27 @@ test "query: a repeated capture keeps its first binding" {
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("a", matches[0].get(0).?.text(src).?);
+}
+
+test "query: stream stops enumeration when the sink is done" {
+    const src = "a; b; c;";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 };
+
+    const FirstOnly = struct {
+        emits: usize = 0,
+        done: bool = false,
+
+        pub fn emit(self: *@This(), bindings: []const ?Node) std.mem.Allocator.Error!void {
+            _ = bindings;
+            self.emits += 1;
+            self.done = true;
+        }
+    };
+    var sink: FirstOnly = .{};
+    try query.stream(std.testing.allocator, &pattern, 1, t.root(), &sink);
+
+    try std.testing.expectEqual(@as(usize, 1), sink.emits);
 }
