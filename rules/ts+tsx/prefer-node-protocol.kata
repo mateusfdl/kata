@@ -1,0 +1,47 @@
+rule prefer-node-protocol {
+  lang ts, tsx
+
+  match import_statement @match {
+    source: string {
+      child: string_fragment @src
+    }
+  }
+
+  where {
+    text(@src) in [
+      "assert",
+      "buffer",
+      "child_process",
+      "cluster",
+      "crypto",
+      "dgram",
+      "dns",
+      "events",
+      "fs",
+      "http",
+      "http2",
+      "https",
+      "net",
+      "os",
+      "path",
+      "process",
+      "querystring",
+      "readline",
+      "stream",
+      "string_decoder",
+      "timers",
+      "tls",
+      "tty",
+      "url",
+      "util",
+      "v8",
+      "vm",
+      "worker_threads",
+      "zlib",
+    ]
+  }
+
+  emit @match {
+    message "Prefer the node: protocol when importing a Node.js builtin module"
+  }
+}
