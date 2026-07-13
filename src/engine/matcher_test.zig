@@ -586,3 +586,168 @@ test "matcher: count is false without a usable subject" {
     };
     try std.testing.expectEqual(false, try evalOne(&t, src, .{ .count = pred }, match));
 }
+
+test "matcher: inside finds a matching ancestor of the subject" {
+    const src = "function outer() { if (x) { function inner() { y; } } }";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const statement = firstOfKind(t.root(), "expression_statement").?;
+    const outer_fn = t.root().namedChild(0).?;
+
+    var none = [_]rule.Predicate{};
+    const nested: rule.NestedMatcher = .{
+        .pattern = .{ .kind = .{ .symbol = t.sym("if_statement") }, .capture = 0 },
+        .capture_count = 1,
+        .root_capture_id = 0,
+        .predicates = &none,
+    };
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    const pred: rule.NestedPredicate = .{ .args = &args, .matcher = &nested };
+
+    const enclosed: query.Match = .{ .nodes = &.{statement} };
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .inside = pred }, enclosed));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_inside = pred }, enclosed));
+
+    const outside: query.Match = .{ .nodes = &.{outer_fn} };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .inside = pred }, outside));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_inside = pred }, outside));
+}
+
+test "matcher: inside excludes the subject matching itself" {
+    const src = "function outer() { if (x) { function inner() { y; } } }";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const outer_fn = t.root().namedChild(0).?;
+    const match: query.Match = .{ .nodes = &.{outer_fn} };
+
+    var none = [_]rule.Predicate{};
+    const nested: rule.NestedMatcher = .{
+        .pattern = .{ .kind = .{ .symbol = t.sym("function_declaration") }, .capture = 0 },
+        .capture_count = 1,
+        .root_capture_id = 0,
+        .predicates = &none,
+    };
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .inside = .{ .args = &args, .matcher = &nested } }, match));
+}
+
+test "matcher: inside stops at an until boundary" {
+    const src = "function outer() { if (x) { function inner() { y; } } }";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const statement = firstOfKind(t.root(), "expression_statement").?;
+    const match: query.Match = .{ .nodes = &.{statement} };
+
+    var none = [_]rule.Predicate{};
+    const nested: rule.NestedMatcher = .{
+        .pattern = .{ .kind = .{ .symbol = t.sym("if_statement") }, .capture = 0 },
+        .capture_count = 1,
+        .root_capture_id = 0,
+        .predicates = &none,
+    };
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    const until = [_]u16{t.sym("function_declaration")};
+
+    const blocked: rule.NestedPredicate = .{ .args = &args, .matcher = &nested, .until_kinds = &until };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .inside = blocked }, match));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_inside = blocked }, match));
+}
+
+test "matcher: inside accepts an ancestor reached before the until boundary" {
+    const src = "function outer() { if (x) { function inner() { y; } } }";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const statement = firstOfKind(t.root(), "expression_statement").?;
+    const match: query.Match = .{ .nodes = &.{statement} };
+
+    var none = [_]rule.Predicate{};
+    const nested: rule.NestedMatcher = .{
+        .pattern = .{ .kind = .{ .symbol = t.sym("statement_block") }, .capture = 0 },
+        .capture_count = 1,
+        .root_capture_id = 0,
+        .predicates = &none,
+    };
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    const until = [_]u16{t.sym("if_statement")};
+
+    const pred: rule.NestedPredicate = .{ .args = &args, .matcher = &nested, .until_kinds = &until };
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .inside = pred }, match));
+}
+
+test "matcher: inside applies nested predicates to candidate ancestors" {
+    const src = "function outer() { if (x) { function inner() { y; } } }";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const statement = firstOfKind(t.root(), "expression_statement").?;
+    const match: query.Match = .{ .nodes = &.{statement} };
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+
+    var outer_args = [_]rule.PredicateOperand{ .{ .capture = 1 }, .{ .string = "outer" } };
+    var wants_outer = [_]rule.Predicate{.{ .eq = &outer_args }};
+    const named_outer: rule.NestedMatcher = .{
+        .pattern = .{
+            .kind = .{ .symbol = t.sym("function_declaration") },
+            .capture = 0,
+            .fields = &.{.{
+                .relation = .{ .field = t.field("name") },
+                .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 1 },
+            }},
+        },
+        .capture_count = 2,
+        .root_capture_id = 0,
+        .predicates = &wants_outer,
+    };
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .inside = .{ .args = &args, .matcher = &named_outer } }, match));
+
+    var missing_args = [_]rule.PredicateOperand{ .{ .capture = 1 }, .{ .string = "missing" } };
+    var wants_missing = [_]rule.Predicate{.{ .eq = &missing_args }};
+    const named_missing: rule.NestedMatcher = .{
+        .pattern = .{
+            .kind = .{ .symbol = t.sym("function_declaration") },
+            .capture = 0,
+            .fields = &.{.{
+                .relation = .{ .field = t.field("name") },
+                .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 1 },
+            }},
+        },
+        .capture_count = 2,
+        .root_capture_id = 0,
+        .predicates = &wants_missing,
+    };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .inside = .{ .args = &args, .matcher = &named_missing } }, match));
+}
+
+test "matcher: parent only accepts the direct parent" {
+    const src = "function outer() { if (x) { function inner() { y; } } }";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const if_stmt = firstOfKind(t.root(), "if_statement").?;
+    const match: query.Match = .{ .nodes = &.{if_stmt} };
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+
+    var none = [_]rule.Predicate{};
+    const block: rule.NestedMatcher = .{
+        .pattern = .{ .kind = .{ .symbol = t.sym("statement_block") }, .capture = 0 },
+        .capture_count = 1,
+        .root_capture_id = 0,
+        .predicates = &none,
+    };
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .parent = .{ .args = &args, .matcher = &block } }, match));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_parent = .{ .args = &args, .matcher = &block } }, match));
+
+    var grand_none = [_]rule.Predicate{};
+    const grandparent: rule.NestedMatcher = .{
+        .pattern = .{ .kind = .{ .symbol = t.sym("function_declaration") }, .capture = 0 },
+        .capture_count = 1,
+        .root_capture_id = 0,
+        .predicates = &grand_none,
+    };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .parent = .{ .args = &args, .matcher = &grandparent } }, match));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_parent = .{ .args = &args, .matcher = &grandparent } }, match));
+}
