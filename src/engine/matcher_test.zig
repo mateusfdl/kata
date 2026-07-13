@@ -237,6 +237,167 @@ test "matcher: regex match tests the capture text" {
     try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_match = miss }, match));
 }
 
+test "matcher: captured reflects whether the capture slot is bound" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ ident, null } };
+
+    var bound = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .captured = &bound }, match));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_captured = &bound }, match));
+
+    var unbound = [_]rule.PredicateOperand{.{ .capture = 1 }};
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .captured = &unbound }, match));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_captured = &unbound }, match));
+}
+
+test "matcher: captured treats a string operand as absent" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const match: query.Match = .{ .nodes = &.{} };
+
+    var args = [_]rule.PredicateOperand{.{ .string = "foo" }};
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .captured = &args }, match));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_captured = &args }, match));
+}
+
+test "matcher: eq is false when the operand count is not two" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ident} };
+
+    var one = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .eq = &one }, match));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_eq = &one }, match));
+
+    var three = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "foo" }, .{ .string = "foo" } };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .eq = &three }, match));
+}
+
+test "matcher: anyOf is false with fewer than two operands" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ident} };
+
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .any_of = &args }, match));
+}
+
+test "matcher: contains is false when the operand count is not two" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ident} };
+
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .contains = &args }, match));
+}
+
+test "matcher: captured is false when the operand count is not one" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ident} };
+
+    var args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .capture = 0 } };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .captured = &args }, match));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_captured = &args }, match));
+}
+
+test "matcher: anyGroup passes when one member passes" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ident} };
+
+    var miss = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "baz" } };
+    var hit = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "foo" } };
+    var members = [_]rule.Predicate{ .{ .eq = &miss }, .{ .eq = &hit } };
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .any_group = &members }, match));
+}
+
+test "matcher: anyGroup fails when every member fails" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ident} };
+
+    var first = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "baz" } };
+    var second = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "qux" } };
+    var members = [_]rule.Predicate{ .{ .eq = &first }, .{ .eq = &second } };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .any_group = &members }, match));
+}
+
+test "matcher: empty anyGroup fails and empty allGroup passes" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const match: query.Match = .{ .nodes = &.{} };
+
+    var none = [_]rule.Predicate{};
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .any_group = &none }, match));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .all_group = &none }, match));
+}
+
+test "matcher: allGroup requires every member to pass" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ident} };
+
+    var hit = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "foo" } };
+    var prefix = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "fo" } };
+    var miss = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "baz" } };
+
+    var passing = [_]rule.Predicate{ .{ .eq = &hit }, .{ .starts_with = &prefix } };
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .all_group = &passing }, match));
+
+    var failing = [_]rule.Predicate{ .{ .eq = &hit }, .{ .eq = &miss } };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .all_group = &failing }, match));
+}
+
+test "matcher: evaluate conjoins the top level predicate list" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ident} };
+    const ctx: matcher.EvalContext = .{
+        .allocator = std.testing.allocator,
+        .source = src,
+        .root = t.root(),
+    };
+
+    try std.testing.expectEqual(true, try matcher.evaluate(&.{}, match, ctx));
+
+    var hit = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "foo" } };
+    var miss = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "baz" } };
+    try std.testing.expectEqual(false, try matcher.evaluate(&.{ .{ .eq = &hit }, .{ .eq = &miss } }, match, ctx));
+}
+
 test "matcher: regex match is false when it has no operands" {
     const src = "const foo = \"bar\";";
     var t = test_tree.build(std.testing.allocator, .ts, src);
