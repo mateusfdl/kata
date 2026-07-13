@@ -1,6 +1,5 @@
 const std = @import("std");
 
-const diagnostic = @import("core").diagnostic;
 const kinds = @import("kinds.zig");
 const language = @import("core").language;
 const Node = @import("core").node.Node;
@@ -44,7 +43,6 @@ const Span = struct {
     kind: MetricKind,
     start: u32,
     end: u32,
-    range: diagnostic.Range,
 };
 
 /// Spans sorted parent-before-child plus, for every span, the index of the
@@ -254,16 +252,10 @@ fn collectSpans(
 
     while (stack.pop()) |node| {
         if (kinds.classify(compiled.table, node)) |kind| {
-            const sp = node.startPoint();
-            const ep = node.endPoint();
             try spans.append(allocator, .{
                 .kind = kind,
                 .start = node.startByte(),
                 .end = node.endByte(),
-                .range = .{
-                    .start = .{ .line = sp.row, .column = sp.column },
-                    .end = .{ .line = ep.row, .column = ep.column },
-                },
             });
         }
 
