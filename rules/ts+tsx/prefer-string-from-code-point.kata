@@ -1,0 +1,19 @@
+rule prefer-string-from-code-point {
+  lang ts, tsx
+
+  match call_expression @match {
+    function: member_expression {
+      object: identifier @obj
+      property: property_identifier @prop
+    }
+  }
+
+  where {
+    text(@obj) == "String"
+    text(@prop) == "fromCharCode"
+  }
+
+  emit @match {
+    message "Prefer String.fromCodePoint() over String.fromCharCode()"
+  }
+}
