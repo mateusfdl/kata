@@ -11,6 +11,7 @@ comptime {
     _ = @import("expr_test.zig");
     _ = @import("glob_test.zig");
     _ = @import("language_test.zig");
+    _ = @import("matcher_test.zig");
     _ = @import("metric_test.zig");
     _ = @import("node_kinds_test.zig");
     _ = @import("node_test.zig");
