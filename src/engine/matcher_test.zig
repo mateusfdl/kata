@@ -237,6 +237,20 @@ test "matcher: regex match tests the capture text" {
     try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_match = miss }, match));
 }
 
+test "matcher: regex match is false when it has no operands" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ident} };
+
+    var args = [_]rule.PredicateOperand{};
+    const pred: rule.RegexPredicate = .{ .args = &args, .regex = mvzr.compile("^fo").? };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .match = pred }, match));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_match = pred }, match));
+}
+
 test "matcher: regex match is false for an unbound capture" {
     const src = "const foo = \"bar\";";
     var t = test_tree.build(std.testing.allocator, .ts, src);

@@ -400,6 +400,8 @@ fn evalMatch(
     source: []const u8,
     negate: bool,
 ) bool {
+    if (pred.args.len == 0) return false;
+
     const text = resolveText(pred.args[0], match, source) orelse return false;
 
     return pred.regex.isMatch(text) != negate;
