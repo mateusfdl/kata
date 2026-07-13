@@ -1,10 +1,10 @@
 # kata
 
-Tree-sitter-based linter that enforces coding-style rules from `.scm` query files.
+Tree-sitter-based linter that enforces coding-style rules written in the kata DSL.
 Built to run as a hook on AI coding agents so style is enforced by tooling, not by
 relying on the model.
 
-Rules live under `rules/<lang>/<id>.scm` (embedded at build time) and may be
+Rules live under `rules/<lang>/<id>.kata` (embedded at build time) and may be
 extended with user rules under `$XDG_CONFIG_HOME/kata/rules/` and per-project
 rules under `<project>/.kata/rules/`. A rule file makes a rule available; it
 only runs once declared under `enabled:` in `rules.yaml`. Supported languages:
@@ -25,9 +25,9 @@ make test             # unit tests
 | `kata` | Start the daemon (foreground). Socket path from `KATA_SOCKET` (see Daemon). |
 | `kata check <path>` | Lint a file or, recursively, a directory. `kata check .` for the whole tree. |
 | `kata check --text\|--json <path>` | Select the report format (see Reports). |
-| `kata query '<scm>' [path] --lang=<lang>` | Evaluate an inline rule against a file or directory (default `.`). Ignores configured rules. |
+| `kata query '<kata rule>' [path] --lang=<lang>` | Evaluate an inline rule against a file or directory (default `.`). Ignores configured rules. |
 | `kata stop` | Tell a running daemon to shut down. |
-| `kata new-rule <lang> <id>` | Scaffold a `.scm` template under `$XDG_CONFIG_HOME/kata/rules/<lang>/<id>.scm`. Refuses to overwrite. |
+| `kata new-rule <lang> <id>` | Scaffold a `.kata` template under `$XDG_CONFIG_HOME/kata/rules/<lang>/<id>.kata`. Refuses to overwrite. |
 | `kata --lang=<ts\|tsx\|go> < src` | One-shot: read source on stdin, emit a JSON report. `--filename=<path>` infers the language. |
 
 When checking a directory, `kata` skips `.git` and any folder named in the target's
@@ -63,14 +63,16 @@ kata --filename=src/app.tsx < app.tsx
 rule set: embedded rules, user rules, and `rules.yaml` are all ignored.
 
 ```
-kata query '((function_declaration) @match
-  (#where? "(> (complexity @match) 10)")
-  (#set! message "complexity {complexity @match} exceeds 10"))' src/ --lang=ts
+kata query 'rule query {
+  lang ts
+  match function_declaration @match
+  where { complexity(@match) > 10 }
+  emit @match { message "complexity {complexity(@match)} exceeds 10" }
+}' src/ --lang=ts
 ```
 
-The query uses the same syntax as a `.scm` rule file (see Rule syntax),
-including `#where?`, `#set!`, and message interpolation. Diagnostics report
-under the rule id `query`.
+The query is a rule block in the kata DSL (see Rule syntax) and must be
+spelled `rule query { ... }`. Diagnostics report under the rule id `query`.
 
 `--lang` is required and declares which grammar(s) the query is written for;
 a comma list (`--lang=ts,tsx`) applies it to several languages in one walk.
@@ -170,7 +172,7 @@ A project directory may contain:
 ```
 .kata/
   rules.yaml          # same schema as the global file
-  rules/<lang>/<id>.scm
+  rules/<lang>/<id>.kata
 ```
 
 Precedence:
@@ -182,7 +184,7 @@ Precedence:
   file. A project `enabled:` therefore replaces the global active set entirely,
   an empty one deactivates every rule for that project, and `ratchet` can be
   turned on for a single project.
-- Activation is opt-in at every tier: a `.scm` file under `.kata/rules/` does
+- Activation is opt-in at every tier: a rule file under `.kata/rules/` does
   nothing until an `enabled:` entry (project or inherited global) names it.
 
 The daemon resolves the project per request from the file path, so one daemon
@@ -192,26 +194,19 @@ project's context on the fly.
 
 ### Custom rules
 
-Drop `.scm` or `.kata` files under `$XDG_CONFIG_HOME/kata/rules/<lang>/` (or
+Drop `.kata` files under `$XDG_CONFIG_HOME/kata/rules/<lang>/` (or
 `$HOME/.config/kata/rules/<lang>/`) to add your own rules. The basename of the
 file is the rule id; the layout mirrors the embedded `rules/` tree. Like every
 rule, a custom rule stays inactive until listed under `enabled:` in
 `rules.yaml`.
 
 A user or project rule that shares an id with an earlier tier shadows it
-silently, regardless of format: a user `no-console.kata` overrides the embedded
-`no-console.scm`. Two rule files with the same id in the same tier (for example
-`rules/ts/x.scm` and `rules/ts+tsx/x.scm`) keep the last one and print a
-warning:
+silently: a user `no-console.kata` overrides the embedded one. Two rule files
+with the same id in the same tier (for example `rules/ts/x.kata` and
+`rules/ts+tsx/x.kata`) keep the last one and print a warning:
 
 ```
 kata: warning: user rule ts/no-console overrides previous definition
-```
-
-The same id in both formats in one tier is an error, not a guess:
-
-```
-kata: rule ts/no-console exists as both .scm and .kata
 ```
 
 To bootstrap a new custom rule, use:
@@ -221,64 +216,12 @@ kata new-rule ts no-throw-literal
 ```
 
 It creates the parent directory if needed, refuses to overwrite an existing
-file, and prints the path of the new `.scm` file ready for editing, plus a
+file, and prints the path of the new `.kata` file ready for editing, plus a
 reminder to add the rule to `enabled:`.
 
 ### Rule syntax
 
-A rule is a tree-sitter query. The node to flag is captured as `@match`; its
-position drives the diagnostic. Matches can be filtered with predicates and
-annotated with `#set!` directives.
-
-Predicates (all take a capture as the first argument):
-
-- `#eq? @cap "str"` / `#eq? @a @b` — keep the match when the capture text equals
-  the string (or the other capture's text). `#not-eq?` negates.
-- `#any-of? @cap "a" "b" ...` — keep when the capture text equals any of the
-  strings. `#not-any-of?` negates.
-- `#match? @cap "regex"` — keep when the capture text matches the regular
-  expression. `#not-match?` negates. Matching is **unanchored** (a substring
-  search); use `^` / `$` to anchor.
-
-`#match?` is what lets a rule carve out exceptions by content. For example, a
-Go `no-comments` rule that still allows compiler directives:
-
-```scheme
-((comment) @match
- (#not-match? @match "^//go:")
- (#set! message "comments are not allowed - code should be self-documenting"))
-```
-
-Directives (`#set!`):
-
-- `(#set! message "...")` — the diagnostic message (defaults to the rule id).
-- `(#set! exclude-paths "<glob> <glob> ...")` — skip this rule for files whose
-  path matches any of the space-separated globs.
-
-Path globs are matched against the file path **relative to the check target**,
-anchored to the whole path:
-
-- `*` matches within a single path segment (does not cross `/`).
-- `**` matches across segments, so `**/` matches any number of leading dirs.
-- `?` matches one non-`/` character.
-- A trailing `/` is a directory prefix: `vendor/` matches everything under a
-  top-level `vendor/`; use `**/vendor/` to match a `vendor/` at any depth.
-
-So `(#set! exclude-paths "**/*_test.go vendor/")` skips the rule in every
-`_test.go` file and anywhere under a top-level `vendor/`. Path guards are a
-no-op when no filename is available (the `--lang` one-shot reading stdin without
-`--filename`).
-
-Unknown predicate names and unknown `#set!` keys are rejected at startup, naming
-the offending rule, so a typo never silently disables a check:
-
-```
-kata: rule go/no-comments: unsupported predicate, #set! key, or regex
-```
-
-### Kata DSL rules
-
-Rules can also be written in the kata DSL as `.kata` files:
+Rules are written in the kata DSL as `.kata` files:
 
 ```kata
 rule no-console {
@@ -298,9 +241,36 @@ rule no-console {
 
 Every rule block in a `.kata` file carries the id of the file name, and the
 `lang` clause must include the language directory the file sits in. A file may
-repeat the rule block to bundle pattern variants under one id. Everything else
-works exactly like `.scm` rules: same tiers, same shadowing, same `enabled:`
-opt-in, same fixture harness under `tests/`.
+repeat the rule block to bundle pattern variants under one id. The node the
+`emit` clause names drives the diagnostic position.
+
+A rule block may skip files by glob with an `exclude paths` clause:
+
+```kata
+rule no-comments {
+  lang go
+
+  exclude paths "**/*_test.go", "vendor/"
+
+  match comment @match
+
+  emit @match { message "comments are not allowed" }
+}
+```
+
+Path globs are matched against the file path **relative to the check target**,
+anchored to the whole path:
+
+- `*` matches within a single path segment (does not cross `/`).
+- `**` matches across segments, so `**/` matches any number of leading dirs.
+- `?` matches one non-`/` character.
+- A trailing `/` is a directory prefix: `vendor/` matches everything under a
+  top-level `vendor/`; use `**/vendor/` to match a `vendor/` at any depth.
+
+So `exclude paths "**/*_test.go", "vendor/"` skips the rule in every `_test.go`
+file and anywhere under a top-level `vendor/`. Path guards are a no-op when no
+filename is available (the `--lang` one-shot reading stdin without
+`--filename`).
 
 Matchers accept alternations, and a field block on an alternation is
 distributed into every branch:
