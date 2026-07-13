@@ -153,7 +153,6 @@ fn enclosingMethodContainer(methods: []const facts.MethodDef, start: u32) ?[]con
     return if (best) |i| methods[i].container else null;
 }
 
-
 fn classifyMetric(k: kinds.Kind) ?metric.MetricKind {
     return switch (k) {
         .function_declaration,

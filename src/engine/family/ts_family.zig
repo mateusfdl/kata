@@ -140,7 +140,6 @@ fn innermostClassName(classes: []const facts.ClassDef, start: u32, end: u32) ?[]
     return if (best) |i| classes[i].name else null;
 }
 
-
 fn classifyMetric(k: kinds.Kind) ?metric.MetricKind {
     return switch (k) {
         .function_declaration,

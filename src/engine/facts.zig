@@ -135,9 +135,6 @@ pub fn cap(role: Role) query.CaptureId {
     return @intFromEnum(role);
 }
 
-
-
-
 const Lists = struct {
     classes: std.ArrayList(ClassDef) = .empty,
     methods: std.ArrayList(MethodDef) = .empty,
@@ -291,9 +288,6 @@ fn declTypeName(
 
     return try arena.dupe(u8, type_name);
 }
-
-
-
 
 fn sortByStart(comptime T: type, items: []T) void {
     std.mem.sort(T, items, {}, struct {
