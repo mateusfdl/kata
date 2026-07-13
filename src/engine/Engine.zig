@@ -167,7 +167,7 @@ pub const Engine = struct {
         const slot = self.metric_queries.getPtr(lang);
         if (slot.*) |*cached| return cached;
 
-        slot.* = try metric.compile(self.allocator, lang);
+        slot.* = try metric.compile(self.allocator, lang.family());
 
         return &slot.*.?;
     }
@@ -227,7 +227,7 @@ pub const Engine = struct {
         const metric_ctx: ?matcher.MetricContext = if (needsMeasures(compiled)) .{
             .allocator = allocator,
             .compiled = try self.ensureMetricQuery(lang),
-            .lang = lang,
+            .fam = lang.family(),
         } else null;
 
         const eval_ctx: matcher.EvalContext = .{

@@ -1,8 +1,8 @@
 const std = @import("std");
 
 const expr = @import("expr.zig");
+const family_mod = @import("family/family.zig");
 const glob = @import("glob.zig");
-const language = @import("language.zig");
 const metric = @import("metric.zig");
 const query = @import("query.zig");
 const rule = @import("rule.zig");
@@ -11,7 +11,7 @@ const Node = @import("node.zig").Node;
 pub const MetricContext = struct {
     allocator: std.mem.Allocator,
     compiled: *const metric.Compiled,
-    lang: language.Name,
+    fam: family_mod.Family,
 };
 
 pub const EvalContext = struct {
@@ -273,7 +273,7 @@ const NodeMeasures = struct {
             .nesting => try metric.nestingOf(self.ctx.allocator, self.ctx.compiled, node),
             .length => metric.lengthOf(node),
             .text => self.numericText(node),
-            .params => metric.paramsOf(node, self.ctx.lang),
+            .params => metric.paramsOf(node, self.ctx.fam),
             .args => metric.argsOf(node),
             .position => metric.positionOf(node),
             .siblings => metric.siblingsOf(node),

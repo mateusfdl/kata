@@ -1,10 +1,35 @@
 const std = @import("std");
 
-const kinds = @import("kinds.zig");
-const language = @import("language.zig");
+const family_mod = @import("family/family.zig");
 const Node = @import("node.zig").Node;
 
-const MetricKind = kinds.MetricKind;
+pub const MetricKind = enum {
+    function,
+    branch,
+    ternary,
+    loop,
+    case,
+    switch_stmt,
+    catch_clause,
+    bool_op,
+};
+
+pub fn classify(table: []const ?MetricKind, node: Node) ?MetricKind {
+    const id = node.kindId();
+    if (id >= table.len) return null;
+    const mk = table[id] orelse return null;
+    if (mk == .bool_op) {
+        const op = node.childByFieldName("operator") orelse return null;
+        if (!isLogicalOperator(op.kind())) return null;
+    }
+    return mk;
+}
+
+fn isLogicalOperator(op: []const u8) bool {
+    return std.mem.eql(u8, op, "&&") or
+        std.mem.eql(u8, op, "||") or
+        std.mem.eql(u8, op, "??");
+}
 
 fn isComplexityPoint(kind: MetricKind) bool {
     return switch (kind) {
@@ -30,13 +55,9 @@ pub const Compiled = struct {
 
 pub fn compile(
     allocator: std.mem.Allocator,
-    lang: language.Name,
+    fam: family_mod.Family,
 ) std.mem.Allocator.Error!Compiled {
-    const table = switch (lang) {
-        .ts, .tsx => try kinds.buildTsTable(allocator),
-        .go => try kinds.buildGoTable(allocator),
-    };
-    return .{ .table = table };
+    return .{ .table = try family_mod.of(fam).buildMetricTable(allocator) };
 }
 
 const Span = struct {
@@ -185,52 +206,21 @@ pub fn lengthOf(node: Node) u32 {
     return node.endPoint().row - node.startPoint().row + 1;
 }
 
-pub fn paramsOf(node: Node, lang: language.Name) ?u32 {
+pub fn paramsOf(node: Node, fam: family_mod.Family) ?u32 {
     if (node.childByFieldName("parameters")) |params| {
-        return switch (lang) {
-            .ts, .tsx => countNonExtraNamed(params),
-            .go => goParamCount(params),
-        };
+        return family_mod.of(fam).paramCount(params);
     }
     if (node.childByFieldName("parameter") != null) return 1;
     return null;
 }
 
-fn goParamCount(params: Node) u32 {
-    var total: u32 = 0;
-    var i: u32 = 0;
-    while (i < params.namedChildCount()) : (i += 1) {
-        const decl = params.namedChild(i) orelse continue;
-        if (!isGoParameterDeclaration(decl)) continue;
-        const names = countFieldChildren(decl, "name");
-        total += if (names == 0) 1 else names;
-    }
-    return total;
-}
-
-fn isGoParameterDeclaration(node: Node) bool {
-    const kind = node.kind();
-    return std.mem.eql(u8, kind, "parameter_declaration") or
-        std.mem.eql(u8, kind, "variadic_parameter_declaration");
-}
-
-fn countNonExtraNamed(node: Node) u32 {
+pub fn countNonExtraNamed(node: Node) u32 {
     var count: u32 = 0;
     var i: u32 = 0;
     while (i < node.namedChildCount()) : (i += 1) {
         const child = node.namedChild(i) orelse continue;
         if (child.isExtra()) continue;
         count += 1;
-    }
-    return count;
-}
-
-fn countFieldChildren(node: Node, field: []const u8) u32 {
-    var count: u32 = 0;
-    var i: u32 = 0;
-    while (i < node.childCount()) : (i += 1) {
-        const name = node.fieldNameForChild(i) orelse continue;
-        if (std.mem.eql(u8, name, field)) count += 1;
     }
     return count;
 }
@@ -251,7 +241,7 @@ fn collectSpans(
     try stack.append(allocator, root);
 
     while (stack.pop()) |node| {
-        if (kinds.classify(compiled.table, node)) |kind| {
+        if (classify(compiled.table, node)) |kind| {
             try spans.append(allocator, .{
                 .kind = kind,
                 .start = node.startByte(),

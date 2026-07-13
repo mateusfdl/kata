@@ -1,12 +1,13 @@
 const std = @import("std");
 const nk = @import("node_kinds");
 
-const kinds = @import("kinds.zig");
+const family = @import("family/family.zig");
+const metric = @import("metric.zig");
 const node = @import("node.zig");
 const test_tree = @import("test_tree.zig");
 const Node = node.Node;
 
-const MetricKind = kinds.MetricKind;
+const MetricKind = metric.MetricKind;
 
 fn tsId(comptime name: []const u8) u16 {
     return @intFromEnum(@field(nk.ts_family.Kind, name));
@@ -25,16 +26,16 @@ fn collectBinary(n: Node, out: *std.ArrayList(Node), gpa: std.mem.Allocator) !vo
 }
 
 fn walkClassifyAll(n: Node, table: []const ?MetricKind) void {
-    _ = kinds.classify(table, n);
+    _ = metric.classify(table, n);
     var i: u32 = 0;
     while (i < n.childCount()) : (i += 1) {
         if (n.child(i)) |c| walkClassifyAll(c, table);
     }
 }
 
-test "kinds: ts table classifies decision points by kind" {
+test "metric: ts table classifies decision points by kind" {
     const gpa = std.testing.allocator;
-    const table = try kinds.buildTsTable(gpa);
+    const table = try family.of(.ts_family).buildMetricTable(gpa);
     defer gpa.free(table);
 
     try std.testing.expectEqual(MetricKind.branch, table[tsId("if_statement")].?);
@@ -50,9 +51,9 @@ test "kinds: ts table classifies decision points by kind" {
     try std.testing.expectEqual(@as(?MetricKind, null), table[tsId("identifier")]);
 }
 
-test "kinds: tsx-only kinds share the ts_family table" {
+test "metric: tsx-only kinds share the ts_family table" {
     const gpa = std.testing.allocator;
-    const table = try kinds.buildTsTable(gpa);
+    const table = try family.of(.ts_family).buildMetricTable(gpa);
     defer gpa.free(table);
 
     try std.testing.expectEqual(MetricKind.branch, table[tsId("if_statement")].?);
@@ -60,9 +61,9 @@ test "kinds: tsx-only kinds share the ts_family table" {
     try std.testing.expectEqual(@as(?MetricKind, null), table[tsId("jsx_element")]);
 }
 
-test "kinds: go table classifies decision points by kind" {
+test "metric: go table classifies decision points by kind" {
     const gpa = std.testing.allocator;
-    const table = try kinds.buildGoTable(gpa);
+    const table = try family.of(.go).buildMetricTable(gpa);
     defer gpa.free(table);
 
     try std.testing.expectEqual(MetricKind.function, table[goId("method_declaration")].?);
@@ -76,9 +77,9 @@ test "kinds: go table classifies decision points by kind" {
     try std.testing.expectEqual(@as(?MetricKind, null), table[goId("identifier")]);
 }
 
-test "kinds: bool-op refinement counts only logical binary operators in ts" {
+test "metric: bool-op refinement counts only logical binary operators in ts" {
     const gpa = std.testing.allocator;
-    const table = try kinds.buildTsTable(gpa);
+    const table = try family.of(.ts_family).buildMetricTable(gpa);
     defer gpa.free(table);
 
     var t = test_tree.build(gpa, .ts, "const x = a && b || (c ?? d); const y = a + b;");
@@ -92,7 +93,7 @@ test "kinds: bool-op refinement counts only logical binary operators in ts" {
     var arithmetic: usize = 0;
     for (binaries.items) |bin| {
         const op = bin.childByFieldName("operator").?.kind();
-        const result = kinds.classify(table, bin);
+        const result = metric.classify(table, bin);
         if (std.mem.eql(u8, op, "+")) {
             arithmetic += 1;
             try std.testing.expectEqual(@as(?MetricKind, null), result);
@@ -105,9 +106,9 @@ test "kinds: bool-op refinement counts only logical binary operators in ts" {
     try std.testing.expectEqual(@as(usize, 1), arithmetic);
 }
 
-test "kinds: bool-op refinement counts only logical binary operators in go" {
+test "metric: bool-op refinement counts only logical binary operators in go" {
     const gpa = std.testing.allocator;
-    const table = try kinds.buildGoTable(gpa);
+    const table = try family.of(.go).buildMetricTable(gpa);
     defer gpa.free(table);
 
     var t = test_tree.build(gpa, .go, "package main\nfunc f(a bool, b int) {\n\t_ = a && a\n\t_ = b + b\n}\n");
@@ -120,7 +121,7 @@ test "kinds: bool-op refinement counts only logical binary operators in go" {
     try std.testing.expectEqual(@as(usize, 2), binaries.items.len);
     for (binaries.items) |bin| {
         const op = bin.childByFieldName("operator").?.kind();
-        const result = kinds.classify(table, bin);
+        const result = metric.classify(table, bin);
         if (std.mem.eql(u8, op, "&&")) {
             try std.testing.expectEqual(MetricKind.bool_op, result.?);
         } else {
@@ -129,9 +130,9 @@ test "kinds: bool-op refinement counts only logical binary operators in go" {
     }
 }
 
-test "kinds: classify tolerates error nodes without indexing out of range" {
+test "metric: classify tolerates error nodes without indexing out of range" {
     const gpa = std.testing.allocator;
-    const table = try kinds.buildTsTable(gpa);
+    const table = try family.of(.ts_family).buildMetricTable(gpa);
     defer gpa.free(table);
 
     var t = test_tree.build(gpa, .ts, "function (");
