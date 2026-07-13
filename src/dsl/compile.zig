@@ -6,6 +6,7 @@ const lower = @import("lower.zig");
 const diagnostic = @import("engine").diagnostic;
 const dsl_parser = @import("parser.zig");
 const expr = @import("engine").expr;
+const family = @import("engine").family;
 const kind_map = @import("engine").kind_map;
 const language = @import("engine").language;
 const node_kinds = @import("node_kinds");
@@ -125,8 +126,8 @@ pub fn compile(
     errdefer arena_ptr.deinit();
     const arena = arena_ptr.allocator();
 
-    const kinds = try kind_map.build(lang, language.grammar(lang), arena);
-    var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag, .kind_remap = kinds.kind_remap, .field_remap = kinds.field_remap, .supertypes = kind_map.supertypes(lang) };
+    const kinds = try kind_map.build(lang.family(), language.grammar(lang), arena);
+    var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag, .kind_remap = kinds.kind_remap, .field_remap = kinds.field_remap, .supertypes = family.of(lang.family()).supertypes };
 
     var patterns: std.ArrayList(rule.CompiledPattern) = .empty;
     for (file.rules) |*r| {

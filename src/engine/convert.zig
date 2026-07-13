@@ -2,7 +2,7 @@ const std = @import("std");
 const ts = @import("tree_sitter");
 
 const ast = @import("ast.zig");
-const language = @import("language.zig");
+const family_mod = @import("family/family.zig");
 
 /// Clone a finished tree-sitter CST rooted at `root` into a flat kata `Ast`. The
 /// walk is an iterative pre-order DFS (depth-safe on adversarial nesting), and it
@@ -11,7 +11,7 @@ const language = @import("language.zig");
 /// the matcher expects by construction. Anonymous tokens keep their field ids,
 /// which the bool-op metric refinement depends on.
 pub fn build(
-    lang: language.Name,
+    fam: family_mod.Family,
     kind_remap: []const u16,
     field_remap: []const u16,
     root: ts.Node,
@@ -58,7 +58,7 @@ pub fn build(
     errdefer gpa.free(line_starts);
 
     return .{
-        .lang = lang,
+        .family = fam,
         .nodes = try nodes.toOwnedSlice(gpa),
         .line_starts = line_starts,
     };

@@ -2,6 +2,7 @@ const std = @import("std");
 const nk = @import("node_kinds");
 
 const ast = @import("ast.zig");
+const family = @import("engine").family;
 const kind_map = @import("engine").kind_map;
 const language = @import("engine").language;
 const lower = @import("lower.zig");
@@ -17,7 +18,7 @@ fn tsFieldId(comptime name: []const u8) u16 {
 }
 
 fn tsKinds(arena: std.mem.Allocator) kind_map.Kinds {
-    return kind_map.build(.ts, language.grammar(.ts), arena) catch unreachable;
+    return kind_map.build(.ts_family, language.grammar(.ts), arena) catch unreachable;
 }
 
 fn matchPattern(arena: std.mem.Allocator, src: []const u8) ast.NodePattern {
@@ -30,7 +31,7 @@ fn matchPattern(arena: std.mem.Allocator, src: []const u8) ast.NodePattern {
 fn lowerSrc(arena: std.mem.Allocator, src: []const u8) lower.Error!lower.Lowered {
     const pattern = matchPattern(arena, src);
     const kinds = tsKinds(arena);
-    var lowerer = lower.Lowerer.init(arena, language.grammar(.ts), kinds.kind_remap, kinds.field_remap, kind_map.supertypes(.ts));
+    var lowerer = lower.Lowerer.init(arena, language.grammar(.ts), kinds.kind_remap, kinds.field_remap, family.of(.ts_family).supertypes);
     const lowered = try lowerer.lowerPattern(pattern);
     return lowerer.finish(lowered);
 }
@@ -140,7 +141,7 @@ test "lower: unknown node kind fails with the offending name" {
         \\}
     );
     const kinds = tsKinds(arena.allocator());
-    var lowerer = lower.Lowerer.init(arena.allocator(), language.grammar(.ts), kinds.kind_remap, kinds.field_remap, kind_map.supertypes(.ts));
+    var lowerer = lower.Lowerer.init(arena.allocator(), language.grammar(.ts), kinds.kind_remap, kinds.field_remap, family.of(.ts_family).supertypes);
 
     try std.testing.expectError(error.UnknownNodeKind, lowerer.lowerPattern(pattern));
     try std.testing.expectEqualStrings("faketype", lowerer.detail);
@@ -160,7 +161,7 @@ test "lower: unknown field fails with the offending name" {
         \\}
     );
     const kinds = tsKinds(arena.allocator());
-    var lowerer = lower.Lowerer.init(arena.allocator(), language.grammar(.ts), kinds.kind_remap, kinds.field_remap, kind_map.supertypes(.ts));
+    var lowerer = lower.Lowerer.init(arena.allocator(), language.grammar(.ts), kinds.kind_remap, kinds.field_remap, family.of(.ts_family).supertypes);
 
     try std.testing.expectError(error.UnknownField, lowerer.lowerPattern(pattern));
     try std.testing.expectEqualStrings("fakefield", lowerer.detail);

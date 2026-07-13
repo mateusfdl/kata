@@ -176,7 +176,7 @@ pub const Engine = struct {
         const slot = self.kinds.getPtr(lang);
         if (slot.*) |*cached| return cached;
 
-        slot.* = try kind_map.build(lang, language.grammar(lang), self.allocator);
+        slot.* = try kind_map.build(lang.family(), language.grammar(lang), self.allocator);
 
         return &slot.*.?;
     }
@@ -200,7 +200,7 @@ pub const Engine = struct {
         const kinds = try self.ensureKinds(lang);
         const parser = try self.ensureParser(lang);
         const tree = parser.parseString(source, null) orelse return error.ParseFailed;
-        const cloned = convert.build(lang, kinds.kind_remap, kinds.field_remap, tree.rootNode(), source, self.allocator) catch |err| {
+        const cloned = convert.build(lang.family(), kinds.kind_remap, kinds.field_remap, tree.rootNode(), source, self.allocator) catch |err| {
             tree.destroy();
             return err;
         };

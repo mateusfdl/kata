@@ -40,7 +40,7 @@ pub const Tree = struct {
 
 pub fn build(gpa: std.mem.Allocator, lang: language.Name, source: []const u8) Tree {
     const grammar = language.grammar(lang);
-    const kinds = kind_map.build(lang, grammar, gpa) catch unreachable;
+    const kinds = kind_map.build(lang.family(), grammar, gpa) catch unreachable;
 
     const parser = ts.Parser.create();
     defer parser.destroy();
@@ -48,6 +48,6 @@ pub fn build(gpa: std.mem.Allocator, lang: language.Name, source: []const u8) Tr
     const tree = parser.parseString(source, null).?;
     defer tree.destroy();
 
-    const cloned = convert.build(lang, kinds.kind_remap, kinds.field_remap, tree.rootNode(), source, gpa) catch unreachable;
+    const cloned = convert.build(lang.family(), kinds.kind_remap, kinds.field_remap, tree.rootNode(), source, gpa) catch unreachable;
     return .{ .lang = lang, .ast = cloned, .kinds = kinds };
 }

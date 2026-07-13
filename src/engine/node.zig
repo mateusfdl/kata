@@ -1,8 +1,7 @@
 const std = @import("std");
-const nk = @import("node_kinds");
 
 const ast = @import("ast.zig");
-const language = @import("language.zig");
+const family = @import("family/family.zig");
 
 pub const Point = ast.Point;
 
@@ -22,7 +21,7 @@ pub const Node = struct {
     }
 
     pub fn kind(self: Node) []const u8 {
-        return kindName(self.tree.lang, self.stored().kind);
+        return family.of(self.tree.family).kindName(self.stored().kind);
     }
 
     pub fn kindId(self: Node) u16 {
@@ -67,7 +66,7 @@ pub const Node = struct {
     }
 
     pub fn childByFieldName(self: Node, name: []const u8) ?Node {
-        const field_id = fieldEnumId(self.tree.lang, name);
+        const field_id = family.of(self.tree.family).fieldId(name);
         if (field_id == 0) return null;
         return self.childByFieldId(field_id);
     }
@@ -84,7 +83,7 @@ pub const Node = struct {
 
     pub fn fieldNameForChild(self: Node, index: u32) ?[]const u8 {
         const c = self.childAt(index, false) orelse return null;
-        return fieldName(self.tree.lang, c.stored().field_id);
+        return family.of(self.tree.family).fieldName(c.stored().field_id);
     }
 
     pub fn prevNamedSibling(self: Node) ?Node {
@@ -146,28 +145,3 @@ pub const Node = struct {
     }
 };
 
-fn kindName(lang: language.Name, id: u16) []const u8 {
-    return switch (lang) {
-        .ts, .tsx => nk.ts_family.name(id),
-        .go => nk.go.name(id),
-    };
-}
-
-fn fieldEnumId(lang: language.Name, name: []const u8) u16 {
-    return switch (lang) {
-        .ts, .tsx => enumId(nk.ts_family.Field, name),
-        .go => enumId(nk.go.Field, name),
-    };
-}
-
-fn enumId(comptime Field: type, name: []const u8) u16 {
-    return if (std.meta.stringToEnum(Field, name)) |f| @intFromEnum(f) else 0;
-}
-
-fn fieldName(lang: language.Name, id: u16) ?[]const u8 {
-    if (id == 0) return null;
-    return switch (lang) {
-        .ts, .tsx => @tagName(@as(nk.ts_family.Field, @enumFromInt(id))),
-        .go => @tagName(@as(nk.go.Field, @enumFromInt(id))),
-    };
-}

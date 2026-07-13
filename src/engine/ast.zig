@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const language = @import("language.zig");
+const family_mod = @import("family/family.zig");
 
 pub const NodeIndex = u32;
 
@@ -36,7 +36,7 @@ pub const StoredNode = struct {
 /// tree-sitter tree it was built from. Points are not stored per node; they are
 /// derived on demand from byte offsets against `line_starts`.
 pub const Ast = struct {
-    lang: language.Name,
+    family: family_mod.Family,
     nodes: []const StoredNode,
     line_starts: []const u32,
 
