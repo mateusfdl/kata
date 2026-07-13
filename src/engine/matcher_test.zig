@@ -3,6 +3,7 @@ const mvzr = @import("mvzr");
 
 const expr = @import("expr.zig");
 const matcher = @import("matcher.zig");
+const metric = @import("metric.zig");
 const query = @import("query.zig");
 const rule = @import("rule.zig");
 const test_tree = @import("test_tree.zig");
@@ -31,6 +32,25 @@ fn evalOne(
         .allocator = std.testing.allocator,
         .source = source,
         .root = t.root(),
+    });
+}
+
+fn evalOneMetric(
+    t: *const test_tree.Tree,
+    source: []const u8,
+    compiled: *const metric.Compiled,
+    pred: rule.Predicate,
+    match: query.Match,
+) std.mem.Allocator.Error!bool {
+    return matcher.evaluate(&.{pred}, match, .{
+        .allocator = std.testing.allocator,
+        .source = source,
+        .root = t.root(),
+        .metric = .{
+            .allocator = std.testing.allocator,
+            .compiled = compiled,
+            .fam = t.lang.family(),
+        },
     });
 }
 
@@ -750,4 +770,239 @@ test "matcher: parent only accepts the direct parent" {
     };
     try std.testing.expectEqual(false, try evalOne(&t, src, .{ .parent = .{ .args = &args, .matcher = &grandparent } }, match));
     try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_parent = .{ .args = &args, .matcher = &grandparent } }, match));
+}
+
+test "matcher: where is false without a metric context" {
+    const src = "function f(a, b) {}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const fn_node = t.root().namedChild(0).?;
+    const match: query.Match = .{ .nodes = &.{fn_node} };
+
+    const e: expr.Expr = .{ .compare = .{
+        .op = .gt,
+        .left = .{ .measure = .{ .measure = .params, .capture_id = 0 } },
+        .right = .{ .number = 1 },
+    } };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .where = &e }, match));
+}
+
+test "matcher: where compares the params measure of the capture" {
+    const src = "function f(a, b) {}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    var compiled = try metric.compile(std.testing.allocator, t.lang.family());
+    defer compiled.deinit(std.testing.allocator);
+
+    const fn_node = t.root().namedChild(0).?;
+    const match: query.Match = .{ .nodes = &.{fn_node} };
+
+    const above: expr.Expr = .{ .compare = .{
+        .op = .gt,
+        .left = .{ .measure = .{ .measure = .params, .capture_id = 0 } },
+        .right = .{ .number = 1 },
+    } };
+    try std.testing.expectEqual(true, try evalOneMetric(&t, src, &compiled, .{ .where = &above }, match));
+
+    const beyond: expr.Expr = .{ .compare = .{
+        .op = .ge,
+        .left = .{ .measure = .{ .measure = .params, .capture_id = 0 } },
+        .right = .{ .number = 3 },
+    } };
+    try std.testing.expectEqual(false, try evalOneMetric(&t, src, &compiled, .{ .where = &beyond }, match));
+}
+
+test "matcher: where counts go parameters through the family adapter" {
+    const src = "package main\nfunc f(a int) {}";
+    var t = test_tree.build(std.testing.allocator, .go, src);
+    defer t.deinit(std.testing.allocator);
+
+    var compiled = try metric.compile(std.testing.allocator, t.lang.family());
+    defer compiled.deinit(std.testing.allocator);
+
+    const fn_node = firstOfKind(t.root(), "function_declaration").?;
+    const match: query.Match = .{ .nodes = &.{fn_node} };
+
+    const exactly_one: expr.Expr = .{ .compare = .{
+        .op = .eq,
+        .left = .{ .measure = .{ .measure = .params, .capture_id = 0 } },
+        .right = .{ .number = 1 },
+    } };
+    try std.testing.expectEqual(true, try evalOneMetric(&t, src, &compiled, .{ .where = &exactly_one }, match));
+
+    const more: expr.Expr = .{ .compare = .{
+        .op = .gt,
+        .left = .{ .measure = .{ .measure = .params, .capture_id = 0 } },
+        .right = .{ .number = 1 },
+    } };
+    try std.testing.expectEqual(false, try evalOneMetric(&t, src, &compiled, .{ .where = &more }, match));
+}
+
+test "matcher: where text measure parses numeric capture text" {
+    const src = "const n = 42;";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    var compiled = try metric.compile(std.testing.allocator, t.lang.family());
+    defer compiled.deinit(std.testing.allocator);
+
+    const number = firstOfKind(t.root(), "number").?;
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ number, ident } };
+
+    const numeric: expr.Expr = .{ .compare = .{
+        .op = .eq,
+        .left = .{ .measure = .{ .measure = .text, .capture_id = 0 } },
+        .right = .{ .number = 42 },
+    } };
+    try std.testing.expectEqual(true, try evalOneMetric(&t, src, &compiled, .{ .where = &numeric }, match));
+
+    const non_numeric: expr.Expr = .{ .compare = .{
+        .op = .eq,
+        .left = .{ .measure = .{ .measure = .text, .capture_id = 1 } },
+        .right = .{ .number = 42 },
+    } };
+    try std.testing.expectEqual(false, try evalOneMetric(&t, src, &compiled, .{ .where = &non_numeric }, match));
+}
+
+test "matcher: where is false for an unbound capture measure" {
+    const src = "function f(a, b) {}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    var compiled = try metric.compile(std.testing.allocator, t.lang.family());
+    defer compiled.deinit(std.testing.allocator);
+
+    const match: query.Match = .{ .nodes = &.{null} };
+
+    const e: expr.Expr = .{ .compare = .{
+        .op = .ge,
+        .left = .{ .measure = .{ .measure = .params, .capture_id = 0 } },
+        .right = .{ .number = 0 },
+    } };
+    try std.testing.expectEqual(false, try evalOneMetric(&t, src, &compiled, .{ .where = &e }, match));
+}
+
+test "matcher: renderMessage concatenates literals and capture text" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ident} };
+    const ctx: matcher.EvalContext = .{
+        .allocator = std.testing.allocator,
+        .source = src,
+        .root = t.root(),
+    };
+
+    const segments = [_]rule.MessageSegment{
+        .{ .literal = "name: " },
+        .{ .placeholder = .{ .measure = .text, .capture_id = 0 } },
+    };
+    const msg = try matcher.renderMessage(std.testing.allocator, &segments, match, ctx);
+    defer std.testing.allocator.free(msg);
+    try std.testing.expectEqualStrings("name: foo", msg);
+}
+
+test "matcher: renderMessage falls back for an unbound text placeholder" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const match: query.Match = .{ .nodes = &.{null} };
+    const ctx: matcher.EvalContext = .{
+        .allocator = std.testing.allocator,
+        .source = src,
+        .root = t.root(),
+    };
+
+    const segments = [_]rule.MessageSegment{
+        .{ .placeholder = .{ .measure = .text, .capture_id = 0 } },
+    };
+    const msg = try matcher.renderMessage(std.testing.allocator, &segments, match, ctx);
+    defer std.testing.allocator.free(msg);
+    try std.testing.expectEqualStrings("?", msg);
+}
+
+test "matcher: renderMessage renders numeric measures with a metric context" {
+    const src = "function f(a, b) {}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    var compiled = try metric.compile(std.testing.allocator, t.lang.family());
+    defer compiled.deinit(std.testing.allocator);
+
+    const fn_node = t.root().namedChild(0).?;
+    const match: query.Match = .{ .nodes = &.{fn_node} };
+    const ctx: matcher.EvalContext = .{
+        .allocator = std.testing.allocator,
+        .source = src,
+        .root = t.root(),
+        .metric = .{
+            .allocator = std.testing.allocator,
+            .compiled = &compiled,
+            .fam = t.lang.family(),
+        },
+    };
+
+    const segments = [_]rule.MessageSegment{
+        .{ .literal = "params: " },
+        .{ .placeholder = .{ .measure = .params, .capture_id = 0 } },
+    };
+    const msg = try matcher.renderMessage(std.testing.allocator, &segments, match, ctx);
+    defer std.testing.allocator.free(msg);
+    try std.testing.expectEqualStrings("params: 2", msg);
+}
+
+test "matcher: renderMessage falls back for measures without a metric context" {
+    const src = "function f(a, b) {}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const fn_node = t.root().namedChild(0).?;
+    const match: query.Match = .{ .nodes = &.{fn_node} };
+    const ctx: matcher.EvalContext = .{
+        .allocator = std.testing.allocator,
+        .source = src,
+        .root = t.root(),
+    };
+
+    const segments = [_]rule.MessageSegment{
+        .{ .placeholder = .{ .measure = .params, .capture_id = 0 } },
+    };
+    const msg = try matcher.renderMessage(std.testing.allocator, &segments, match, ctx);
+    defer std.testing.allocator.free(msg);
+    try std.testing.expectEqualStrings("?", msg);
+}
+
+test "matcher: renderMessage falls back when the measure resolves to nothing" {
+    const src = "const foo = \"bar\";";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    var compiled = try metric.compile(std.testing.allocator, t.lang.family());
+    defer compiled.deinit(std.testing.allocator);
+
+    const ident = firstOfKind(t.root(), "identifier").?;
+    const match: query.Match = .{ .nodes = &.{ident} };
+    const ctx: matcher.EvalContext = .{
+        .allocator = std.testing.allocator,
+        .source = src,
+        .root = t.root(),
+        .metric = .{
+            .allocator = std.testing.allocator,
+            .compiled = &compiled,
+            .fam = t.lang.family(),
+        },
+    };
+
+    const segments = [_]rule.MessageSegment{
+        .{ .placeholder = .{ .measure = .args, .capture_id = 0 } },
+    };
+    const msg = try matcher.renderMessage(std.testing.allocator, &segments, match, ctx);
+    defer std.testing.allocator.free(msg);
+    try std.testing.expectEqualStrings("?", msg);
 }
