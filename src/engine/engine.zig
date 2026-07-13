@@ -5,7 +5,6 @@ pub const fact_rule = @import("fact_rule.zig");
 pub const family = @import("family/family.zig");
 pub const facts = @import("facts.zig");
 pub const glob = @import("glob.zig");
-pub const kind_map = @import("kind_map.zig");
 pub const language = @import("language.zig");
 pub const matcher = @import("matcher.zig");
 pub const metric = @import("metric.zig");

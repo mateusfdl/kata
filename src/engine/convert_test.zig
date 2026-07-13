@@ -3,8 +3,8 @@ const ts = @import("tree_sitter");
 
 const ast = @import("ast.zig");
 const convert = @import("convert.zig");
-const kind_map = @import("kind_map.zig");
 const language = @import("language.zig");
+const parse_mod = @import("parse.zig");
 
 fn parse(grammar: *const ts.Language, source: []const u8) *ts.Tree {
     const parser = ts.Parser.create();
@@ -61,7 +61,7 @@ fn expectClone(lang: language.Name, source: []const u8) !void {
     const tree = parse(grammar, source);
     defer tree.destroy();
 
-    const kinds = try kind_map.build(lang.family(), grammar, std.testing.allocator);
+    const kinds = try parse_mod.buildKinds(lang.family(), grammar, std.testing.allocator);
     defer std.testing.allocator.free(kinds.kind_remap);
     defer std.testing.allocator.free(kinds.field_remap);
 
@@ -120,7 +120,7 @@ test "convert: syntax error funnels ERROR to kata kind 0 without panic" {
     const tree = parse(grammar, source);
     defer tree.destroy();
 
-    const kinds = try kind_map.build(.ts_family, grammar, std.testing.allocator);
+    const kinds = try parse_mod.buildKinds(.ts_family, grammar, std.testing.allocator);
     defer std.testing.allocator.free(kinds.kind_remap);
     defer std.testing.allocator.free(kinds.field_remap);
 
@@ -139,7 +139,7 @@ test "convert: empty source is a single childless root" {
     const tree = parse(grammar, "");
     defer tree.destroy();
 
-    const kinds = try kind_map.build(.ts_family, grammar, std.testing.allocator);
+    const kinds = try parse_mod.buildKinds(.ts_family, grammar, std.testing.allocator);
     defer std.testing.allocator.free(kinds.kind_remap);
     defer std.testing.allocator.free(kinds.field_remap);
 

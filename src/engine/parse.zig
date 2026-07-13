@@ -3,8 +3,28 @@ const ts = @import("tree_sitter");
 
 const ast = @import("ast.zig");
 const convert = @import("convert.zig");
-const kind_map = @import("kind_map.zig");
+const family_mod = @import("family/family.zig");
 const language = @import("language.zig");
+
+/// Per-grammar remap tables from tree-sitter symbol/field ids to kata ids, built
+/// once per language and cached by the frontend. The converter applies them so
+/// the flat `Ast` stores kata ids directly.
+pub const Kinds = struct {
+    kind_remap: []const u16,
+    field_remap: []const u16,
+};
+
+pub fn buildKinds(
+    fam: family_mod.Family,
+    grammar: *const ts.Language,
+    gpa: std.mem.Allocator,
+) std.mem.Allocator.Error!Kinds {
+    const adapter = family_mod.of(fam);
+    const kind_remap = try adapter.buildKindRemap(grammar, gpa);
+    errdefer gpa.free(kind_remap);
+    const field_remap = try adapter.buildFieldRemap(grammar, gpa);
+    return .{ .kind_remap = kind_remap, .field_remap = field_remap };
+}
 
 /// The only place kata talks to tree-sitter at runtime: parser lifecycle,
 /// remap tables, and the parse-then-clone step. tree-sitter is used only to
@@ -12,7 +32,7 @@ const language = @import("language.zig");
 pub const Frontend = struct {
     allocator: std.mem.Allocator,
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
-    kinds: std.EnumArray(language.Name, ?kind_map.Kinds) = .initFill(null),
+    kinds: std.EnumArray(language.Name, ?Kinds) = .initFill(null),
 
     pub fn init(allocator: std.mem.Allocator) Frontend {
         return .{ .allocator = allocator };
@@ -59,11 +79,11 @@ pub const Frontend = struct {
         return parser;
     }
 
-    fn ensureKinds(self: *Frontend, lang: language.Name) !*const kind_map.Kinds {
+    fn ensureKinds(self: *Frontend, lang: language.Name) !*const Kinds {
         const slot = self.kinds.getPtr(lang);
         if (slot.*) |*cached| return cached;
 
-        slot.* = try kind_map.build(lang.family(), language.grammar(lang), self.allocator);
+        slot.* = try buildKinds(lang.family(), language.grammar(lang), self.allocator);
 
         return &slot.*.?;
     }
