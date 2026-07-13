@@ -1,5 +1,4 @@
 const std = @import("std");
-const ts = @import("tree_sitter");
 
 const ast = @import("dsl").ast;
 const compile = @import("dsl").compile;
