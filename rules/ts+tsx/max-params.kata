@@ -1,0 +1,13 @@
+rule max-params {
+  lang ts, tsx
+
+  match [function_declaration, function_expression, generator_function_declaration, generator_function, arrow_function, method_definition] @match
+
+  where {
+    params(@match) > 7
+  }
+
+  emit @match {
+    message "function has too many parameters {params(@match)} - maximum allowed is 7"
+  }
+}
