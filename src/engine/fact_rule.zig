@@ -401,7 +401,7 @@ fn resolvedImportSource(ctx: Context, fact: Fact) std.mem.Allocator.Error!?[]con
         else => return null,
     };
 
-    return facts.resolveImportSource(ctx.allocator, ctx.file.lang, ctx.file.path, im.source);
+    return facts.resolveImportSource(ctx.allocator, ctx.file.lang.family(), ctx.file.path, im.source);
 }
 
 fn factRange(fact: Fact) diagnostic.Range {

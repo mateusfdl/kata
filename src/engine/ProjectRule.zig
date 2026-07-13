@@ -200,7 +200,7 @@ fn importDenied(
     lang: language.Name,
     specifier: []const u8,
 ) !bool {
-    const resolved = (try facts.resolveImportSource(allocator, lang, importer_path, specifier)) orelse return false;
+    const resolved = (try facts.resolveImportSource(allocator, lang.family(), importer_path, specifier)) orelse return false;
 
     return glob.match(deny, resolved);
 }

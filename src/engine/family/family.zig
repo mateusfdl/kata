@@ -3,7 +3,9 @@ const ts = @import("tree_sitter");
 
 const node_kinds = @import("node_kinds");
 
+const facts = @import("../facts.zig");
 const metric = @import("../metric.zig");
+const query = @import("../query.zig");
 const Node = @import("../node.zig").Node;
 
 pub const Family = enum {
@@ -20,6 +22,9 @@ pub const Adapter = struct {
     buildFieldRemap: *const fn (grammar: *const ts.Language, gpa: std.mem.Allocator) std.mem.Allocator.Error![]u16,
     buildMetricTable: *const fn (gpa: std.mem.Allocator) std.mem.Allocator.Error![]?metric.MetricKind,
     paramCount: *const fn (params: Node) u32,
+    fact_patterns: []const query.Pattern,
+    resolveContainers: *const fn (classes: []const facts.ClassDef, methods: []facts.MethodDef, calls: []facts.Call) void,
+    relative_import_specifiers: bool,
 };
 
 pub fn of(fam: Family) *const Adapter {
