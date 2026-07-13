@@ -20,3 +20,18 @@ func shallow(a bool) int {
 	}
 	return 2
 }
+
+// kata-expect: max-nesting
+func switchDeep(a, b, c bool, v int) int {
+	if a {
+		if b {
+			switch v {
+			case 1:
+				if c {
+					return 1
+				}
+			}
+		}
+	}
+	return 2
+}
