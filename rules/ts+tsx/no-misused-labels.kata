@@ -1,0 +1,28 @@
+rule no-misused-labels {
+  lang ts, tsx
+
+  match labeled_statement {
+    label: statement_identifier @label
+    body: [
+      break_statement,
+      continue_statement,
+      debugger_statement,
+      declaration,
+      empty_statement,
+      export_statement,
+      expression_statement,
+      if_statement,
+      import_statement,
+      labeled_statement,
+      return_statement,
+      statement_block,
+      throw_statement,
+      try_statement,
+      with_statement,
+    ]
+  }
+
+  emit @label {
+    message "Remove this label or move it to a loop or switch statement"
+  }
+}
