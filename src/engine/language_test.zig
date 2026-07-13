@@ -1,4 +1,6 @@
 const std = @import("std");
+
+const family = @import("family/family.zig");
 const language = @import("language.zig");
 
 test "Name.fromString / toString round-trip" {
@@ -26,4 +28,10 @@ test "grammar resolves distinct pointers per language" {
 
 test "supported_list names every language" {
     try std.testing.expectEqualStrings("ts, tsx, or go", language.supported_list);
+}
+
+test "family collapses ts and tsx into ts_family" {
+    try std.testing.expectEqual(family.Family.ts_family, language.Name.ts.family());
+    try std.testing.expectEqual(family.Family.ts_family, language.Name.tsx.family());
+    try std.testing.expectEqual(family.Family.go, language.Name.go.family());
 }

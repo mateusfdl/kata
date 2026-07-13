@@ -2,6 +2,8 @@ const std = @import("std");
 const path = @import("path");
 const ts = @import("tree_sitter");
 
+const family_mod = @import("family/family.zig");
+
 extern fn tree_sitter_typescript() callconv(.c) *const ts.Language;
 extern fn tree_sitter_tsx() callconv(.c) *const ts.Language;
 extern fn tree_sitter_go() callconv(.c) *const ts.Language;
@@ -29,6 +31,13 @@ pub const Name = enum {
         }
 
         return null;
+    }
+
+    pub fn family(self: Name) family_mod.Family {
+        return switch (self) {
+            .ts, .tsx => .ts_family,
+            .go => .go,
+        };
     }
 };
 

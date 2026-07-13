@@ -2,6 +2,7 @@ pub const ast = @import("ast.zig");
 pub const diagnostic = @import("diagnostic.zig");
 pub const expr = @import("expr.zig");
 pub const fact_rule = @import("fact_rule.zig");
+pub const family = @import("family/family.zig");
 pub const facts = @import("facts.zig");
 pub const glob = @import("glob.zig");
 pub const kind_map = @import("kind_map.zig");
