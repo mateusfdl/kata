@@ -4,6 +4,7 @@ const ts = @import("tree_sitter");
 const diagnostic = @import("diagnostic.zig");
 const fact_rule = @import("fact_rule.zig");
 const facts = @import("facts.zig");
+const family_mod = @import("family/family.zig");
 const glob = @import("glob.zig");
 const language = @import("language.zig");
 const matcher = @import("matcher.zig");
@@ -36,7 +37,7 @@ pub const Engine = struct {
     compiler: rule_compiler.RuleCompiler,
     compiled: std.EnumArray(language.Name, RuleSlot) = .initFill(.not_compiled),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
-    metric_queries: std.EnumArray(language.Name, ?metric.Compiled) = .initFill(null),
+    metric_queries: std.EnumArray(family_mod.Family, ?metric.Compiled) = .initFill(null),
     kinds: std.EnumArray(language.Name, ?Kinds) = .initFill(null),
     compiled_fact: ?[]const fact_rule.CompiledFactRule = null,
     fact_arena: ?*std.heap.ArenaAllocator = null,
@@ -92,7 +93,7 @@ pub const Engine = struct {
         for (std.enums.values(language.Name)) |lang| {
             const compiled = try self.ensureCompiled(lang);
             _ = try self.ensureParser(lang);
-            if (needsMeasures(compiled)) _ = try self.ensureMetricQuery(lang);
+            if (needsMeasures(compiled)) _ = try self.ensureMetricQuery(lang.family());
         }
         _ = try self.ensureCompiledFact();
     }
@@ -163,11 +164,11 @@ pub const Engine = struct {
         return &slot.compiled;
     }
 
-    fn ensureMetricQuery(self: *Engine, lang: language.Name) !*metric.Compiled {
-        const slot = self.metric_queries.getPtr(lang);
+    fn ensureMetricQuery(self: *Engine, fam: family_mod.Family) !*metric.Compiled {
+        const slot = self.metric_queries.getPtr(fam);
         if (slot.*) |*cached| return cached;
 
-        slot.* = try metric.compile(self.allocator, lang.family());
+        slot.* = try metric.compile(self.allocator, fam);
 
         return &slot.*.?;
     }
@@ -226,7 +227,7 @@ pub const Engine = struct {
 
         const metric_ctx: ?matcher.MetricContext = if (needsMeasures(compiled)) .{
             .allocator = allocator,
-            .compiled = try self.ensureMetricQuery(lang),
+            .compiled = try self.ensureMetricQuery(lang.family()),
             .fam = lang.family(),
         } else null;
 
