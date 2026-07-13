@@ -1659,3 +1659,32 @@ test "engine: children relation enforces the nested child pattern" {
     try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
     try std.testing.expectEqual(@as(u32, 2), diags[1].range.start.line);
 }
+
+const kata_repeated_capture =
+    \\rule repeated-capture {
+    \\  lang ts
+    \\  match binary_expression @match {
+    \\    left: identifier @side
+    \\    right: identifier @side
+    \\  }
+    \\  where {
+    \\    text(@side) == "a"
+    \\  }
+    \\  emit @match { message "left operand is a" }
+    \\}
+;
+
+test "engine: a repeated capture evaluates against its first binding" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "repeated-capture", kata_repeated_capture);
+    defer f.deinit();
+
+    const flagged = try f.engine.lint(gpa, "a + b;\n", .ts, null);
+    defer gpa.free(flagged);
+    try std.testing.expectEqual(@as(usize, 1), flagged.len);
+    try std.testing.expectEqualStrings("left operand is a", flagged[0].message);
+
+    const clean = try f.engine.lint(gpa, "b + a;\n", .ts, null);
+    defer gpa.free(clean);
+    try std.testing.expectEqual(@as(usize, 0), clean.len);
+}

@@ -58,7 +58,8 @@ pub const Match = struct {
 /// Run `pattern` over the subtree at `root`, returning one Match per satisfying
 /// assignment in pre-order. `capture_count` sizes each Match. Matching a node
 /// with an unanchored `child` relation that has several satisfying children
-/// yields one Match per child, reproducing tree-sitter query multiplicity.
+/// yields one Match per child, reproducing tree-sitter query multiplicity. A
+/// capture id shared by several pattern nodes keeps its first binding.
 pub fn run(
     arena: std.mem.Allocator,
     pattern: *const Pattern,
@@ -118,7 +119,7 @@ fn matchNode(
         var saved: ?Node = undefined;
         if (pattern.capture) |c| {
             saved = bindings[c];
-            bindings[c] = n;
+            if (saved == null) bindings[c] = n;
         }
         defer if (pattern.capture) |c| {
             bindings[c] = saved;
@@ -134,7 +135,7 @@ fn matchNode(
     var saved: ?Node = undefined;
     if (pattern.capture) |c| {
         saved = bindings[c];
-        bindings[c] = n;
+        if (saved == null) bindings[c] = n;
     }
     defer if (pattern.capture) |c| {
         bindings[c] = saved;

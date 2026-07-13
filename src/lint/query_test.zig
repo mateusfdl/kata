@@ -208,3 +208,30 @@ test "query: children relation binds a later child when an earlier one fails" {
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("return g();", matches[0].get(0).?.text(src).?);
 }
+
+test "query: a repeated capture keeps its first binding" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const src = "a + b;";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{
+        .kind = .{ .symbol = t.sym("binary_expression") },
+        .fields = &.{
+            .{
+                .relation = .{ .field = t.field("left") },
+                .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 },
+            },
+            .{
+                .relation = .{ .field = t.field("right") },
+                .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 },
+            },
+        },
+    };
+    const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
+
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+    try std.testing.expectEqualStrings("a", matches[0].get(0).?.text(src).?);
+}
