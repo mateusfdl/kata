@@ -6,8 +6,7 @@ rule no-builtin-print {
   }
 
   where {
-    text(@fn) == "print" ||
-    text(@fn) == "println"
+    text(@fn) in ["print", "println"]
   }
 
   emit @match {

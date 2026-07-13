@@ -10,7 +10,7 @@ rule simple-repositories {
   }
 
   where {
-    matches(text(@recv), "Repository$")
+    endsWith(text(@recv), "Repository")
     complexity(@match) > 5
   }
 

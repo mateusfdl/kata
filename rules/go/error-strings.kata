@@ -12,8 +12,8 @@ rule error-strings {
   }
 
   where {
-    text(@pkg) == "errors" || text(@pkg) == "fmt"
-    text(@fn) == "New" || text(@fn) == "Errorf"
+    text(@pkg) in ["errors", "fmt"]
+    text(@fn) in ["New", "Errorf"]
     position(@match) == 1
     matches(text(@match), "^\"[A-Z]")
   }

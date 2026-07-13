@@ -6,8 +6,7 @@ rule no-void {
   }
 
   where {
-    text(@match) != "void 0"
-    text(@match) != "void(0)"
+    text(@match) not in ["void 0", "void(0)"]
     not parent @match expression_statement
   }
 
