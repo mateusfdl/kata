@@ -1,0 +1,21 @@
+rule no-return-promise-resolve {
+  lang ts, tsx
+
+  match return_statement @match {
+    child: call_expression {
+      function: member_expression {
+        object: identifier @obj
+        property: property_identifier @prop
+      }
+    }
+  }
+
+  where {
+    text(@obj) == "Promise"
+    text(@prop) == "resolve"
+  }
+
+  emit @match {
+    message "Prefer return value over return Promise.resolve(value)"
+  }
+}
