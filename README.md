@@ -380,6 +380,21 @@ matches. `not parent @match expression_statement`, for example, keeps a `void`
 operator flagged as a sub-expression while exempting one used as a bare
 statement, which `not inside` (transitive) could not express.
 
+`inside` takes an optional `until` boundary - a comma-separated list of kinds
+(concrete or supertypes) that stop the ancestor search. The enclosing match
+only counts when no node strictly between the subject and the candidate has a
+boundary kind:
+
+```kata
+where {
+  inside @match for_statement until func_literal
+}
+```
+
+Here a `defer` nested anywhere in a loop body matches, but one wrapped in a
+closure inside the loop does not, because the `func_literal` sits between the
+`defer` and the `for_statement`. `not inside` negates the bounded result.
+
 A nested matcher may bind its own captures and filter them with a trailing
 `where` block; those captures stay scoped to the nested matcher. `count`
 compares the number of nested matches: `count @match return_statement > 3`.
