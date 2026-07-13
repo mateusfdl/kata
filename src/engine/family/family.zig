@@ -16,6 +16,7 @@ pub const Family = enum {
 pub const Adapter = struct {
     supertypes: []const node_kinds.Supertype,
     kindName: *const fn (id: u16) []const u8,
+    kindId: *const fn (name: []const u8, named: bool) u16,
     fieldId: *const fn (name: []const u8) u16,
     fieldName: *const fn (id: u16) ?[]const u8,
     buildKindRemap: *const fn (grammar: *const ts.Language, gpa: std.mem.Allocator) std.mem.Allocator.Error![]u16,
@@ -53,6 +54,24 @@ pub fn MetricTable(
                 }
             }
             return table;
+        }
+    };
+}
+
+pub fn KindFns(
+    comptime Kind: type,
+    comptime anon_names: []const []const u8,
+    comptime anon_base: u16,
+) type {
+    return struct {
+        pub fn id(name: []const u8, named: bool) u16 {
+            if (named) {
+                return if (std.meta.stringToEnum(Kind, name)) |k| @intFromEnum(k) else 0;
+            }
+            for (anon_names, 0..) |token, i| {
+                if (std.mem.eql(u8, token, name)) return anon_base + @as(u16, @intCast(i));
+            }
+            return 0;
         }
     };
 }

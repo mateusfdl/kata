@@ -11,11 +11,13 @@ const Node = @import("../node.zig").Node;
 
 const kinds = node_kinds.go;
 const fields = family.FieldFns(kinds.Field);
+const kind_fns = family.KindFns(kinds.Kind, &kinds.anon_names, kinds.anon_base);
 const metric_table = family.MetricTable(kinds.Kind, kinds.kind_count, classifyMetric);
 
 pub const adapter: family.Adapter = .{
     .supertypes = &kinds.supertypes,
     .kindName = kinds.name,
+    .kindId = kind_fns.id,
     .fieldId = fields.id,
     .fieldName = fields.name,
     .buildKindRemap = buildKindRemap,

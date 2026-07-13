@@ -9,6 +9,7 @@ comptime {
     _ = @import("convert_test.zig");
     _ = @import("diagnostic_test.zig");
     _ = @import("expr_test.zig");
+    _ = @import("family_test.zig");
     _ = @import("glob_test.zig");
     _ = @import("language_test.zig");
     _ = @import("matcher_test.zig");
