@@ -1,8 +1,7 @@
 const std = @import("std");
-const ts = @import("tree_sitter");
 
 const ast = @import("ast.zig");
-const node_kinds = @import("node_kinds");
+const family = @import("engine").family;
 const query = @import("engine").query;
 
 pub const Error = error{
@@ -29,72 +28,50 @@ pub const Lowered = struct {
 
 pub const Lowerer = struct {
     arena: std.mem.Allocator,
-    grammar: *const ts.Language,
-    kind_remap: []const u16,
-    field_remap: []const u16,
-    supertypes: []const node_kinds.Supertype,
+    adapter: *const family.Adapter,
     captures: std.ArrayList([]const u8) = .empty,
     /// The offending kind or field name when lowering fails, for diagnostics.
     detail: []const u8 = "",
 
-    pub fn init(
-        arena: std.mem.Allocator,
-        grammar: *const ts.Language,
-        kind_remap: []const u16,
-        field_remap: []const u16,
-        supertypes: []const node_kinds.Supertype,
-    ) Lowerer {
-        return .{
-            .arena = arena,
-            .grammar = grammar,
-            .kind_remap = kind_remap,
-            .field_remap = field_remap,
-            .supertypes = supertypes,
-        };
+    pub fn init(arena: std.mem.Allocator, adapter: *const family.Adapter) Lowerer {
+        return .{ .arena = arena, .adapter = adapter };
     }
 
-    /// Resolve a named grammar kind to the kind gate the matcher reads at runtime.
+    /// Resolve a named kind to the kind gate the matcher reads at runtime.
     /// A supertype expands to the sorted set of its transitive concrete member
     /// ids, precomputed by the node-kinds generator (the vendored grammars ship
-    /// no runtime subtype map). A concrete kind lowers to a single `symbol` id
-    /// through the same remap the converter applied, so a lowered id equals the
-    /// node id it matches. A name that is neither a supertype nor a concrete kata
-    /// kind is a hard error.
+    /// no runtime subtype map). A concrete kind lowers to its single kata id,
+    /// which equals the id the converter stamped on matching nodes. A name
+    /// unknown to the whole family is a hard error; a name belonging to only
+    /// one dialect of the family lowers and never matches in the others.
     fn resolveKind(self: *Lowerer, name: []const u8) Error!query.Kind {
         if (self.supertypeMembers(name)) |members| return .{ .symbols = members };
-        const sym = self.grammar.idForNodeKind(name, true);
-        if (sym == 0 or sym >= self.kind_remap.len) return self.failKind(name);
-        const id = self.kind_remap[sym];
+        const id = self.adapter.kindId(name, true);
         if (id == 0) return self.failKind(name);
         return .{ .symbol = id };
     }
 
     fn supertypeMembers(self: *Lowerer, name: []const u8) ?[]const u16 {
-        for (self.supertypes) |entry| {
+        for (self.adapter.supertypes) |entry| {
             if (std.mem.eql(u8, entry.name, name)) return entry.members;
         }
         return null;
     }
 
-    /// Resolve an anonymous grammar token to its single kata kind id. Anonymous
-    /// tokens are never supertypes; a token the grammar does not know, or one
-    /// absent from the kata enum, is a hard error.
+    /// Resolve an anonymous token to its single kata kind id. Anonymous tokens
+    /// are never supertypes; a token absent from the family is a hard error.
     fn kataAnonymous(self: *Lowerer, name: []const u8) Error!u16 {
-        const sym = self.grammar.idForNodeKind(name, false);
-        if (sym == 0 or sym >= self.kind_remap.len) return self.failKind(name);
-        const id = self.kind_remap[sym];
+        const id = self.adapter.kindId(name, false);
         if (id == 0) return self.failKind(name);
         return id;
     }
 
-    /// Resolve a grammar field name to its kata Field id through the same remap
-    /// the converter applied to stored nodes, so a lowered relation id equals the
-    /// `field_id` its target child reports. Fields have no aliases or supertypes,
-    /// so a known field always remaps to a real nonzero id.
+    /// Resolve a field name to its kata Field id, which equals the `field_id`
+    /// its target child reports. Fields have no aliases or supertypes.
     fn kataField(self: *Lowerer, name: []const u8) Error!u16 {
-        const sym = self.grammar.fieldIdForName(name);
-        if (sym == 0 or sym >= self.field_remap.len) return self.failField(name);
-        return self.field_remap[sym];
+        const id = self.adapter.fieldId(name);
+        if (id == 0) return self.failField(name);
+        return id;
     }
 
     /// Resolve a named grammar kind to the flat set of concrete kata kind ids it

@@ -7,9 +7,7 @@ const diagnostic = @import("engine").diagnostic;
 const dsl_parser = @import("parser.zig");
 const expr = @import("engine").expr;
 const family = @import("engine").family;
-const kind_map = @import("engine").kind_map;
 const language = @import("engine").language;
-const node_kinds = @import("node_kinds");
 const query = @import("engine").query;
 const rule = @import("engine").rule;
 
@@ -41,9 +39,7 @@ const Compiler = struct {
     arena: std.mem.Allocator,
     lang: language.Name,
     diag: *rule.Diagnostic,
-    kind_remap: []const u16,
-    field_remap: []const u16,
-    supertypes: []const node_kinds.Supertype,
+    adapter: *const family.Adapter,
     rule_id: []const u8 = "",
     captures: []const []const u8 = &.{},
 
@@ -126,8 +122,7 @@ pub fn compile(
     errdefer arena_ptr.deinit();
     const arena = arena_ptr.allocator();
 
-    const kinds = try kind_map.build(lang.family(), language.grammar(lang), arena);
-    var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag, .kind_remap = kinds.kind_remap, .field_remap = kinds.field_remap, .supertypes = family.of(lang.family()).supertypes };
+    var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag, .adapter = family.of(lang.family()) };
 
     var patterns: std.ArrayList(rule.CompiledPattern) = .empty;
     for (file.rules) |*r| {
@@ -171,7 +166,7 @@ fn compileRule(ctx: *Compiler, r: ast.Rule) Error!rule.CompiledPattern {
         return error.EmitCaptureConflict;
     }
 
-    var lowerer = lower.Lowerer.init(ctx.arena, language.grammar(ctx.lang), ctx.kind_remap, ctx.field_remap, ctx.supertypes);
+    var lowerer = lower.Lowerer.init(ctx.arena, ctx.adapter);
     const lowered_pattern = lowerer.lowerPattern(pattern) catch |err| return mapLowerError(ctx, err);
     const lowered = lowerer.finish(lowered_pattern) catch |err| return mapLowerError(ctx, err);
     ctx.captures = lowered.capture_names;
@@ -343,7 +338,7 @@ fn untilKinds(ctx: *Compiler, names: []const []const u8) Error![]const u16 {
     if (names.len == 0) return &.{};
 
     var ids: std.ArrayList(u16) = .empty;
-    var lowerer = lower.Lowerer.init(ctx.arena, language.grammar(ctx.lang), ctx.kind_remap, ctx.field_remap, ctx.supertypes);
+    var lowerer = lower.Lowerer.init(ctx.arena, ctx.adapter);
     for (names) |name| {
         const members = lowerer.resolveKindMembers(name) catch |err| return mapLowerError(ctx, err);
         try ids.appendSlice(ctx.arena, members);
@@ -367,7 +362,7 @@ fn compileNestedMatcher(ctx: *Compiler, matcher: ast.NestedMatcher) Error!*const
     if (pattern.capture == null) pattern.capture = .{ .name = nested_root_capture, .range = pattern.range };
     const root_name = pattern.capture.?.name;
 
-    var lowerer = lower.Lowerer.init(ctx.arena, language.grammar(ctx.lang), ctx.kind_remap, ctx.field_remap, ctx.supertypes);
+    var lowerer = lower.Lowerer.init(ctx.arena, ctx.adapter);
     const lowered_pattern = lowerer.lowerPattern(pattern) catch |err| return mapLowerError(ctx, err);
     const lowered = lowerer.finish(lowered_pattern) catch |err| return mapLowerError(ctx, err);
 

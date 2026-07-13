@@ -1697,3 +1697,23 @@ test "compile: capture predicate requires one capture argument" {
     try std.testing.expectError(error.UnsupportedPredicate, compile.compile(gpa, .ts, file, &diag));
     try std.testing.expectEqualStrings("capture expects one capture argument", diag.detail);
 }
+
+test "compile: dialect specific kind compiles for ts and matches nothing" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const jsx_rule =
+        \\rule no-jsx {
+        \\  lang ts
+        \\  match jsx_element @match
+        \\  emit @match { message "no jsx" }
+        \\}
+    ;
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts, jsx_rule);
+    defer compiled.deinit();
+
+    const diags = try runCompiled(gpa, &compiled, .ts, "const a = 1;\n", null);
+    defer gpa.free(diags);
+    try std.testing.expectEqual(@as(usize, 0), diags.len);
+}

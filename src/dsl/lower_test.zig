@@ -3,8 +3,6 @@ const nk = @import("node_kinds");
 
 const ast = @import("ast.zig");
 const family = @import("engine").family;
-const kind_map = @import("engine").kind_map;
-const language = @import("engine").language;
 const lower = @import("lower.zig");
 const parser = @import("parser.zig");
 const query = @import("engine").query;
@@ -17,10 +15,6 @@ fn tsFieldId(comptime name: []const u8) u16 {
     return @intFromEnum(@field(nk.ts_family.Field, name));
 }
 
-fn tsKinds(arena: std.mem.Allocator) kind_map.Kinds {
-    return kind_map.build(.ts_family, language.grammar(.ts), arena) catch unreachable;
-}
-
 fn matchPattern(arena: std.mem.Allocator, src: []const u8) ast.NodePattern {
     var diag: parser.Diagnostic = .{};
     var p = parser.Parser.init(arena, src, &diag) catch unreachable;
@@ -30,8 +24,7 @@ fn matchPattern(arena: std.mem.Allocator, src: []const u8) ast.NodePattern {
 
 fn lowerSrc(arena: std.mem.Allocator, src: []const u8) lower.Error!lower.Lowered {
     const pattern = matchPattern(arena, src);
-    const kinds = tsKinds(arena);
-    var lowerer = lower.Lowerer.init(arena, language.grammar(.ts), kinds.kind_remap, kinds.field_remap, family.of(.ts_family).supertypes);
+    var lowerer = lower.Lowerer.init(arena, family.of(.ts_family));
     const lowered = try lowerer.lowerPattern(pattern);
     return lowerer.finish(lowered);
 }
@@ -140,8 +133,7 @@ test "lower: unknown node kind fails with the offending name" {
         \\  emit @match { message "m" }
         \\}
     );
-    const kinds = tsKinds(arena.allocator());
-    var lowerer = lower.Lowerer.init(arena.allocator(), language.grammar(.ts), kinds.kind_remap, kinds.field_remap, family.of(.ts_family).supertypes);
+    var lowerer = lower.Lowerer.init(arena.allocator(), family.of(.ts_family));
 
     try std.testing.expectError(error.UnknownNodeKind, lowerer.lowerPattern(pattern));
     try std.testing.expectEqualStrings("faketype", lowerer.detail);
@@ -160,9 +152,23 @@ test "lower: unknown field fails with the offending name" {
         \\  emit @match { message "m" }
         \\}
     );
-    const kinds = tsKinds(arena.allocator());
-    var lowerer = lower.Lowerer.init(arena.allocator(), language.grammar(.ts), kinds.kind_remap, kinds.field_remap, family.of(.ts_family).supertypes);
+    var lowerer = lower.Lowerer.init(arena.allocator(), family.of(.ts_family));
 
     try std.testing.expectError(error.UnknownField, lowerer.lowerPattern(pattern));
     try std.testing.expectEqualStrings("fakefield", lowerer.detail);
+}
+
+test "lower: kind absent from one grammar still lowers family wide" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const result = try lowerSrc(arena.allocator(),
+        \\rule r {
+        \\  lang ts
+        \\  match jsx_element @match
+        \\  emit @match { message "m" }
+        \\}
+    );
+
+    try std.testing.expectEqual(tsId("jsx_element"), result.pattern.kind.symbol);
 }
