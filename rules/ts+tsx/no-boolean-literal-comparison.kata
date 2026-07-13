@@ -1,0 +1,38 @@
+rule no-boolean-literal-comparison {
+  lang ts, tsx
+
+  match binary_expression @match {
+    left: [true, false]
+    operator: ["==", "!=", "===", "!==", "&&", "||"]
+  }
+
+  emit @match {
+    message "Remove the unnecessary boolean literal"
+  }
+}
+
+rule no-boolean-literal-comparison {
+  lang ts, tsx
+
+  match binary_expression @match {
+    operator: ["==", "!=", "===", "!==", "&&", "||"]
+    right: [true, false]
+  }
+
+  emit @match {
+    message "Remove the unnecessary boolean literal"
+  }
+}
+
+rule no-boolean-literal-comparison {
+  lang ts, tsx
+
+  match unary_expression @match {
+    operator: "!"
+    argument: [true, false]
+  }
+
+  emit @match {
+    message "Remove the unnecessary boolean literal"
+  }
+}
