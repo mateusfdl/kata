@@ -1,0 +1,15 @@
+rule prefer-number-parseint {
+  lang ts, tsx
+
+  match call_expression @match {
+    function: identifier @fn
+  }
+
+  where {
+    text(@fn) == "parseInt"
+  }
+
+  emit @match {
+    message "Prefer Number.parseInt over parseInt"
+  }
+}
