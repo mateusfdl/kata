@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const fs = @import("fs.zig");
-const lint = @import("lint.zig");
+const lint = @import("engine");
 const reports = @import("reports.zig");
 const server = @import("server.zig");
 const sources = @import("sources.zig");

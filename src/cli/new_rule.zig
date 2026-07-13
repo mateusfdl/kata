@@ -3,7 +3,7 @@ const std = @import("std");
 const exit = @import("exit.zig");
 const output = @import("output.zig");
 const fs = @import("../fs.zig");
-const lint = @import("../lint.zig");
+const lint = @import("engine");
 
 const language = lint.language;
 const rule = lint.rule;

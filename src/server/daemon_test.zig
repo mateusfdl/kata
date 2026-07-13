@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const lint = @import("../lint.zig");
+const lint = @import("engine");
 const daemon = @import("daemon.zig");
 const protocol = @import("protocol.zig");
 const test_fixture = @import("../test_fixture.zig");
@@ -245,7 +245,7 @@ test "daemon: rule fixtures are skipped" {
     try std.testing.expectEqual(@as(usize, 0), report.diagnostics.len);
 }
 
-const repository_isolation = [_]@import("../lint.zig").project_rule.ProjectRule{.{
+const repository_isolation = [_]@import("engine").project_rule.ProjectRule{.{
     .id = "repository-isolation",
     .kind = .{ .restricted_callers = .{
         .callee_suffix = "Repository",
@@ -800,7 +800,7 @@ test "daemon: cached project context lints with kata project rules" {
     try std.testing.expectEqualStrings("zzz is banned here", report.diagnostics[0].message);
 }
 
-const fact_repository_isolation = [_]@import("../lint.zig").fact_rule.CompiledFactRule{.{
+const fact_repository_isolation = [_]@import("engine").fact_rule.CompiledFactRule{.{
     .id = "repository-isolation",
     .fact = .call,
     .predicates = &.{

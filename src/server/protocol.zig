@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const diagnostic = @import("../lint.zig").diagnostic;
+const diagnostic = @import("engine").diagnostic;
 
 pub const max_frame_bytes: usize = 16 * 1024 * 1024;
 

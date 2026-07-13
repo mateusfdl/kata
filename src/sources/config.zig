@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const fs = @import("../fs.zig");
-const lint = @import("../lint.zig");
+const lint = @import("engine");
 const loader = @import("loader.zig");
 
 const language = lint.language;

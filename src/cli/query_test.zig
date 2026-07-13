@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const query = @import("query.zig");
-const lint = @import("../lint.zig");
+const lint = @import("engine");
 const test_fixture = @import("../test_fixture.zig");
 
 const language = lint.language;

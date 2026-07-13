@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const lint = @import("../lint.zig");
+const lint = @import("engine");
 const config = @import("config.zig");
 const context = @import("context.zig");
 

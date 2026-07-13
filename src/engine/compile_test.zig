@@ -5,12 +5,12 @@ const ast = @import("dsl").ast;
 const compile = @import("dsl").compile;
 const dsl_parser = @import("dsl").parser;
 
-const diagnostic = @import("core").diagnostic;
-const engine = @import("Engine.zig");
-const expr = @import("core").expr;
-const language = @import("core").language;
-const rule = @import("core").rule;
-const test_tree = @import("test_tree.zig");
+const diagnostic = @import("engine").diagnostic;
+const engine = @import("engine");
+const expr = @import("engine").expr;
+const language = @import("engine").language;
+const rule = @import("engine").rule;
+const test_tree = @import("engine").test_tree;
 
 fn parseDsl(arena: std.mem.Allocator, source: []const u8) !ast.File {
     var diag: dsl_parser.Diagnostic = .{};

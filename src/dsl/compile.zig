@@ -3,14 +3,14 @@ const mvzr = @import("mvzr");
 
 const ast = @import("ast.zig");
 const lower = @import("lower.zig");
-const diagnostic = @import("core").diagnostic;
+const diagnostic = @import("engine").diagnostic;
 const dsl_parser = @import("parser.zig");
-const expr = @import("core").expr;
-const kind_map = @import("core").kind_map;
-const language = @import("core").language;
+const expr = @import("engine").expr;
+const kind_map = @import("engine").kind_map;
+const language = @import("engine").language;
 const node_kinds = @import("node_kinds");
-const query = @import("core").query;
-const rule = @import("core").rule;
+const query = @import("engine").query;
+const rule = @import("engine").rule;
 
 pub const Error = error{
     OutOfMemory,

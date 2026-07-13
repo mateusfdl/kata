@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const diagnostic = @import("../lint.zig").diagnostic;
+const diagnostic = @import("engine").diagnostic;
 const protocol = @import("protocol.zig");
 const test_frame = @import("../test_frame.zig");
 

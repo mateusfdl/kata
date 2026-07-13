@@ -2,7 +2,7 @@ const std = @import("std");
 
 const check = @import("check.zig");
 const dsl = @import("dsl");
-const lint = @import("../lint.zig");
+const lint = @import("engine");
 const reports = @import("../reports.zig");
 
 const Engine = lint.Engine;

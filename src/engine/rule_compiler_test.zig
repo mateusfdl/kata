@@ -1,10 +1,10 @@
 const std = @import("std");
 
 const Engine = @import("Engine.zig").Engine;
-const fact_rule = @import("core").fact_rule;
-const language = @import("core").language;
-const rule = @import("core").rule;
-const rule_compiler = @import("core").rule_compiler;
+const fact_rule = @import("fact_rule.zig");
+const language = @import("language.zig");
+const rule = @import("rule.zig");
+const rule_compiler = @import("rule_compiler.zig");
 const RuleSet = @import("RuleSet.zig").RuleSet;
 
 const FakeCompiler = struct {

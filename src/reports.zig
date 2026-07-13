@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const lint = @import("lint.zig");
+const lint = @import("engine");
 
 pub const Json = @import("reports/json.zig").Json;
 pub const Pretty = @import("reports/pretty.zig").Pretty;

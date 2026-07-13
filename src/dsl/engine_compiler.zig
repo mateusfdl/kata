@@ -2,10 +2,10 @@ const std = @import("std");
 
 const compile = @import("compile.zig");
 const fact_compile = @import("fact_compile.zig");
-const fact_rule = @import("core").fact_rule;
-const language = @import("core").language;
-const rule = @import("core").rule;
-const rule_compiler = @import("core").rule_compiler;
+const fact_rule = @import("engine").fact_rule;
+const language = @import("engine").language;
+const rule = @import("engine").rule;
+const rule_compiler = @import("engine").rule_compiler;
 
 const CompileError = rule_compiler.CompileError;
 const RuleCompiler = rule_compiler.RuleCompiler;

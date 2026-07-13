@@ -1,11 +1,11 @@
 const std = @import("std");
 const ts = @import("tree_sitter");
 
-const ast = @import("core").ast;
+const ast = @import("ast.zig");
 const convert = @import("convert.zig");
-const kind_map = @import("core").kind_map;
-const language = @import("core").language;
-const node = @import("core").node;
+const kind_map = @import("kind_map.zig");
+const language = @import("language.zig");
+const node = @import("node.zig");
 
 /// A parsed-and-converted kata tree for tests: parse `source` with tree-sitter,
 /// clone it into a flat `Ast`, and keep the remap tables so tests can author

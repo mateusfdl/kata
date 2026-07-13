@@ -64,13 +64,13 @@ pub fn build(b: *std.Build) void {
     });
     node_kinds_module.addImport("tree_sitter", tree_sitter_module);
 
-    const core_module = b.createModule(.{
-        .root_source_file = b.path("src/core/core.zig"),
+    const engine_module = b.createModule(.{
+        .root_source_file = b.path("src/engine/engine.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    wireCoreModule(core_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
+    wireEngineModule(engine_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
 
     const dsl_module = b.createModule(.{
         .root_source_file = b.path("src/dsl/dsl.zig"),
@@ -78,7 +78,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    wireDslModule(dsl_module, core_module, tree_sitter_module, mvzr_module, node_kinds_module);
+    wireDslModule(dsl_module, engine_module, tree_sitter_module, mvzr_module, node_kinds_module);
 
     const exe_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -87,7 +87,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .strip = strip,
     });
-    wireKataModule(exe_module, core_module, dsl_module, path_module, tree_sitter_module, mvzr_module, embedded_rules_zig, node_kinds_module);
+    wireKataModule(exe_module, engine_module, dsl_module, path_module, tree_sitter_module, mvzr_module, embedded_rules_zig, node_kinds_module);
     const exe = b.addExecutable(.{
         .name = "kata",
         .root_module = exe_module,
@@ -100,7 +100,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    wireKataModule(test_module, core_module, dsl_module, path_module, tree_sitter_module, mvzr_module, embedded_rules_zig, node_kinds_module);
+    wireKataModule(test_module, engine_module, dsl_module, path_module, tree_sitter_module, mvzr_module, embedded_rules_zig, node_kinds_module);
     const unit_tests = b.addTest(.{
         .root_module = test_module,
     });
@@ -109,17 +109,17 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all unit tests");
     test_step.dependOn(&run_unit_tests.step);
 
-    const core_test_module = b.createModule(.{
-        .root_source_file = b.path("src/core/tests.zig"),
+    const engine_test_module = b.createModule(.{
+        .root_source_file = b.path("src/engine/tests.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    wireCoreModule(core_test_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
-    const core_unit_tests = b.addTest(.{
-        .root_module = core_test_module,
+    wireEngineModule(engine_test_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
+    const engine_unit_tests = b.addTest(.{
+        .root_module = engine_test_module,
     });
-    test_step.dependOn(&b.addRunArtifact(core_unit_tests).step);
+    test_step.dependOn(&b.addRunArtifact(engine_unit_tests).step);
 
     const dsl_test_module = b.createModule(.{
         .root_source_file = b.path("src/dsl/tests.zig"),
@@ -127,7 +127,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    wireDslModule(dsl_test_module, core_module, tree_sitter_module, mvzr_module, node_kinds_module);
+    wireDslModule(dsl_test_module, engine_module, tree_sitter_module, mvzr_module, node_kinds_module);
     const dsl_unit_tests = b.addTest(.{
         .root_module = dsl_test_module,
     });
@@ -144,7 +144,7 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_exe.step);
 }
 
-fn wireCoreModule(
+fn wireEngineModule(
     module: *std.Build.Module,
     path_module: *std.Build.Module,
     tree_sitter_module: *std.Build.Module,
@@ -161,12 +161,12 @@ fn wireCoreModule(
 
 fn wireDslModule(
     module: *std.Build.Module,
-    core_module: *std.Build.Module,
+    engine_module: *std.Build.Module,
     tree_sitter_module: *std.Build.Module,
     mvzr_module: *std.Build.Module,
     node_kinds_module: *std.Build.Module,
 ) void {
-    module.addImport("core", core_module);
+    module.addImport("engine", engine_module);
     module.addImport("tree_sitter", tree_sitter_module);
     module.addImport("mvzr", mvzr_module);
     module.addImport("node_kinds", node_kinds_module);
@@ -174,7 +174,7 @@ fn wireDslModule(
 
 fn wireKataModule(
     module: *std.Build.Module,
-    core_module: *std.Build.Module,
+    engine_module: *std.Build.Module,
     dsl_module: *std.Build.Module,
     path_module: *std.Build.Module,
     tree_sitter_module: *std.Build.Module,
@@ -182,7 +182,7 @@ fn wireKataModule(
     embedded_rules_zig: std.Build.LazyPath,
     node_kinds_module: *std.Build.Module,
 ) void {
-    module.addImport("core", core_module);
+    module.addImport("engine", engine_module);
     module.addImport("dsl", dsl_module);
     module.addImport("path", path_module);
     module.addImport("tree_sitter", tree_sitter_module);

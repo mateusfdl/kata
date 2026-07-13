@@ -2,7 +2,7 @@ const std = @import("std");
 
 const check = @import("check.zig");
 const reports = @import("../reports.zig");
-const lint = @import("../lint.zig");
+const lint = @import("engine");
 const test_fixture = @import("../test_fixture.zig");
 
 test "check: run skips .git and gitignored folders" {

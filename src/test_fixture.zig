@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const dsl = @import("dsl");
-const lint = @import("lint.zig");
+const lint = @import("engine");
 const loader = @import("sources.zig").loader;
 
 const Engine = lint.Engine;

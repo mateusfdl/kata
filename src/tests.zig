@@ -5,17 +5,11 @@ test {
 }
 
 comptime {
-    _ = @import("lint/node_test.zig");
-    _ = @import("lint/rule_compiler_test.zig");
-    _ = @import("lint/node_kinds_test.zig");
-    _ = @import("lint/kinds_test.zig");
-    _ = @import("lint/query_test.zig");
-    _ = @import("lint/convert_test.zig");
-    _ = @import("lint/engine_test.zig");
-    _ = @import("lint/facts_test.zig");
-    _ = @import("lint/project_rule_test.zig");
-    _ = @import("lint/fact_rule_test.zig");
-    _ = @import("lint/compile_test.zig");
+    _ = @import("engine/engine_test.zig");
+    _ = @import("engine/facts_test.zig");
+    _ = @import("engine/project_rule_test.zig");
+    _ = @import("engine/fact_rule_test.zig");
+    _ = @import("engine/compile_test.zig");
     _ = @import("cli/check_test.zig");
     _ = @import("reports/text_test.zig");
     _ = @import("reports/json_test.zig");

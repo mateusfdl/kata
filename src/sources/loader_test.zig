@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const lint = @import("../lint.zig");
+const lint = @import("engine");
 const loader = @import("loader.zig");
 const test_fixture = @import("../test_fixture.zig");
 

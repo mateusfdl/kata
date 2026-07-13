@@ -1,9 +1,9 @@
 const std = @import("std");
 
-const query = @import("core").query;
+const query = @import("query.zig");
 const test_tree = @import("test_tree.zig");
 
-const Node = @import("core").node.Node;
+const Node = @import("node.zig").Node;
 const Pattern = query.Pattern;
 
 test "query: symbol capture matches every occurrence" {

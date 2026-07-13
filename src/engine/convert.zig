@@ -1,8 +1,8 @@
 const std = @import("std");
 const ts = @import("tree_sitter");
 
-const ast = @import("core").ast;
-const language = @import("core").language;
+const ast = @import("ast.zig");
+const language = @import("language.zig");
 
 /// Clone a finished tree-sitter CST rooted at `root` into a flat kata `Ast`. The
 /// walk is an iterative pre-order DFS (depth-safe on adversarial nesting), and it

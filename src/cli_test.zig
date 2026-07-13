@@ -3,7 +3,7 @@ const cli = @import("cli.zig");
 const reports = @import("reports.zig");
 const test_fixture = @import("test_fixture.zig");
 
-const Engine = @import("lint.zig").Engine;
+const Engine = @import("engine").Engine;
 
 fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
     return test_fixture.Fixture.init(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule);

@@ -3,7 +3,7 @@ const ts = @import("tree_sitter");
 
 const ast = @import("ast.zig");
 const node_kinds = @import("node_kinds");
-const query = @import("core").query;
+const query = @import("engine").query;
 
 pub const Error = error{
     UnknownNodeKind,

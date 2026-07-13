@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const language = @import("core").language;
-const rule = @import("core").rule;
+const language = @import("language.zig");
+const rule = @import("rule.zig");
 
 pub const Source = rule.Source;
 

@@ -1,12 +1,12 @@
 const std = @import("std");
 
-const expr = @import("core").expr;
-const glob = @import("core").glob;
-const language = @import("core").language;
+const expr = @import("expr.zig");
+const glob = @import("glob.zig");
+const language = @import("language.zig");
 const metric = @import("metric.zig");
-const query = @import("core").query;
-const rule = @import("core").rule;
-const Node = @import("core").node.Node;
+const query = @import("query.zig");
+const rule = @import("rule.zig");
+const Node = @import("node.zig").Node;
 
 pub const MetricContext = struct {
     allocator: std.mem.Allocator,

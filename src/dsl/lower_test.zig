@@ -2,11 +2,11 @@ const std = @import("std");
 const nk = @import("node_kinds");
 
 const ast = @import("ast.zig");
-const kind_map = @import("core").kind_map;
-const language = @import("core").language;
+const kind_map = @import("engine").kind_map;
+const language = @import("engine").language;
 const lower = @import("lower.zig");
 const parser = @import("parser.zig");
-const query = @import("core").query;
+const query = @import("engine").query;
 
 fn tsId(comptime name: []const u8) u16 {
     return @intFromEnum(@field(nk.ts_family.Kind, name));

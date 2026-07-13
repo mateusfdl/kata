@@ -1,8 +1,8 @@
 const std = @import("std");
 
 const kinds = @import("kinds.zig");
-const language = @import("core").language;
-const Node = @import("core").node.Node;
+const language = @import("language.zig");
+const Node = @import("node.zig").Node;
 
 const MetricKind = kinds.MetricKind;
 

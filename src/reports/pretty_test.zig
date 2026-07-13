@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const lint = @import("../lint.zig");
+const lint = @import("engine");
 const reports = @import("../reports.zig");
 
 fn diag(rule_id: []const u8, message: []const u8, range: lint.diagnostic.Range, severity: lint.diagnostic.Severity) lint.diagnostic.Diagnostic {

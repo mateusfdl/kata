@@ -1,11 +1,11 @@
 const std = @import("std");
 const mvzr = @import("mvzr");
 
-const fact_rule = @import("core").fact_rule;
-const lint_diagnostic = @import("core").diagnostic;
+const fact_rule = @import("engine").fact_rule;
+const lint_diagnostic = @import("engine").diagnostic;
 const test_fixture = @import("../test_fixture.zig");
 
-const ProjectIndex = @import("core").ProjectIndex.ProjectIndex;
+const ProjectIndex = @import("engine").ProjectIndex;
 
 const Fixture = test_fixture.Fixture;
 

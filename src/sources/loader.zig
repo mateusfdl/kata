@@ -2,7 +2,7 @@ const std = @import("std");
 
 const embedded_rules = @import("embedded_rules");
 const fs = @import("../fs.zig");
-const lint = @import("../lint.zig");
+const lint = @import("engine");
 
 const language = lint.language;
 

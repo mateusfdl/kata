@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const lint = @import("../lint.zig");
+const lint = @import("engine");
 const reports = @import("../reports.zig");
 
 pub const Json = struct {
