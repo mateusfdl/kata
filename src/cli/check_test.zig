@@ -40,6 +40,39 @@ test "check: run skips .git and gitignored folders" {
     try std.testing.expect(std.mem.indexOf(u8, written, "checked 1 files, 1 violations, 0 warnings") != null);
 }
 
+test "check: rule fixtures are skipped while other tests dirs are linted" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const violating = "const x = foo as any;\n";
+    try tmp.dir.createDirPath(io, "ts+tsx/tests");
+    try tmp.dir.writeFile(io, .{ .sub_path = "ts+tsx/no-as-any.kata", .data = "rule no-as-any {}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ts+tsx/tests/no-as-any.ts", .data = violating });
+    try tmp.dir.createDirPath(io, "src/tests");
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/tests/app.ts", .data = violating });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &reporter);
+
+    try std.testing.expectEqual(check.Outcome.violations, outcome);
+    const written = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, written, "src/tests/app.ts") != null);
+    try std.testing.expectEqual(@as(?usize, null), std.mem.indexOf(u8, written, "ts+tsx/tests/no-as-any.ts"));
+    try std.testing.expect(std.mem.indexOf(u8, written, "checked 1 files, 1 violations, 0 warnings") != null);
+}
+
 test "check: warn severity counts separately and exits clean" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;

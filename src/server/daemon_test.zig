@@ -215,6 +215,36 @@ test "daemon: processConnection replies fail on a malformed frame" {
     try std.testing.expectEqualStrings("malformed request", parsed.value.message.?);
 }
 
+test "daemon: rule fixtures are skipped" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "ts+tsx/tests");
+    try tmp.dir.writeFile(io, .{ .sub_path = "ts+tsx/no-as-any.kata", .data = "rule no-as-any {}\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/ts+tsx/tests/no-as-any.ts", .{dir});
+
+    const resp = daemon.handle(context(f), arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = filename,
+        .source = "const x = (foo[0] as any).bar;",
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expectEqualStrings("ts", report.language);
+    try std.testing.expect(report.clean);
+    try std.testing.expectEqual(@as(usize, 0), report.diagnostics.len);
+}
+
 const repository_isolation = [_]@import("../lint.zig").project_rule.ProjectRule{.{
     .id = "repository-isolation",
     .kind = .{ .restricted_callers = .{

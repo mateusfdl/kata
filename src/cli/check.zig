@@ -52,10 +52,11 @@ fn checkFile(
     const source = try fs.source.read(io, gpa, target);
     defer gpa.free(source);
 
-    return reportFile(gpa, engine, lang, source, target, index, reporter);
+    return reportFile(io, gpa, engine, lang, source, target, index, reporter);
 }
 
 const DirVisit = struct {
+    io: std.Io,
     gpa: std.mem.Allocator,
     engine: *Engine,
     index: ?*lint.ProjectIndex,
@@ -73,6 +74,7 @@ fn checkDir(
 ) !reports.Counts {
     var counts: reports.Counts = .{};
     const visit: DirVisit = .{
+        .io = io,
         .gpa = gpa,
         .engine = engine,
         .index = index,
@@ -86,10 +88,11 @@ fn checkDir(
 }
 
 fn visitFile(visit: DirVisit, lang: language.Name, source: []const u8, path: []const u8) anyerror!void {
-    visit.counts.add(try reportFile(visit.gpa, visit.engine, lang, source, path, visit.index, visit.reporter));
+    visit.counts.add(try reportFile(visit.io, visit.gpa, visit.engine, lang, source, path, visit.index, visit.reporter));
 }
 
 fn reportFile(
+    io: std.Io,
     gpa: std.mem.Allocator,
     engine: *Engine,
     lang: language.Name,
@@ -98,6 +101,8 @@ fn reportFile(
     index: ?*lint.ProjectIndex,
     reporter: *reports.Reporter,
 ) !reports.Counts {
+    if (try fs.rules.isFixturePath(io, path)) return .{};
+
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const diagnostics = try engine.lint(arena.allocator(), source, lang, path);

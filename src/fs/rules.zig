@@ -10,6 +10,8 @@ pub const kata_suffix = ".kata";
 
 pub const project_dir_name = "project";
 
+pub const fixtures_dir_name = "tests";
+
 pub const RuleFile = struct {
     langs: []const language.Name,
     id: []const u8,
@@ -158,6 +160,28 @@ pub fn ruleId(name: []const u8) ?[]const u8 {
     return name[0 .. name.len - kata_suffix.len];
 }
 
+pub fn isFixturePath(io: std.Io, path: []const u8) !bool {
+    const tests_dir = std.fs.path.dirname(path) orelse return false;
+    if (!std.mem.eql(u8, std.fs.path.basename(tests_dir), fixtures_dir_name)) return false;
+    const lang_dir = std.fs.path.dirname(tests_dir) orelse return false;
+    return languageDirHasRules(io, lang_dir);
+}
+
+fn languageDirHasRules(io: std.Io, dir_path: []const u8) !bool {
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir, error.AccessDenied => return false,
+        else => return err,
+    };
+    defer dir.close(io);
+
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (ruleId(entry.name) != null) return true;
+    }
+    return false;
+}
+
 fn collectLanguageFixtureFiles(
     io: std.Io,
     arena: std.mem.Allocator,
@@ -169,7 +193,7 @@ fn collectLanguageFixtureFiles(
     var lang_dir = try root.openDir(io, lang_subdir, .{});
     defer lang_dir.close(io);
 
-    var tests_dir = lang_dir.openDir(io, "tests", .{ .iterate = true }) catch |err| switch (err) {
+    var tests_dir = lang_dir.openDir(io, fixtures_dir_name, .{ .iterate = true }) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
     };
@@ -180,7 +204,7 @@ fn collectLanguageFixtureFiles(
         if (entry.kind != .file) continue;
         const lang = source_files.languageOf(entry.name) orelse continue;
         const dir_path = try paths.join(arena, rules_dir, lang_subdir);
-        const tests_path = try paths.join(arena, dir_path, "tests");
+        const tests_path = try paths.join(arena, dir_path, fixtures_dir_name);
         try out.append(arena, .{
             .lang = lang,
             .source = try tests_dir.readFileAlloc(io, entry.name, arena, .limited(source_files.max_file_bytes)),

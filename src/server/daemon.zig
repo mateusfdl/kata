@@ -152,6 +152,17 @@ pub fn handle(
     const source = req.source orelse
         return reply(ctx, .fail, null, "missing source");
 
+    if (req.filename) |filename| {
+        const is_fixture = fs.rules.isFixturePath(ctx.io, filename) catch
+            return reply(ctx, .fail, null, "fixture check failed");
+        if (is_fixture)
+            return reply(ctx, .ok, .{
+                .language = lang.toString(),
+                .diagnostics = &.{},
+                .clean = true,
+            }, null);
+    }
+
     var engine = ctx.engine;
     var ratchet = ctx.ratchet;
 
