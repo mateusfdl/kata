@@ -3,7 +3,7 @@ rule no-generic-error {
 
   match throw_statement @match {
     child: new_expression {
-      child: identifier @name
+      constructor: identifier @name
     }
   }
 
