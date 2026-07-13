@@ -1,0 +1,11 @@
+rule no-nested-ternary {
+  lang ts, tsx
+
+  match ternary_expression {
+    child: [ternary_expression @nested, parenthesized_expression { child: ternary_expression @nested }]
+  }
+
+  emit @nested {
+    message "Extract this nested ternary operation into an independent statement"
+  }
+}
