@@ -68,6 +68,7 @@ const Keyword = enum {
     any,
     all,
     pattern,
+    until,
 };
 
 const Fragment = struct {
@@ -575,6 +576,13 @@ pub const Parser = struct {
             try self.advance();
         }
 
+        const matcher = try self.parseNestedMatcher();
+        var until: []const []const u8 = &.{};
+        if (op == .inside and self.currentIs(.until)) {
+            try self.advance();
+            until = try self.parseSymbolList();
+        }
+
         return .{ .composition = .{
             .op = switch (op) {
                 .inside => .inside,
@@ -583,7 +591,8 @@ pub const Parser = struct {
                 else => unreachable,
             },
             .negated = negated,
-            .matcher = try self.parseNestedMatcher(),
+            .matcher = matcher,
+            .until = until,
         } };
     }
 

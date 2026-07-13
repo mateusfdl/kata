@@ -1308,6 +1308,54 @@ test "parser: parses not parent composition" {
     try std.testing.expectEqual(@as(usize, 0), composition.matcher.pattern.fields.len);
 }
 
+test "parser: parses inside composition with an until boundary" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule no-defer-in-loop {
+        \\  lang go
+        \\  match defer_statement @match
+        \\  where {
+        \\    inside @match for_statement until func_literal
+        \\  }
+        \\  emit @match { message "defer in loop" }
+        \\}
+    , &diag);
+
+    const composition = file.rules[0].where[0].composition;
+    try std.testing.expectEqual(ast.CompositionOp.inside, composition.op);
+    try std.testing.expectEqual(false, composition.negated);
+    try std.testing.expectEqualStrings("for_statement", composition.matcher.pattern.node_kind.symbol);
+    try std.testing.expectEqual(@as(usize, 1), composition.until.len);
+    try std.testing.expectEqualStrings("func_literal", composition.until[0]);
+}
+
+test "parser: parses not inside with multiple until boundary kinds" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule boundary-pair {
+        \\  lang go
+        \\  match defer_statement @match
+        \\  where {
+        \\    not inside @match for_statement until func_literal, method_declaration
+        \\  }
+        \\  emit @match { message "boundary pair" }
+        \\}
+    , &diag);
+
+    const composition = file.rules[0].where[0].composition;
+    try std.testing.expectEqual(ast.CompositionOp.inside, composition.op);
+    try std.testing.expectEqual(true, composition.negated);
+    try std.testing.expectEqual(@as(usize, 2), composition.until.len);
+    try std.testing.expectEqualStrings("func_literal", composition.until[0]);
+    try std.testing.expectEqualStrings("method_declaration", composition.until[1]);
+}
+
 test "parser: parses in membership with a trailing comma" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

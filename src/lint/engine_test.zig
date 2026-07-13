@@ -1688,3 +1688,49 @@ test "engine: a repeated capture evaluates against its first binding" {
     defer gpa.free(clean);
     try std.testing.expectEqual(@as(usize, 0), clean.len);
 }
+
+const kata_until_boundary =
+    \\rule until-boundary {
+    \\  lang go
+    \\  match defer_statement @match
+    \\  where {
+    \\    inside @match for_statement until func_literal
+    \\  }
+    \\  emit @match { message "defer in loop" }
+    \\}
+;
+
+test "engine: until bounds inside at the boundary kind" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.go}, "until-boundary", kata_until_boundary);
+    defer f.deinit();
+
+    const src =
+        "package p\n" ++
+        "func direct() {\n" ++
+        "\tfor {\n" ++
+        "\t\tdefer f()\n" ++
+        "\t}\n" ++
+        "}\n" ++
+        "func guarded(v bool) {\n" ++
+        "\tfor {\n" ++
+        "\t\tif v {\n" ++
+        "\t\t\tdefer f()\n" ++
+        "\t\t}\n" ++
+        "\t}\n" ++
+        "}\n" ++
+        "func spawned() {\n" ++
+        "\tfor {\n" ++
+        "\t\tfn := func() {\n" ++
+        "\t\t\tdefer f()\n" ++
+        "\t\t}\n" ++
+        "\t\tfn()\n" ++
+        "\t}\n" ++
+        "}\n";
+    const diags = try f.engine.lint(gpa, src, .go, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqual(@as(u32, 3), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 9), diags[1].range.start.line);
+}

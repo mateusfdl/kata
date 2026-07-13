@@ -96,6 +96,7 @@ pub const RegexPredicate = struct {
 pub const NestedPredicate = struct {
     args: []PredicateOperand,
     matcher: *const NestedMatcher,
+    until_kinds: []const u16 = &.{},
 };
 
 pub const CountPredicate = struct {

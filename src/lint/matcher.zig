@@ -144,7 +144,7 @@ fn evalEnclosing(
 ) std.mem.Allocator.Error!bool {
     const subject = subjectNode(pred.args, match) orelse return false;
 
-    var sink: EnclosingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx, .relation = relation };
+    var sink: EnclosingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx, .relation = relation, .until_kinds = pred.until_kinds };
     try query.stream(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, ctx.root, &sink);
 
     return sink.found != negate;
@@ -155,6 +155,7 @@ const EnclosingSink = struct {
     subject: Node,
     ctx: EvalContext,
     relation: Relation,
+    until_kinds: []const u16 = &.{},
     found: bool = false,
     done: bool = false,
 
@@ -168,11 +169,22 @@ const EnclosingSink = struct {
             .direct_parent => isDirectParent(candidate, self.subject),
         };
         if (!related) return;
+        if (self.relation == .ancestor and crossesBoundary(self.subject, candidate, self.until_kinds)) return;
         if (!try evaluate(self.matcher.predicates, nested_match, self.ctx)) return;
         self.found = true;
         self.done = true;
     }
 };
+
+fn crossesBoundary(subject: Node, candidate: Node, until_kinds: []const u16) bool {
+    if (until_kinds.len == 0) return false;
+    var current = subject.parent();
+    while (current) |node| : (current = node.parent()) {
+        if (node.eql(candidate)) return false;
+        if (std.mem.indexOfScalar(u16, until_kinds, node.kindId()) != null) return true;
+    }
+    return false;
+}
 
 fn isDirectParent(candidate: Node, subject: Node) bool {
     const p = subject.parent() orelse return false;

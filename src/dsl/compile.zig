@@ -317,6 +317,7 @@ fn compositionPredicate(ctx: *Compiler, composition: ast.Composition) Error!rule
     const pred: rule.NestedPredicate = .{
         .args = try subjectArgs(ctx, composition.matcher),
         .matcher = try compileNestedMatcher(ctx, composition.matcher),
+        .until_kinds = try untilKinds(ctx, composition.until),
     };
     return switch (op) {
         .inside => .{ .inside = pred },
@@ -335,6 +336,18 @@ fn countPredicate(ctx: *Compiler, count: ast.CountPredicate) Error!rule.Predicat
         .matcher = try compileNestedMatcher(ctx, count.matcher),
         .compare = .{ .op = compareOp(count.op), .value = count.value },
     } };
+}
+
+fn untilKinds(ctx: *Compiler, names: []const []const u8) Error![]const u16 {
+    if (names.len == 0) return &.{};
+
+    var ids: std.ArrayList(u16) = .empty;
+    var lowerer = lower.Lowerer.init(ctx.arena, language.grammar(ctx.lang), ctx.kind_remap, ctx.field_remap, ctx.supertypes);
+    for (names) |name| {
+        const members = lowerer.resolveKindMembers(name) catch |err| return mapLowerError(ctx, err);
+        try ids.appendSlice(ctx.arena, members);
+    }
+    return ids.toOwnedSlice(ctx.arena);
 }
 
 fn subjectArgs(ctx: *Compiler, matcher: ast.NestedMatcher) Error![]rule.PredicateOperand {

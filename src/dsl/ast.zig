@@ -84,6 +84,7 @@ pub const Composition = struct {
     op: CompositionOp,
     negated: bool,
     matcher: NestedMatcher,
+    until: []const []const u8 = &.{},
 };
 
 pub const CompositionOp = enum {

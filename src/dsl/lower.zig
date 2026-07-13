@@ -97,6 +97,20 @@ pub const Lowerer = struct {
         return self.field_remap[sym];
     }
 
+    /// Resolve a named grammar kind to the flat set of concrete kata kind ids it
+    /// covers: a supertype yields its member set, a concrete kind yields itself.
+    pub fn resolveKindMembers(self: *Lowerer, name: []const u8) Error![]const u16 {
+        switch (try self.resolveKind(name)) {
+            .symbols => |members| return members,
+            .symbol => |id| {
+                const out = try self.arena.alloc(u16, 1);
+                out[0] = id;
+                return out;
+            },
+            else => unreachable,
+        }
+    }
+
     pub fn finish(self: *Lowerer, pattern: query.Pattern) Error!Lowered {
         return .{ .pattern = pattern, .capture_names = try self.captures.toOwnedSlice(self.arena) };
     }
