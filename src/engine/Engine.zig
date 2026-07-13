@@ -21,10 +21,10 @@ const RuleSet = @import("RuleSet.zig").RuleSet;
 
 const initial_diagnostic_capacity: usize = 16;
 
-/// caches the outcome of DSL compilation per language. `none` (no kata-format
+/// caches the outcome of rule compilation per language. `none` (no kata-format
 /// rules exist) must be remembered too, leaving the slot empty would re-scan
 /// the raw rules on every lint call.
-const DslSlot = union(enum) {
+const RuleSlot = union(enum) {
     not_compiled,
     none,
     compiled: rule.CompiledRule,
@@ -34,7 +34,7 @@ pub const Engine = struct {
     allocator: std.mem.Allocator,
     rules: *RuleSet,
     compiler: rule_compiler.RuleCompiler,
-    compiled_dsl: std.EnumArray(language.Name, DslSlot) = .initFill(.not_compiled),
+    compiled: std.EnumArray(language.Name, RuleSlot) = .initFill(.not_compiled),
     parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
     metric_queries: std.EnumArray(language.Name, ?metric.Compiled) = .initFill(null),
     kinds: std.EnumArray(language.Name, ?Kinds) = .initFill(null),
@@ -56,7 +56,7 @@ pub const Engine = struct {
     }
 
     pub fn deinit(self: *Engine) void {
-        var dit = self.compiled_dsl.iterator();
+        var dit = self.compiled.iterator();
         while (dit.next()) |entry| {
             switch (entry.value.*) {
                 .compiled => |*compiled| compiled.deinit(),
@@ -90,9 +90,9 @@ pub const Engine = struct {
 
     pub fn prewarm(self: *Engine) !void {
         for (std.enums.values(language.Name)) |lang| {
-            const compiled_dsl = try self.ensureCompiledDsl(lang);
+            const compiled = try self.ensureCompiled(lang);
             _ = try self.ensureParser(lang);
-            if (needsMeasures(compiled_dsl)) _ = try self.ensureMetricQuery(lang);
+            if (needsMeasures(compiled)) _ = try self.ensureMetricQuery(lang);
         }
         _ = try self.ensureCompiledFact();
     }
@@ -146,8 +146,8 @@ pub const Engine = struct {
         return parser;
     }
 
-    fn ensureCompiledDsl(self: *Engine, lang: language.Name) !?*rule.CompiledRule {
-        const slot = self.compiled_dsl.getPtr(lang);
+    fn ensureCompiled(self: *Engine, lang: language.Name) !?*rule.CompiledRule {
+        const slot = self.compiled.getPtr(lang);
         switch (slot.*) {
             .compiled => |*cached| return cached,
             .none => return null,
@@ -219,12 +219,12 @@ pub const Engine = struct {
         defer tree_ast.deinit(self.allocator);
         const root = Node.fromKata(&tree_ast, tree_ast.root());
 
-        const compiled_dsl = try self.ensureCompiledDsl(lang);
+        const compiled = try self.ensureCompiled(lang);
 
         var out: std.ArrayList(diagnostic.Diagnostic) = try .initCapacity(allocator, initial_diagnostic_capacity);
         errdefer out.deinit(allocator);
 
-        const metric_ctx: ?matcher.MetricContext = if (needsMeasures(compiled_dsl)) .{
+        const metric_ctx: ?matcher.MetricContext = if (needsMeasures(compiled)) .{
             .allocator = allocator,
             .compiled = try self.ensureMetricQuery(lang),
             .lang = lang,
@@ -237,7 +237,7 @@ pub const Engine = struct {
             .metric = metric_ctx,
         };
 
-        if (compiled_dsl) |dsl| try runRule(allocator, dsl, eval_ctx, lang, path, &out);
+        if (compiled) |dsl| try runRule(allocator, dsl, eval_ctx, lang, path, &out);
 
         demoteWarnings(self.warnings, lang, out.items);
 
@@ -245,8 +245,8 @@ pub const Engine = struct {
     }
 };
 
-fn needsMeasures(compiled_dsl: ?*rule.CompiledRule) bool {
-    if (compiled_dsl) |dsl| return dsl.needs_measures;
+fn needsMeasures(compiled: ?*rule.CompiledRule) bool {
+    if (compiled) |dsl| return dsl.needs_measures;
 
     return false;
 }
