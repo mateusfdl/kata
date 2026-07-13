@@ -1,0 +1,9 @@
+rule no-var {
+  lang ts, tsx
+
+  match variable_declaration @match
+
+  emit @match {
+    message "Replace var with let or const"
+  }
+}
