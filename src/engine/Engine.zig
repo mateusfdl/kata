@@ -1,5 +1,4 @@
 const std = @import("std");
-const ts = @import("tree_sitter");
 
 const diagnostic = @import("diagnostic.zig");
 const fact_rule = @import("fact_rule.zig");
@@ -10,13 +9,11 @@ const language = @import("language.zig");
 const matcher = @import("matcher.zig");
 const metric = @import("metric.zig");
 const ast = @import("ast.zig");
-const convert = @import("convert.zig");
-const kind_map = @import("kind_map.zig");
+const parse = @import("parse.zig");
 const query = @import("query.zig");
 const rule = @import("rule.zig");
 const rule_compiler = @import("rule_compiler.zig");
 const Node = @import("node.zig").Node;
-const Kinds = kind_map.Kinds;
 
 const RuleSet = @import("RuleSet.zig").RuleSet;
 
@@ -36,9 +33,8 @@ pub const Engine = struct {
     rules: *RuleSet,
     compiler: rule_compiler.RuleCompiler,
     compiled: std.EnumArray(language.Name, RuleSlot) = .initFill(.not_compiled),
-    parsers: std.EnumArray(language.Name, ?*ts.Parser) = .initFill(null),
+    frontend: parse.Frontend,
     metric_queries: std.EnumArray(family_mod.Family, ?metric.Compiled) = .initFill(null),
-    kinds: std.EnumArray(language.Name, ?Kinds) = .initFill(null),
     compiled_fact: ?[]const fact_rule.CompiledFactRule = null,
     fact_arena: ?*std.heap.ArenaAllocator = null,
     warnings: []const rule.ScopedId = &.{},
@@ -53,6 +49,7 @@ pub const Engine = struct {
             .allocator = allocator,
             .rules = rules,
             .compiler = compiler,
+            .frontend = parse.Frontend.init(allocator),
         };
     }
 
@@ -65,22 +62,11 @@ pub const Engine = struct {
             }
         }
 
-        var pit = self.parsers.iterator();
-        while (pit.next()) |entry| {
-            if (entry.value.*) |parser| parser.destroy();
-        }
+        self.frontend.deinit();
 
         var mit = self.metric_queries.iterator();
         while (mit.next()) |entry| {
             if (entry.value.*) |*compiled| compiled.deinit(self.allocator);
-        }
-
-        var kit = self.kinds.iterator();
-        while (kit.next()) |entry| {
-            if (entry.value.*) |k| {
-                self.allocator.free(k.kind_remap);
-                self.allocator.free(k.field_remap);
-            }
         }
 
         if (self.fact_arena) |arena_ptr| {
@@ -92,7 +78,7 @@ pub const Engine = struct {
     pub fn prewarm(self: *Engine) !void {
         for (std.enums.values(language.Name)) |lang| {
             const compiled = try self.ensureCompiled(lang);
-            _ = try self.ensureParser(lang);
+            try self.frontend.ensure(lang);
             if (needsMeasures(compiled)) _ = try self.ensureMetricQuery(lang.family());
         }
         _ = try self.ensureCompiledFact();
@@ -138,15 +124,6 @@ pub const Engine = struct {
         return true;
     }
 
-    fn ensureParser(self: *Engine, lang: language.Name) !*ts.Parser {
-        if (self.parsers.get(lang)) |cached| return cached;
-        const parser = ts.Parser.create();
-        errdefer parser.destroy();
-        parser.setLanguage(language.grammar(lang)) catch return error.SetLanguageFailed;
-        self.parsers.set(lang, parser);
-        return parser;
-    }
-
     fn ensureCompiled(self: *Engine, lang: language.Name) !?*rule.CompiledRule {
         const slot = self.compiled.getPtr(lang);
         switch (slot.*) {
@@ -173,15 +150,6 @@ pub const Engine = struct {
         return &slot.*.?;
     }
 
-    fn ensureKinds(self: *Engine, lang: language.Name) !*const Kinds {
-        const slot = self.kinds.getPtr(lang);
-        if (slot.*) |*cached| return cached;
-
-        slot.* = try kind_map.build(lang.family(), language.grammar(lang), self.allocator);
-
-        return &slot.*.?;
-    }
-
     pub fn extractFacts(
         self: *Engine,
         gpa: std.mem.Allocator,
@@ -189,24 +157,10 @@ pub const Engine = struct {
         lang: language.Name,
         path: []const u8,
     ) !facts.FileFacts {
-        var tree_ast = try self.convertTree(source, lang);
+        var tree_ast = try self.frontend.tree(source, lang);
         defer tree_ast.deinit(self.allocator);
 
         return facts.extract(gpa, Node.fromKata(&tree_ast, tree_ast.root()), source, path, lang);
-    }
-
-    /// Parse `source` and clone the CST into kata's own flat tree, discarding the
-    /// tree-sitter tree immediately. tree-sitter is used only to parse.
-    fn convertTree(self: *Engine, source: []const u8, lang: language.Name) !ast.Ast {
-        const kinds = try self.ensureKinds(lang);
-        const parser = try self.ensureParser(lang);
-        const tree = parser.parseString(source, null) orelse return error.ParseFailed;
-        const cloned = convert.build(lang.family(), kinds.kind_remap, kinds.field_remap, tree.rootNode(), source, self.allocator) catch |err| {
-            tree.destroy();
-            return err;
-        };
-        tree.destroy();
-        return cloned;
     }
 
     pub fn lint(
@@ -216,7 +170,7 @@ pub const Engine = struct {
         lang: language.Name,
         path: ?[]const u8,
     ) ![]diagnostic.Diagnostic {
-        var tree_ast = try self.convertTree(source, lang);
+        var tree_ast = try self.frontend.tree(source, lang);
         defer tree_ast.deinit(self.allocator);
         const root = Node.fromKata(&tree_ast, tree_ast.root());
 
