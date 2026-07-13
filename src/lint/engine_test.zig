@@ -1625,3 +1625,37 @@ test "engine: position equals siblings selects the last named sibling" {
     try std.testing.expectEqual(@as(u32, 1), diags[1].range.start.line);
     try std.testing.expectEqual(@as(u32, 11), diags[1].range.start.column);
 }
+
+const kata_children_constraint =
+    \\rule children-constraint {
+    \\  lang ts
+    \\  match function_declaration @match {
+    \\    body: statement_block {
+    \\      children: return_statement @ret {
+    \\        child: call_expression
+    \\      }
+    \\    }
+    \\  }
+    \\  where {
+    \\    capture(@ret)
+    \\  }
+    \\  emit @match { message "a return calls something" }
+    \\}
+;
+
+test "engine: children relation enforces the nested child pattern" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "children-constraint", kata_children_constraint);
+    defer f.deinit();
+
+    const src =
+        "function noisy() { return g(); }\n" ++
+        "function quiet() { return 1; }\n" ++
+        "function late() { return 1; return g(); }\n";
+    const diags = try f.engine.lint(gpa, src, .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqual(@as(u32, 2), diags[1].range.start.line);
+}

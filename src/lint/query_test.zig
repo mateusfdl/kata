@@ -152,3 +152,59 @@ test "query: absent field excludes nodes that have it" {
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("x", matches[0].get(0).?.text(src).?);
 }
+
+test "query: children relation rejects a child failing its nested constraint" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const src = "function f() { return 1; }";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{
+        .kind = .{ .symbol = t.sym("statement_block") },
+        .fields = &.{.{
+            .relation = .children,
+            .pattern = .{
+                .kind = .{ .symbol = t.sym("return_statement") },
+                .capture = 0,
+                .fields = &.{.{
+                    .relation = .child,
+                    .pattern = .{ .kind = .{ .symbol = t.sym("call_expression") } },
+                }},
+            },
+        }},
+    };
+    const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
+
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+    try std.testing.expect(matches[0].get(0) == null);
+}
+
+test "query: children relation binds a later child when an earlier one fails" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const src = "function f() { return 1; return g(); }";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{
+        .kind = .{ .symbol = t.sym("statement_block") },
+        .fields = &.{.{
+            .relation = .children,
+            .pattern = .{
+                .kind = .{ .symbol = t.sym("return_statement") },
+                .capture = 0,
+                .fields = &.{.{
+                    .relation = .child,
+                    .pattern = .{ .kind = .{ .symbol = t.sym("call_expression") } },
+                }},
+            },
+        }},
+    };
+    const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
+
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+    try std.testing.expectEqualStrings("return g();", matches[0].get(0).?.text(src).?);
+}

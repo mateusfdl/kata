@@ -93,6 +93,7 @@ const Cont = union(enum) {
         parent: Node,
         min_child: u32,
         next: *const Cont,
+        fired: ?*bool = null,
     },
 };
 
@@ -191,8 +192,8 @@ fn fieldsCont(fields: []const Field, index: usize, parent: Node, min_child: u32,
 }
 
 /// Zero-or-more immediate named children. With a single-node capture slot this
-/// binds the first matching child at or after `min_child` (or none) and resumes
-/// once, since `*` is always satisfiable. No shipped rule exercises this relation.
+/// binds the first child at or after `min_child` that satisfies the full child
+/// pattern (or none) and resumes once, since `*` is always satisfiable.
 fn matchChildren(
     pattern: *const Pattern,
     parent: Node,
@@ -203,20 +204,13 @@ fn matchChildren(
     next: *const Cont,
     collector: *Collector,
 ) Error!void {
+    var fired = false;
     var k: u32 = min_child;
     while (k < parent.namedChildCount()) : (k += 1) {
-        const child = parent.namedChild(k).?;
-        if (!kindMatches(pattern, child)) continue;
-
-        var saved: ?Node = undefined;
-        if (pattern.capture) |c| {
-            saved = bindings[c];
-            bindings[c] = child;
-        }
-        defer if (pattern.capture) |c| {
-            bindings[c] = saved;
-        };
-        return matchFields(fields, index + 1, parent, k + 1, bindings, next, collector);
+        var cont = fieldsCont(fields, index, parent, k + 1, next);
+        cont.fields.fired = &fired;
+        try matchNode(pattern, parent.namedChild(k).?, bindings, &cont, collector);
+        if (fired) return;
     }
 
     return matchFields(fields, index + 1, parent, min_child, bindings, next, collector);
@@ -225,7 +219,10 @@ fn matchChildren(
 fn invoke(cont: *const Cont, bindings: []?Node, collector: *Collector) Error!void {
     switch (cont.*) {
         .emit => try collector.emit(bindings),
-        .fields => |f| try matchFields(f.fields, f.index, f.parent, f.min_child, bindings, f.next, collector),
+        .fields => |f| {
+            if (f.fired) |flag| flag.* = true;
+            try matchFields(f.fields, f.index, f.parent, f.min_child, bindings, f.next, collector);
+        },
     }
 }
 
