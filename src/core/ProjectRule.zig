@@ -73,8 +73,9 @@ pub fn evaluate(
 }
 
 pub fn matchesWarning(warnings: []const ScopedId, lang_str: []const u8, id: []const u8) bool {
-    const lang = language.Name.fromString(lang_str) orelse return false;
     for (warnings) |w| {
+        if (w.matchesProject(id)) return true;
+        const lang = language.Name.fromString(lang_str) orelse continue;
         if (w.matches(lang, id)) return true;
     }
     return false;

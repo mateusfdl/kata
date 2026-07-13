@@ -122,6 +122,25 @@ test "project rule: warnings demote violations to warn severity" {
     try std.testing.expectEqual(lint_diagnostic.Severity.warn, violations[0].diagnostic.severity);
 }
 
+test "project rule: project-scoped warnings demote violations to warn severity" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+    try indexTsFiles(f, gpa, &index);
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const warnings = [_]project_rule.ScopedId{.{ .lang = null, .id = "repository-isolation", .project = true }};
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &warnings, &index, null);
+
+    try std.testing.expectEqual(@as(usize, 1), violations.len);
+    try std.testing.expectEqual(lint_diagnostic.Severity.warn, violations[0].diagnostic.severity);
+}
+
 test "project rule: go constructor channel resolves receivers" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.go}, "no-comments", comment_rule);
