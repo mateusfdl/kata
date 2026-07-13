@@ -1,0 +1,13 @@
+rule no-zero-fraction {
+  lang ts, tsx
+
+  match number @match
+
+  where {
+    matches(text(@match), "\\.0*$")
+  }
+
+  emit @match {
+    message "Don't use a zero fraction in the number"
+  }
+}
