@@ -24,6 +24,7 @@ pub const adapter: family.Adapter = .{
     .paramCount = paramCount,
     .fact_patterns = fact_patterns,
     .resolveContainers = resolveContainers,
+    .constructor_prefix = null,
     .relative_import_specifiers = true,
 };
 

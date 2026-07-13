@@ -24,6 +24,7 @@ pub const Adapter = struct {
     paramCount: *const fn (params: Node) u32,
     fact_patterns: []const query.Pattern,
     resolveContainers: *const fn (classes: []const facts.ClassDef, methods: []facts.MethodDef, calls: []facts.Call) void,
+    constructor_prefix: ?[]const u8,
     relative_import_specifiers: bool,
 };
 

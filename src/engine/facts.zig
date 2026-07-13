@@ -113,8 +113,6 @@ fn resolveRelative(
     return try std.mem.join(allocator, "/", segments.items);
 }
 
-const go_constructor_prefix = "New";
-
 pub const Role = enum {
     class_node,
     class_name,
@@ -168,7 +166,7 @@ pub fn extract(
     const adapter = family_mod.of(lang.family());
     for (adapter.fact_patterns) |*pattern| {
         for (try query.run(arena, pattern, role_count, root)) |match| {
-            try assemble(arena, source, match, &lists);
+            try assemble(arena, source, match, adapter.constructor_prefix, &lists);
         }
     }
 
@@ -196,6 +194,7 @@ fn assemble(
     arena: std.mem.Allocator,
     source: []const u8,
     match: query.Match,
+    constructor_prefix: ?[]const u8,
     lists: *Lists,
 ) !void {
     if (match.get(cap(.method_name))) |name_node| {
@@ -226,7 +225,7 @@ fn assemble(
     if (match.get(cap(.decl_name))) |name_node| {
         if (!isFirstInExpressionList(name_node)) return;
 
-        const type_name = try declTypeName(arena, source, match) orelse return;
+        const type_name = try declTypeName(arena, source, match, constructor_prefix) orelse return;
 
         try lists.typed_decls.append(arena, .{
             .name = try nodeText(arena, source, name_node),
@@ -276,15 +275,17 @@ fn declTypeName(
     arena: std.mem.Allocator,
     source: []const u8,
     match: query.Match,
+    constructor_prefix: ?[]const u8,
 ) !?[]const u8 {
     if (match.get(cap(.decl_type))) |type_node| return try nodeText(arena, source, type_node);
 
+    const prefix = constructor_prefix orelse return null;
     const ctor_node = match.get(cap(.decl_ctor)) orelse return null;
     const ctor = nodeSlice(source, ctor_node);
 
-    if (!std.mem.startsWith(u8, ctor, go_constructor_prefix)) return null;
+    if (!std.mem.startsWith(u8, ctor, prefix)) return null;
 
-    const type_name = ctor[go_constructor_prefix.len..];
+    const type_name = ctor[prefix.len..];
 
     if (type_name.len == 0) return null;
 
