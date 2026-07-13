@@ -1,10 +1,10 @@
 rule no-defer-in-loop {
   lang go
 
-  match for_statement {
-    body: block {
-      child: defer_statement @match
-    }
+  match defer_statement @match
+
+  where {
+    inside @match for_statement until func_literal
   }
 
   emit @match {
