@@ -7,7 +7,7 @@ rule error-strings {
       field: field_identifier @fn
     }
     arguments: argument_list {
-      child: interpreted_string_literal @match
+      child: [interpreted_string_literal @match, raw_string_literal @match]
     }
   }
 
@@ -15,7 +15,7 @@ rule error-strings {
     text(@pkg) in ["errors", "fmt"]
     text(@fn) in ["New", "Errorf"]
     position(@match) == 1
-    matches(text(@match), "^\"[A-Z]")
+    matches(text(@match), "^[\"`][A-Z]")
   }
 
   emit @match {
