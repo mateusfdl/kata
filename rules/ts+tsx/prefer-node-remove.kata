@@ -1,0 +1,17 @@
+rule prefer-node-remove {
+  lang ts, tsx
+
+  match call_expression @match {
+    function: member_expression {
+      property: property_identifier @prop
+    }
+  }
+
+  where {
+    text(@prop) == "removeChild"
+  }
+
+  emit @match {
+    message "Prefer childNode.remove() over parentNode.removeChild(childNode)"
+  }
+}
