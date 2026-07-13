@@ -4,7 +4,6 @@ const mvzr = @import("mvzr");
 const diagnostic = @import("diagnostic.zig");
 const expr = @import("expr.zig");
 const language = @import("language.zig");
-const message_mod = @import("message.zig");
 const query = @import("query.zig");
 
 pub const match_capture = "match";
@@ -134,9 +133,20 @@ pub const Predicate = union(PredicateOp) {
     all_group: []Predicate,
 };
 
-pub const Placeholder = message_mod.Placeholder;
-pub const MessageSegment = message_mod.Segment;
-pub const Message = message_mod.Message;
+pub const Placeholder = struct {
+    measure: expr.Measure,
+    capture_id: query.CaptureId,
+};
+
+pub const MessageSegment = union(enum) {
+    literal: []const u8,
+    placeholder: Placeholder,
+};
+
+pub const Message = union(enum) {
+    plain: []const u8,
+    segments: []const MessageSegment,
+};
 
 pub const PatternMeta = struct {
     predicates: []Predicate,

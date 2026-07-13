@@ -7,7 +7,6 @@ pub const glob = @import("glob.zig");
 pub const kind_map = @import("kind_map.zig");
 pub const language = @import("language.zig");
 pub const matcher = @import("matcher.zig");
-pub const message = @import("message.zig");
 pub const metric = @import("metric.zig");
 pub const node = @import("node.zig");
 pub const project_rule = @import("ProjectRule.zig");
