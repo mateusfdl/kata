@@ -13,3 +13,18 @@ function dispatch(a, b, c) {
 function simple(a) {
   return a;
 }
+
+function outer(a, b, c) {
+  // kata-expect: max-complexity
+  function nested(x, y, z) {
+    if (x) { return 1; }
+    if (y) { return 2; }
+    if (z) { return 3; }
+    if (x && y) { return 4; }
+    if (x || z) { return 5; }
+    if (y && z) { return 6; }
+    if (y || z) { return 7; }
+    return 8;
+  }
+  return nested(a, b, c);
+}
