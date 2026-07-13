@@ -36,7 +36,7 @@ rule no-any {
   lang ts, tsx
 
   match type_arguments @match {
-    child: predefined_type @t
+    child: [predefined_type @t, array_type { child: predefined_type @t }]
   }
 
   where {
