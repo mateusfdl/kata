@@ -34,90 +34,114 @@ fn sym(comptime name: []const u8) u16 {
     return @intFromEnum(@field(kinds.Kind, name));
 }
 
-fn fld(comptime field: kinds.Field) u16 {
-    return @intFromEnum(field);
+fn fld(comptime field_: kinds.Field) u16 {
+    return @intFromEnum(field_);
 }
 
 const cap = facts.cap;
 
+fn pat(comptime name: []const u8) query.Pattern {
+    return .{ .kind = .{ .symbol = sym(name) } };
+}
+
+fn patC(comptime name: []const u8, capture: query.CaptureId) query.Pattern {
+    return .{ .kind = .{ .symbol = sym(name) }, .capture = capture };
+}
+
+fn patF(comptime name: []const u8, comptime fields_: []const query.Field) query.Pattern {
+    return .{ .kind = .{ .symbol = sym(name) }, .fields = fields_ };
+}
+
+fn patCF(comptime name: []const u8, capture: query.CaptureId, comptime fields_: []const query.Field) query.Pattern {
+    return .{ .kind = .{ .symbol = sym(name) }, .capture = capture, .fields = fields_ };
+}
+
+fn field(comptime name: kinds.Field, pattern: query.Pattern) query.Field {
+    return .{ .relation = .{ .field = fld(name) }, .pattern = pattern };
+}
+
+fn child(pattern: query.Pattern) query.Field {
+    return .{ .relation = .child, .pattern = pattern };
+}
+
+fn typeAnnotation(comptime capture: query.CaptureId) query.Pattern {
+    return patF("type_annotation", &.{
+        child(patC("type_identifier", capture)),
+    });
+}
+
 const fact_patterns: []const query.Pattern = &.{
-    .{ .kind = .{ .symbol = sym("class_declaration") }, .capture = cap(.class_node), .fields = &.{
-        .{ .relation = .{ .field = fld(.name) }, .pattern = .{ .kind = .{ .symbol = sym("type_identifier") }, .capture = cap(.class_name) } },
-    } },
-    .{ .kind = .{ .symbol = sym("abstract_class_declaration") }, .capture = cap(.class_node), .fields = &.{
-        .{ .relation = .{ .field = fld(.name) }, .pattern = .{ .kind = .{ .symbol = sym("type_identifier") }, .capture = cap(.class_name) } },
-    } },
-    .{ .kind = .{ .symbol = sym("method_definition") }, .capture = cap(.method_node), .fields = &.{
-        .{ .relation = .{ .field = fld(.name) }, .pattern = .{ .kind = .{ .symbol = sym("property_identifier") }, .capture = cap(.method_name) } },
-    } },
-    .{ .kind = .{ .symbol = sym("public_field_definition") }, .fields = &.{
-        .{ .relation = .{ .field = fld(.name) }, .pattern = .{ .kind = .{ .symbol = sym("property_identifier") }, .capture = cap(.decl_name) } },
-        .{ .relation = .{ .field = fld(.type) }, .pattern = .{ .kind = .{ .symbol = sym("type_annotation") }, .fields = &.{
-            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = sym("type_identifier") }, .capture = cap(.decl_type) } },
-        } } },
-    } },
-    .{ .kind = .{ .symbol = sym("required_parameter") }, .fields = &.{
-        .{ .relation = .{ .field = fld(.pattern) }, .pattern = .{ .kind = .{ .symbol = sym("identifier") }, .capture = cap(.decl_name) } },
-        .{ .relation = .{ .field = fld(.type) }, .pattern = .{ .kind = .{ .symbol = sym("type_annotation") }, .fields = &.{
-            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = sym("type_identifier") }, .capture = cap(.decl_type) } },
-        } } },
-    } },
-    .{ .kind = .{ .symbol = sym("variable_declarator") }, .fields = &.{
-        .{ .relation = .{ .field = fld(.name) }, .pattern = .{ .kind = .{ .symbol = sym("identifier") }, .capture = cap(.decl_name) } },
-        .{ .relation = .{ .field = fld(.type) }, .pattern = .{ .kind = .{ .symbol = sym("type_annotation") }, .fields = &.{
-            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = sym("type_identifier") }, .capture = cap(.decl_type) } },
-        } } },
-    } },
-    .{ .kind = .{ .symbol = sym("variable_declarator") }, .fields = &.{
-        .{ .relation = .{ .field = fld(.name) }, .pattern = .{ .kind = .{ .symbol = sym("identifier") }, .capture = cap(.decl_name) } },
-        .{ .relation = .{ .field = fld(.value) }, .pattern = .{ .kind = .{ .symbol = sym("new_expression") }, .fields = &.{
-            .{ .relation = .{ .field = fld(.constructor) }, .pattern = .{ .kind = .{ .symbol = sym("identifier") }, .capture = cap(.decl_type) } },
-        } } },
-    } },
-    .{ .kind = .{ .symbol = sym("assignment_expression") }, .fields = &.{
-        .{ .relation = .{ .field = fld(.left) }, .pattern = .{ .kind = .{ .symbol = sym("member_expression") }, .fields = &.{
-            .{ .relation = .{ .field = fld(.object) }, .pattern = .{ .kind = .{ .symbol = sym("this") } } },
-            .{ .relation = .{ .field = fld(.property) }, .pattern = .{ .kind = .{ .symbol = sym("property_identifier") }, .capture = cap(.decl_name) } },
-        } } },
-        .{ .relation = .{ .field = fld(.right) }, .pattern = .{ .kind = .{ .symbol = sym("new_expression") }, .fields = &.{
-            .{ .relation = .{ .field = fld(.constructor) }, .pattern = .{ .kind = .{ .symbol = sym("identifier") }, .capture = cap(.decl_type) } },
-        } } },
-    } },
-    .{ .kind = .{ .symbol = sym("call_expression") }, .capture = cap(.call_node), .fields = &.{
-        .{ .relation = .{ .field = fld(.function) }, .pattern = .{ .kind = .{ .symbol = sym("member_expression") }, .fields = &.{
-            .{ .relation = .{ .field = fld(.object) }, .pattern = .{ .kind = .{ .symbol = sym("identifier") }, .capture = cap(.call_receiver) } },
-            .{ .relation = .{ .field = fld(.property) }, .pattern = .{ .kind = .{ .symbol = sym("property_identifier") }, .capture = cap(.call_method) } },
-        } } },
-    } },
-    .{ .kind = .{ .symbol = sym("call_expression") }, .capture = cap(.call_node), .fields = &.{
-        .{ .relation = .{ .field = fld(.function) }, .pattern = .{ .kind = .{ .symbol = sym("member_expression") }, .fields = &.{
-            .{ .relation = .{ .field = fld(.object) }, .pattern = .{ .kind = .{ .symbol = sym("member_expression") }, .fields = &.{
-                .{ .relation = .{ .field = fld(.object) }, .pattern = .{ .kind = .{ .symbol = sym("this") } } },
-                .{ .relation = .{ .field = fld(.property) }, .pattern = .{ .kind = .{ .symbol = sym("property_identifier") }, .capture = cap(.call_receiver) } },
-            } } },
-            .{ .relation = .{ .field = fld(.property) }, .pattern = .{ .kind = .{ .symbol = sym("property_identifier") }, .capture = cap(.call_method) } },
-        } } },
-    } },
-    .{ .kind = .{ .symbol = sym("import_statement") }, .fields = &.{
-        .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = sym("import_clause") }, .fields = &.{
-            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = sym("named_imports") }, .fields = &.{
-                .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = sym("import_specifier") }, .fields = &.{
-                    .{ .relation = .{ .field = fld(.name) }, .pattern = .{ .kind = .{ .symbol = sym("identifier") }, .capture = cap(.import_name) } },
-                } } },
-            } } },
-        } } },
-        .{ .relation = .{ .field = fld(.source) }, .pattern = .{ .kind = .{ .symbol = sym("string") }, .fields = &.{
-            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = sym("string_fragment") }, .capture = cap(.import_source) } },
-        } } },
-    } },
-    .{ .kind = .{ .symbol = sym("import_statement") }, .fields = &.{
-        .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = sym("import_clause") }, .fields = &.{
-            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = sym("identifier") }, .capture = cap(.import_name) } },
-        } } },
-        .{ .relation = .{ .field = fld(.source) }, .pattern = .{ .kind = .{ .symbol = sym("string") }, .fields = &.{
-            .{ .relation = .child, .pattern = .{ .kind = .{ .symbol = sym("string_fragment") }, .capture = cap(.import_source) } },
-        } } },
-    } },
+    patCF("class_declaration", cap(.class_node), &.{
+        field(.name, patC("type_identifier", cap(.class_name))),
+    }),
+    patCF("abstract_class_declaration", cap(.class_node), &.{
+        field(.name, patC("type_identifier", cap(.class_name))),
+    }),
+    patCF("method_definition", cap(.method_node), &.{
+        field(.name, patC("property_identifier", cap(.method_name))),
+    }),
+    patF("public_field_definition", &.{
+        field(.name, patC("property_identifier", cap(.decl_name))),
+        field(.type, typeAnnotation(cap(.decl_type))),
+    }),
+    patF("required_parameter", &.{
+        field(.pattern, patC("identifier", cap(.decl_name))),
+        field(.type, typeAnnotation(cap(.decl_type))),
+    }),
+    patF("variable_declarator", &.{
+        field(.name, patC("identifier", cap(.decl_name))),
+        field(.type, typeAnnotation(cap(.decl_type))),
+    }),
+    patF("variable_declarator", &.{
+        field(.name, patC("identifier", cap(.decl_name))),
+        field(.value, patF("new_expression", &.{
+            field(.constructor, patC("identifier", cap(.decl_type))),
+        })),
+    }),
+    patF("assignment_expression", &.{
+        field(.left, patF("member_expression", &.{
+            field(.object, pat("this")),
+            field(.property, patC("property_identifier", cap(.decl_name))),
+        })),
+        field(.right, patF("new_expression", &.{
+            field(.constructor, patC("identifier", cap(.decl_type))),
+        })),
+    }),
+    patCF("call_expression", cap(.call_node), &.{
+        field(.function, patF("member_expression", &.{
+            field(.object, patC("identifier", cap(.call_receiver))),
+            field(.property, patC("property_identifier", cap(.call_method))),
+        })),
+    }),
+    patCF("call_expression", cap(.call_node), &.{
+        field(.function, patF("member_expression", &.{
+            field(.object, patF("member_expression", &.{
+                field(.object, pat("this")),
+                field(.property, patC("property_identifier", cap(.call_receiver))),
+            })),
+            field(.property, patC("property_identifier", cap(.call_method))),
+        })),
+    }),
+    patF("import_statement", &.{
+        child(patF("import_clause", &.{
+            child(patF("named_imports", &.{
+                child(patF("import_specifier", &.{
+                    field(.name, patC("identifier", cap(.import_name))),
+                })),
+            })),
+        })),
+        field(.source, patF("string", &.{
+            child(patC("string_fragment", cap(.import_source))),
+        })),
+    }),
+    patF("import_statement", &.{
+        child(patF("import_clause", &.{
+            child(patC("identifier", cap(.import_name))),
+        })),
+        field(.source, patF("string", &.{
+            child(patC("string_fragment", cap(.import_source))),
+        })),
+    }),
 };
 
 fn resolveContainers(classes: []const facts.ClassDef, methods: []facts.MethodDef, calls: []facts.Call) void {
