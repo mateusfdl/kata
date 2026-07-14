@@ -10,17 +10,11 @@ const rule_compiler = @import("engine").rule_compiler;
 const CompileError = rule_compiler.CompileError;
 const RuleCompiler = rule_compiler.RuleCompiler;
 
-const vtable: RuleCompiler.VTable = .{
-    .compileLang = compileLang,
-    .compileFacts = compileFacts,
-};
-
 pub fn ruleCompiler() RuleCompiler {
-    return .{ .ctx = undefined, .vtable = &vtable };
+    return .{ .compileLang = compileLang, .compileFacts = compileFacts };
 }
 
 fn compileLang(
-    _: *anyopaque,
     allocator: std.mem.Allocator,
     lang: language.Name,
     raws: []const rule.RawRule,
@@ -33,7 +27,6 @@ fn compileLang(
 }
 
 fn compileFacts(
-    _: *anyopaque,
     allocator: std.mem.Allocator,
     raws: []const rule.RawRule,
     diag: *rule.Diagnostic,
