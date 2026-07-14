@@ -1,0 +1,96 @@
+rule no-runtime-type-checks {
+  lang ts, tsx
+
+  match binary_expression @match {
+    left: unary_expression {
+      operator: "typeof"
+    }
+    operator: ["==", "!=", "===", "!=="]
+    right: [string, template_string]
+  }
+
+  where {
+    not inside @match catch_clause
+  }
+
+  emit @match {
+    message "Runtime type checks are not allowed - tighten the TypeScript types instead"
+  }
+}
+
+rule no-runtime-type-checks {
+  lang ts, tsx
+
+  match binary_expression @match {
+    left: [string, template_string]
+    operator: ["==", "!=", "===", "!=="]
+    right: unary_expression {
+      operator: "typeof"
+    }
+  }
+
+  where {
+    not inside @match catch_clause
+  }
+
+  emit @match {
+    message "Runtime type checks are not allowed - tighten the TypeScript types instead"
+  }
+}
+
+rule no-runtime-type-checks {
+  lang ts, tsx
+
+  match switch_statement @match {
+    value: parenthesized_expression {
+      child: unary_expression {
+        operator: "typeof"
+      }
+    }
+  }
+
+  where {
+    not inside @match catch_clause
+  }
+
+  emit @match {
+    message "Runtime type checks are not allowed - tighten the TypeScript types instead"
+  }
+}
+
+rule no-runtime-type-checks {
+  lang ts, tsx
+
+  match binary_expression @match {
+    operator: ["instanceof", "in"]
+  }
+
+  where {
+    not inside @match catch_clause
+  }
+
+  emit @match {
+    message "Runtime type checks are not allowed - tighten the TypeScript types instead"
+  }
+}
+
+rule no-runtime-type-checks {
+  lang ts, tsx
+
+  match call_expression @match {
+    function: member_expression {
+      object: identifier @receiver
+      property: property_identifier @method
+    }
+  }
+
+  where {
+    text(@receiver) == "Array"
+    text(@method) == "isArray"
+    not inside @match catch_clause
+  }
+
+  emit @match {
+    message "Runtime type checks are not allowed - tighten the TypeScript types instead"
+  }
+}
