@@ -148,7 +148,7 @@
         {
           default = pkgs.stdenv.mkDerivation (finalAttrs: {
             pname = "kata";
-            version = "1.5.0";
+            version = "1.6.0";
             src = self;
 
             zigDeps = zig.fetchDeps {
