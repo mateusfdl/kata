@@ -20,6 +20,7 @@ pub fn installTeardown(socket_path: []const u8) void {
         .mask = std.posix.sigemptyset(),
         .flags = 0,
     };
+
     std.posix.sigaction(.INT, &act, null);
     std.posix.sigaction(.TERM, &act, null);
 }

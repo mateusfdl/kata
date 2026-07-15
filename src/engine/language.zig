@@ -8,6 +8,18 @@ extern fn tree_sitter_typescript() callconv(.c) *const ts.Language;
 extern fn tree_sitter_tsx() callconv(.c) *const ts.Language;
 extern fn tree_sitter_go() callconv(.c) *const ts.Language;
 
+const Info = struct {
+    canonical: []const u8,
+    extension: []const u8,
+    grammar: *const fn () callconv(.c) *const ts.Language,
+};
+
+const infos: std.EnumArray(Name, Info) = .init(.{
+    .ts = .{ .canonical = "ts", .extension = ".ts", .grammar = tree_sitter_typescript },
+    .tsx = .{ .canonical = "tsx", .extension = ".tsx", .grammar = tree_sitter_tsx },
+    .go = .{ .canonical = "go", .extension = ".go", .grammar = tree_sitter_go },
+});
+
 pub const Name = enum {
     ts,
     tsx,
@@ -70,18 +82,6 @@ pub fn parseDirName(name: []const u8, out: []Name) ![]Name {
 
     return out[0..n];
 }
-
-const Info = struct {
-    canonical: []const u8,
-    extension: []const u8,
-    grammar: *const fn () callconv(.c) *const ts.Language,
-};
-
-const infos: std.EnumArray(Name, Info) = .init(.{
-    .ts = .{ .canonical = "ts", .extension = ".ts", .grammar = tree_sitter_typescript },
-    .tsx = .{ .canonical = "tsx", .extension = ".tsx", .grammar = tree_sitter_tsx },
-    .go = .{ .canonical = "go", .extension = ".go", .grammar = tree_sitter_go },
-});
 
 pub fn grammar(name: Name) *const ts.Language {
     return infos.get(name).grammar();

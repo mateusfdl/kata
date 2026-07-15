@@ -13,6 +13,7 @@ pub fn resolveBase(
         return try std.fmt.allocPrint(arena, "{s}/kata", .{xdg});
     if (environ.get("HOME")) |home|
         return try std.fmt.allocPrint(arena, "{s}/.config/kata", .{home});
+
     return null;
 }
 

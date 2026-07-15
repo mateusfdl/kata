@@ -5,6 +5,7 @@ test {
 }
 
 comptime {
+    _ = @import("bytes_test.zig");
     _ = @import("dsl.zig");
     _ = @import("fact_compile_test.zig");
     _ = @import("lower_test.zig");

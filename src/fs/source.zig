@@ -47,6 +47,7 @@ pub fn walkFiles(
         files += 1;
         try visit(context, lang, source, indexed_path);
     }
+
     return files;
 }
 
@@ -66,6 +67,7 @@ pub fn indexPath(gpa: std.mem.Allocator, target: []const u8, sub_path: []const u
     const trimmed = std.mem.trimEnd(u8, target, "/");
     if (trimmed.len == 0 or std.mem.eql(u8, trimmed, ".")) return gpa.dupe(u8, sub_path);
     const base = if (std.mem.startsWith(u8, trimmed, "./")) trimmed[2..] else trimmed;
+
     return paths.join(gpa, base, sub_path);
 }
 
@@ -79,12 +81,15 @@ pub fn languageOf(name: []const u8) ?language.Name {
 fn collectIgnoredDirs(io: std.Io, arena: std.mem.Allocator, dir: *std.Io.Dir) ![]const []const u8 {
     var list: std.ArrayList([]const u8) = .empty;
     try list.append(arena, git_dir);
+
     if (dir.readFileAlloc(io, gitignore_file, arena, .limited(max_gitignore_bytes))) |bytes| {
         try appendIgnoredDirs(arena, bytes, &list);
     } else |err| switch (err) {
         error.FileNotFound => {},
+
         else => return err,
     }
+
     return list.toOwnedSlice(arena);
 }
 
@@ -97,9 +102,12 @@ pub fn appendIgnoredDirs(
     while (lines.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0 or line[0] == '#' or line[0] == '!') continue;
+
         if (std.mem.indexOfAny(u8, line, "*?[") != null) continue;
+
         const name = std.mem.trimEnd(u8, std.mem.trimStart(u8, line, "/"), "/");
         if (name.len == 0 or std.mem.indexOfScalar(u8, name, '/') != null) continue;
+
         try out.append(arena, name);
     }
 }
@@ -108,5 +116,6 @@ fn containsName(names: []const []const u8, name: []const u8) bool {
     for (names) |n| {
         if (std.mem.eql(u8, n, name)) return true;
     }
+
     return false;
 }

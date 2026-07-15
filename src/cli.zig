@@ -61,6 +61,8 @@ pub const Subcommand = union(enum) {
     unknown: []const u8,
 };
 
+pub const Options = one_shot.Options;
+
 pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
     if (args.len == 0) return .{ .daemon = null };
 
@@ -223,9 +225,12 @@ fn resolveContext(c: Command, anchor: ?[]const u8) !?*context_mod.Context {
             try c.stderr.flush();
             return null;
         }
+
         _ = try internalError(c.stderr, "resolve context", err);
+
         return null;
     };
+
     drainWarnings(c.stderr, &ctx.rule_set);
 
     return ctx;
@@ -284,6 +289,7 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
     if (root) |r| {
         if (ctx.resolved.project_rules.len == 0 and ctx.engine.factRules().len == 0)
             return printAndExit(c.stderr, "kata daemon --root requires project rules in rules.yaml or rules/project\n", exit_usage);
+
         project_state = daemon.ProjectState.init(c.gpa, ctx.resolved.project_rules);
         _ = daemon.buildIndex(c.io, c.gpa, &ctx.engine, r, &project_state.?) catch |err|
             return internalError(c.stderr, "index project", err);
@@ -386,8 +392,6 @@ fn resolveSocketPath(
 
     return args_mod.fallback_socket_path;
 }
-
-pub const Options = one_shot.Options;
 
 pub fn run(
     allocator: std.mem.Allocator,

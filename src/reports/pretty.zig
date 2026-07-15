@@ -47,6 +47,7 @@ pub const Pretty = struct {
             .@"error" => 'x',
             .warn => '!',
         };
+
         try self.writer.writeAll("  ");
         try self.paint(d.severity);
         try self.writer.print("{c} {s}", .{ marker, d.message });
@@ -62,9 +63,11 @@ pub const Pretty = struct {
         while (iter.next()) |line| : (idx += 1) {
             if (idx > target + context_lines) break;
             if (idx < first) continue;
+
             window[count] = line;
             count += 1;
         }
+
         if (count == 0) return;
 
         const width = utils.digits(first + count);
@@ -88,6 +91,7 @@ pub const Pretty = struct {
                 try self.writer.writeAll("\n");
             }
         }
+
         try self.writer.writeAll("\n");
     }
 
@@ -113,9 +117,11 @@ pub const Pretty = struct {
             if (c == '\t') {
                 const pad = tab_width - (col % tab_width);
                 try self.repeat(' ', pad);
+
                 col += pad;
             } else {
                 try self.writer.writeByte(c);
+
                 col += 1;
             }
         }
@@ -130,6 +136,7 @@ pub const Pretty = struct {
 
     fn paint(self: *Pretty, severity: lint.diagnostic.Severity) std.Io.Writer.Error!void {
         if (!self.color) return;
+
         try self.writer.writeAll(switch (severity) {
             .@"error" => "\x1b[31m",
             .warn => "\x1b[33m",
@@ -138,19 +145,23 @@ pub const Pretty = struct {
 
     fn unpaint(self: *Pretty) std.Io.Writer.Error!void {
         if (!self.color) return;
+
         try self.writer.writeAll(reset);
     }
 
     fn repeat(self: *Pretty, byte: u8, n: usize) std.Io.Writer.Error!void {
         var i: usize = 0;
+
         while (i < n) : (i += 1) try self.writer.writeByte(byte);
     }
 };
 
 fn renderedWidth(prefix: []const u8) usize {
     var col: usize = 0;
+
     for (prefix) |c| {
         col += if (c == '\t') tab_width - (col % tab_width) else 1;
     }
+
     return col;
 }

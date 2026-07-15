@@ -54,6 +54,7 @@ fn addRuleFiles(set: *RuleSet, files: []const fs.rules.RuleFile) !void {
                 .id = id,
                 .source = file.body,
             }, file.source);
+
             continue;
         }
 

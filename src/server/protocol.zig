@@ -42,7 +42,9 @@ pub fn readFrame(r: *std.Io.Reader, gpa: std.mem.Allocator, max_bytes: usize) Fr
         const header = std.mem.trimEnd(u8, line, "\r\n");
         if (header.len == 0) break;
         if (!std.mem.startsWith(u8, header, content_length_prefix)) continue;
+
         const value = std.mem.trim(u8, header[content_length_prefix.len..], " ");
+
         content_length = std.fmt.parseInt(usize, value, 10) catch return error.InvalidContentLength;
     }
 

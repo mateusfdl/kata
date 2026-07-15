@@ -48,6 +48,7 @@ pub const Resolver = struct {
         errdefer self.gpa.destroy(arena_ptr);
         arena_ptr.* = .init(self.gpa);
         errdefer arena_ptr.deinit();
+
         const arena = arena_ptr.allocator();
         const root = try self.discoverRoot(arena, anchor);
 
@@ -93,6 +94,7 @@ pub const Resolver = struct {
             .user_dir = self.user_rules_dir,
             .project_dir = project_rules_dir,
         });
+
         errdefer rule_set.deinit();
 
         const resolved = try config.resolve(arena, self.global_config, if (project_config) |*c| c else null);
@@ -107,6 +109,7 @@ pub const Resolver = struct {
             .rule_set = rule_set,
             .engine = undefined,
         };
+
         ctx.engine = Engine.init(self.gpa, &ctx.rule_set, dsl.engine_compiler.ruleCompiler());
         ctx.engine.settings = resolved.settings;
 
@@ -151,6 +154,7 @@ pub const Cache = struct {
             entry.ctx = self.resolver.resolveAtRoot(root) catch |err| {
                 const removed = self.entries.fetchRemove(root).?;
                 self.gpa.free(removed.key);
+
                 return err;
             };
 
@@ -194,7 +198,9 @@ fn projectFingerprint(io: std.Io, scratch: std.mem.Allocator, root: []const u8) 
         while (try files.next(io)) |fentry| {
             if (fentry.kind != .file) continue;
             if (fs.rules.ruleId(fentry.name) == null) continue;
+
             const st = try lang_dir.statFile(io, fentry.name, .{});
+
             acc ^= entryHash(entry.name, fentry.name, st);
         }
     }

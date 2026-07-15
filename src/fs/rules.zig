@@ -53,6 +53,7 @@ pub fn collectUserFiles(
         else => return err,
     };
     defer root.close(io);
+
     return collectRuleFiles(allocator, io, &root, .user);
 }
 
@@ -70,6 +71,7 @@ pub fn collectFixtureFiles(
         if (entry.kind != .directory) continue;
         try collectLanguageFixtureFiles(io, arena, &root, rules_dir, entry.name, &files);
     }
+
     return files.toOwnedSlice(arena);
 }
 
@@ -87,8 +89,10 @@ fn collectRuleFiles(
             try collectProjectRuleFiles(allocator, io, root, source, &files);
             continue;
         }
+
         try collectLanguageRuleFiles(allocator, io, root, entry.name, source, &files);
     }
+
     return files.toOwnedSlice(allocator);
 }
 
@@ -121,6 +125,7 @@ fn collectLanguageRuleFiles(
         if (fentry.kind != .file) continue;
         const id = ruleId(fentry.name) orelse continue;
         if (id.len == 0) return error.InvalidRule;
+
         try out.append(allocator, .{
             .langs = langs,
             .id = try allocator.dupe(u8, id),
@@ -145,6 +150,7 @@ fn collectProjectRuleFiles(
         if (fentry.kind != .file) continue;
         const id = ruleId(fentry.name) orelse continue;
         if (id.len == 0) return error.InvalidRule;
+
         try out.append(allocator, .{
             .langs = &.{},
             .id = try allocator.dupe(u8, id),
@@ -164,6 +170,7 @@ pub fn isFixturePath(io: std.Io, path: []const u8) !bool {
     const tests_dir = std.fs.path.dirname(path) orelse return false;
     if (!std.mem.eql(u8, std.fs.path.basename(tests_dir), fixtures_dir_name)) return false;
     const lang_dir = std.fs.path.dirname(tests_dir) orelse return false;
+
     return languageDirHasRules(io, lang_dir);
 }
 
@@ -179,6 +186,7 @@ fn languageDirHasRules(io: std.Io, dir_path: []const u8) !bool {
         if (entry.kind != .file) continue;
         if (ruleId(entry.name) != null) return true;
     }
+
     return false;
 }
 
@@ -205,6 +213,7 @@ fn collectLanguageFixtureFiles(
         const lang = source_files.languageOf(entry.name) orelse continue;
         const dir_path = try paths.join(arena, rules_dir, lang_subdir);
         const tests_path = try paths.join(arena, dir_path, fixtures_dir_name);
+
         try out.append(arena, .{
             .lang = lang,
             .source = try tests_dir.readFileAlloc(io, entry.name, arena, .limited(source_files.max_file_bytes)),

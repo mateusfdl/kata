@@ -30,6 +30,7 @@ pub const Json = struct {
             counts.violations,
             counts.warnings,
         });
+
         try self.writer.flush();
     }
 
@@ -49,8 +50,10 @@ pub const Json = struct {
         self.wrote_entry = true;
 
         try self.writer.writeAll("{\"path\":");
+
         try std.json.Stringify.value(path, .{}, self.writer);
         try self.writer.writeAll(",\"diagnostics\":");
+
         try std.json.Stringify.value(diagnostics, .{}, self.writer);
         try self.writer.writeAll("}");
     }

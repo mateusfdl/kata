@@ -76,6 +76,7 @@ pub const RuleSet = struct {
                         .id = entry.id,
                     });
                 }
+
                 list.items[idx] = entry;
 
                 return;

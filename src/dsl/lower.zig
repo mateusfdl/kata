@@ -11,7 +11,7 @@ pub const Error = error{
     TooManyCaptures,
 } || std.mem.Allocator.Error;
 
-/// A lowered match pattern plus its capture table: `capture_names[id]` is the
+/// a lowered match pattern plus its capture table: `capture_names[id]` is the
 /// name bound to capture id `id`. tree-sitter no longer assigns capture ids, so
 /// lowering assigns them by first occurrence.
 pub const Lowered = struct {
@@ -22,6 +22,7 @@ pub const Lowered = struct {
         for (self.capture_names, 0..) |existing, i| {
             if (std.mem.eql(u8, existing, name)) return @intCast(i);
         }
+
         return null;
     }
 };
@@ -30,24 +31,26 @@ pub const Lowerer = struct {
     arena: std.mem.Allocator,
     adapter: *const family.Adapter,
     captures: std.ArrayList([]const u8) = .empty,
-    /// The offending kind or field name when lowering fails, for diagnostics.
+    /// the offending kind or field name when lowering fails, for diagnostics.
     detail: []const u8 = "",
 
     pub fn init(arena: std.mem.Allocator, adapter: *const family.Adapter) Lowerer {
         return .{ .arena = arena, .adapter = adapter };
     }
 
-    /// Resolve a named kind to the kind gate the matcher reads at runtime.
-    /// A supertype expands to the sorted set of its transitive concrete member
+    /// resolve a named kind to the kind gate the matcher reads at runtime.
+    /// a supertype expands to the sorted set of its transitive concrete member
     /// ids, precomputed by the node-kinds generator (the vendored grammars ship
-    /// no runtime subtype map). A concrete kind lowers to its single kata id,
-    /// which equals the id the converter stamped on matching nodes. A name
+    /// no runtime subtype map). a concrete kind lowers to its single kata id,
+    /// which equals the id the converter stamped on matching nodes. a name
     /// unknown to the whole family is a hard error; a name belonging to only
     /// one dialect of the family lowers and never matches in the others.
     fn resolveKind(self: *Lowerer, name: []const u8) Error!query.Kind {
         if (self.supertypeMembers(name)) |members| return .{ .symbols = members };
+
         const id = self.adapter.kindId(name, true);
         if (id == 0) return self.failKind(name);
+
         return .{ .symbol = id };
     }
 
@@ -55,26 +58,29 @@ pub const Lowerer = struct {
         for (self.adapter.supertypes) |entry| {
             if (std.mem.eql(u8, entry.name, name)) return entry.members;
         }
+
         return null;
     }
 
-    /// Resolve an anonymous token to its single kata kind id. Anonymous tokens
+    /// resolve an anonymous token to its single kata kind id. anonymous tokens
     /// are never supertypes; a token absent from the family is a hard error.
     fn kataAnonymous(self: *Lowerer, name: []const u8) Error!u16 {
         const id = self.adapter.kindId(name, false);
         if (id == 0) return self.failKind(name);
+
         return id;
     }
 
-    /// Resolve a field name to its kata Field id, which equals the `field_id`
-    /// its target child reports. Fields have no aliases or supertypes.
+    /// resolve a field name to its kata field id, which equals the `field_id`
+    /// its target child reports. fields have no aliases or supertypes.
     fn kataField(self: *Lowerer, name: []const u8) Error!u16 {
         const id = self.adapter.fieldId(name);
         if (id == 0) return self.failField(name);
+
         return id;
     }
 
-    /// Resolve a named grammar kind to the flat set of concrete kata kind ids it
+    /// resolve a named grammar kind to the flat set of concrete kata kind ids it
     /// covers: a supertype yields its member set, a concrete kind yields itself.
     pub fn resolveKindMembers(self: *Lowerer, name: []const u8) Error![]const u16 {
         switch (try self.resolveKind(name)) {
@@ -107,16 +113,20 @@ pub const Lowerer = struct {
             .anonymous => |token| {
                 if (pattern.fields.len != 0 or pattern.absent_fields.len != 0) {
                     self.detail = token;
+
                     return error.AnonymousWithChildren;
                 }
+
                 return .{ .kind = .{ .anonymous = try self.kataAnonymous(token) }, .capture = capture };
             },
             .alternation => |branches| {
                 const lowered = try self.arena.alloc(query.Pattern, branches.len);
+
                 for (branches, lowered) |branch, *slot| {
                     const merged = try withSharedFields(self.arena, branch, pattern.fields, pattern.absent_fields);
                     slot.* = try self.lowerPattern(merged);
                 }
+
                 return .{ .kind = .{ .alternation = lowered }, .capture = capture };
             },
         }
@@ -124,14 +134,17 @@ pub const Lowerer = struct {
 
     fn lowerFields(self: *Lowerer, fields: []const ast.FieldPattern) Error![]const query.Field {
         const out = try self.arena.alloc(query.Field, fields.len);
+
         for (fields, out) |field, *slot| {
             const relation: query.Relation = switch (field.relation) {
                 .field => |name| .{ .field = try self.kataField(name) },
                 .child => .child,
                 .children => .children,
             };
+
             slot.* = .{ .relation = relation, .pattern = try self.lowerPattern(field.pattern) };
         }
+
         return out;
     }
 
@@ -147,24 +160,30 @@ pub const Lowerer = struct {
         for (self.captures.items, 0..) |existing, i| {
             if (std.mem.eql(u8, existing, name)) return @intCast(i);
         }
+
         if (self.captures.items.len > std.math.maxInt(query.CaptureId)) return error.TooManyCaptures;
+
         const id: query.CaptureId = @intCast(self.captures.items.len);
+
         try self.captures.append(self.arena, try self.arena.dupe(u8, name));
+
         return id;
     }
 
     fn failKind(self: *Lowerer, kind: []const u8) Error {
         self.detail = kind;
+
         return error.UnknownNodeKind;
     }
 
     fn failField(self: *Lowerer, name: []const u8) Error {
         self.detail = name;
+
         return error.UnknownField;
     }
 };
 
-/// Distribute an alternation's shared fields into a branch, mirroring how the
+/// distribute an alternation's shared fields into a branch, mirroring how the
 /// tree-sitter renderer pushed `[a b] c: (d)` down to `[(a c: (d)) (b c: (d))]`.
 fn withSharedFields(
     arena: std.mem.Allocator,

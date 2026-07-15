@@ -169,6 +169,7 @@ pub fn handle(
     if (ctx.cache) |cache| {
         const per_project = cache.acquire(arena, req.filename) catch
             return reply(ctx, .fail, null, "project context failed");
+
         if (per_project) |p| {
             engine = &p.engine;
             ratchet = p.resolved.ratchet;
@@ -211,6 +212,7 @@ fn applyRatchet(
         error.FileNotFound, error.StreamTooLong => return,
         else => return err,
     };
+
     const baseline = try engine.lint(arena, baseline_source, lang, path);
 
     var demote: std.ArrayList(usize) = .empty;
@@ -218,6 +220,7 @@ fn applyRatchet(
         if (d.severity != .@"error") continue;
         const before = countErrors(baseline, d.rule_id);
         const now = countErrors(diagnostics, d.rule_id);
+
         if (now <= before) try demote.append(arena, i);
     }
 

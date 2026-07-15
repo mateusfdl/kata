@@ -27,7 +27,9 @@ pub fn stat(io: std.Io, path: []const u8) !std.Io.File.Stat {
 
 pub fn executableMtime(io: std.Io) !i64 {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
+
     const n = try std.process.executablePath(io, &buf);
     const executable_stat = try stat(io, buf[0..n]);
+
     return executable_stat.mtime.toMilliseconds();
 }

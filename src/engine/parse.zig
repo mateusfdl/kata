@@ -6,9 +6,9 @@ const convert = @import("convert.zig");
 const family_mod = @import("family/family.zig");
 const language = @import("language.zig");
 
-/// Per-grammar remap tables from tree-sitter symbol/field ids to kata ids, built
-/// once per language and cached by the frontend. The converter applies them so
-/// the flat `Ast` stores kata ids directly.
+/// per-grammar remap tables from tree-sitter symbol/field ids to kata ids, built
+/// once per language and cached by the frontend. the converter applies them so
+/// the flat `ast` stores kata ids directly.
 pub const Kinds = struct {
     kind_remap: []const u16,
     field_remap: []const u16,
@@ -26,7 +26,7 @@ pub fn buildKinds(
     return .{ .kind_remap = kind_remap, .field_remap = field_remap };
 }
 
-/// The only place kata talks to tree-sitter at runtime: parser lifecycle,
+/// the only place kata talks to tree-sitter at runtime: parser lifecycle,
 /// remap tables, and the parse-then-clone step. tree-sitter is used only to
 /// parse; nothing tree-sitter typed escapes this module.
 pub const Frontend = struct {
