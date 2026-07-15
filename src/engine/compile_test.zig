@@ -89,7 +89,7 @@ fn runCompiled(
         .allocator = gpa,
         .source = source,
         .root = t.root(),
-    }, lang, path, &out);
+    }, lang, &.{}, path, &out);
     return out.toOwnedSlice(gpa);
 }
 

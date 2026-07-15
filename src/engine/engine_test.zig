@@ -653,11 +653,11 @@ test "engine: set severity error keeps error" {
     try std.testing.expectEqual(diagnostic.Severity.@"error", diags[0].severity);
 }
 
-test "engine: warnings list demotes matching rule to warn" {
+test "engine: setting severity warn demotes matching rule" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa, &.{.ts});
     defer f.deinit();
-    f.engine.warnings = &.{.{ .lang = null, .id = "no-as-any" }};
+    f.engine.settings = &.{.{ .lang = .ts, .id = "no-as-any", .severity = .warn }};
 
     const diags = try f.engine.lint(gpa, "const x = (foo[0] as any).bar;", .ts, null);
     defer gpa.free(diags);
@@ -666,11 +666,26 @@ test "engine: warnings list demotes matching rule to warn" {
     try std.testing.expectEqual(diagnostic.Severity.warn, diags[0].severity);
 }
 
-test "engine: warnings list scoped to another language keeps error" {
+test "engine: setting exclude glob suppresses diagnostics for matching paths" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa, &.{.ts});
     defer f.deinit();
-    f.engine.warnings = &.{.{ .lang = .go, .id = "no-as-any" }};
+    f.engine.settings = &.{.{ .lang = .ts, .id = "no-as-any", .exclude = &.{"src/gen/**"} }};
+
+    const excluded = try f.engine.lint(gpa, "const x = (foo[0] as any).bar;", .ts, "src/gen/a.ts");
+    defer gpa.free(excluded);
+    try std.testing.expectEqual(@as(usize, 0), excluded.len);
+
+    const kept = try f.engine.lint(gpa, "const x = (foo[0] as any).bar;", .ts, "src/main.ts");
+    defer gpa.free(kept);
+    try std.testing.expectEqual(@as(usize, 1), kept.len);
+}
+
+test "engine: setting scoped to another language keeps error" {
+    const gpa = std.testing.allocator;
+    var f = try newFixture(gpa, &.{.ts});
+    defer f.deinit();
+    f.engine.settings = &.{.{ .lang = .go, .id = "no-as-any", .severity = .warn }};
 
     const diags = try f.engine.lint(gpa, "const x = (foo[0] as any).bar;", .ts, null);
     defer gpa.free(diags);

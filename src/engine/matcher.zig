@@ -21,6 +21,49 @@ pub const EvalContext = struct {
     metric: ?MetricContext = null,
 };
 
+const CountingSink = struct {
+    matcher: *const rule.NestedMatcher,
+    subject: Node,
+    ctx: EvalContext,
+    total: u32 = 0,
+    done: bool = false,
+
+    pub fn emit(self: *CountingSink, bindings: []const ?Node) std.mem.Allocator.Error!void {
+        if (try nestedMatchPasses(self.matcher, .{ .nodes = bindings }, self.subject, self.ctx)) self.total += 1;
+    }
+};
+
+const NodeMeasures = struct {
+    ctx: MetricContext,
+    match: query.Match,
+    source: []const u8,
+
+    pub const Error = std.mem.Allocator.Error;
+
+    pub fn measure(self: NodeMeasures, m: expr.Measure, capture_id: query.CaptureId) Error!?u32 {
+        const node = self.match.get(capture_id) orelse return null;
+
+        return switch (m) {
+            .complexity => try metric.complexityOf(self.ctx.allocator, self.ctx.compiled, node),
+            .nesting => try metric.nestingOf(self.ctx.allocator, self.ctx.compiled, node),
+            .length => metric.lengthOf(node),
+            .text => self.numericText(node),
+            .params => metric.paramsOf(node, self.ctx.fam),
+            .args => metric.argsOf(node),
+            .position => metric.positionOf(node),
+            .siblings => metric.siblingsOf(node),
+        };
+    }
+
+    fn numericText(self: NodeMeasures, node: Node) ?u32 {
+        const text = node.text(self.source) orelse return null;
+
+        return std.fmt.parseInt(u32, text, 10) catch null;
+    }
+};
+
+const StringHelper = enum { starts_with, ends_with, contains, glob };
+
 pub fn evaluate(
     predicates: []const rule.Predicate,
     match: query.Match,
@@ -75,6 +118,7 @@ fn evalAnyGroup(
     for (members) |member| {
         if (try evalOne(member, match, ctx)) return true;
     }
+
     return false;
 }
 
@@ -168,9 +212,11 @@ const EnclosingSink = struct {
             .ancestor => strictlyContains(candidate, self.subject),
             .direct_parent => isDirectParent(candidate, self.subject),
         };
+
         if (!related) return;
         if (self.relation == .ancestor and crossesBoundary(self.subject, candidate, self.until_kinds)) return;
         if (!try evaluate(self.matcher.predicates, nested_match, self.ctx)) return;
+
         self.found = true;
         self.done = true;
     }
@@ -183,11 +229,13 @@ fn crossesBoundary(subject: Node, candidate: Node, until_kinds: []const u16) boo
         if (node.eql(candidate)) return false;
         if (std.mem.indexOfScalar(u16, until_kinds, node.kindId()) != null) return true;
     }
+
     return false;
 }
 
 fn isDirectParent(candidate: Node, subject: Node) bool {
     const p = subject.parent() orelse return false;
+
     return p.eql(candidate);
 }
 
@@ -203,18 +251,6 @@ fn evalCount(
 
     return compareCount(pred.compare.op, sink.total, pred.compare.value);
 }
-
-const CountingSink = struct {
-    matcher: *const rule.NestedMatcher,
-    subject: Node,
-    ctx: EvalContext,
-    total: u32 = 0,
-    done: bool = false,
-
-    pub fn emit(self: *CountingSink, bindings: []const ?Node) std.mem.Allocator.Error!void {
-        if (try nestedMatchPasses(self.matcher, .{ .nodes = bindings }, self.subject, self.ctx)) self.total += 1;
-    }
-};
 
 fn nestedMatchPasses(
     nested: *const rule.NestedMatcher,
@@ -257,35 +293,6 @@ fn compareCount(op: expr.Compare, left: u32, right: u32) bool {
         .le => left <= right,
     };
 }
-
-const NodeMeasures = struct {
-    ctx: MetricContext,
-    match: query.Match,
-    source: []const u8,
-
-    pub const Error = std.mem.Allocator.Error;
-
-    pub fn measure(self: NodeMeasures, m: expr.Measure, capture_id: query.CaptureId) Error!?u32 {
-        const node = self.match.get(capture_id) orelse return null;
-
-        return switch (m) {
-            .complexity => try metric.complexityOf(self.ctx.allocator, self.ctx.compiled, node),
-            .nesting => try metric.nestingOf(self.ctx.allocator, self.ctx.compiled, node),
-            .length => metric.lengthOf(node),
-            .text => self.numericText(node),
-            .params => metric.paramsOf(node, self.ctx.fam),
-            .args => metric.argsOf(node),
-            .position => metric.positionOf(node),
-            .siblings => metric.siblingsOf(node),
-        };
-    }
-
-    fn numericText(self: NodeMeasures, node: Node) ?u32 {
-        const text = node.text(self.source) orelse return null;
-
-        return std.fmt.parseInt(u32, text, 10) catch null;
-    }
-};
 
 pub fn renderMessage(
     allocator: std.mem.Allocator,
@@ -371,8 +378,6 @@ fn evalCaptured(args: []const rule.PredicateOperand, match: query.Match, negate:
     return present != negate;
 }
 
-const StringHelper = enum { starts_with, ends_with, contains, glob };
-
 fn evalStringHelper(
     args: []const rule.PredicateOperand,
     match: query.Match,
@@ -384,6 +389,7 @@ fn evalStringHelper(
 
     const subject = resolveText(args[0], match, source) orelse return false;
     const candidate = resolveText(args[1], match, source) orelse return false;
+
     const found = switch (helper) {
         .starts_with => std.mem.startsWith(u8, subject, candidate),
         .ends_with => std.mem.endsWith(u8, subject, candidate),

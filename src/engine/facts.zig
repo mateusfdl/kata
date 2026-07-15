@@ -57,20 +57,50 @@ pub const FileFacts = struct {
     pub fn deinit(self: *FileFacts) void {
         const child = self.arena.child_allocator;
         self.arena.deinit();
+
         child.destroy(self.arena);
     }
 };
 
+pub const Role = enum {
+    class_node,
+    class_name,
+    method_node,
+    method_name,
+    method_recv,
+    decl_name,
+    decl_type,
+    decl_ctor,
+    call_node,
+    call_receiver,
+    call_method,
+    import_name,
+    import_source,
+};
+
+const role_count = @typeInfo(Role).@"enum".fields.len;
+
+const Lists = struct {
+    classes: std.ArrayList(ClassDef) = .empty,
+    methods: std.ArrayList(MethodDef) = .empty,
+    typed_decls: std.ArrayList(TypedDecl) = .empty,
+    calls: std.ArrayList(Call) = .empty,
+    imports: std.ArrayList(Import) = .empty,
+};
+
 pub fn receiverType(file: *const FileFacts, receiver: []const u8) ?[]const u8 {
     var found: ?[]const u8 = null;
+
     for (file.typed_decls) |decl| {
         if (!std.mem.eql(u8, decl.name, receiver)) continue;
+
         if (found) |existing| {
             if (!std.mem.eql(u8, existing, decl.type_name)) return null;
         } else {
             found = decl.type_name;
         }
     }
+
     return found;
 }
 
@@ -82,6 +112,7 @@ pub fn resolveImportSource(
 ) std.mem.Allocator.Error!?[]const u8 {
     if (!family_mod.of(fam).relative_import_specifiers) return specifier;
     if (!isRelativeSpecifier(specifier)) return specifier;
+
     return resolveRelative(allocator, importer_path, specifier);
 }
 
@@ -104,44 +135,18 @@ fn resolveRelative(
     var spec_it = std.mem.tokenizeScalar(u8, specifier, '/');
     while (spec_it.next()) |segment| {
         if (std.mem.eql(u8, segment, ".")) continue;
+
         if (std.mem.eql(u8, segment, "..")) {
             if (segments.pop() == null) return null;
+
             continue;
         }
+
         try segments.append(allocator, segment);
     }
+
     return try std.mem.join(allocator, "/", segments.items);
 }
-
-pub const Role = enum {
-    class_node,
-    class_name,
-    method_node,
-    method_name,
-    method_recv,
-    decl_name,
-    decl_type,
-    decl_ctor,
-    call_node,
-    call_receiver,
-    call_method,
-    import_name,
-    import_source,
-};
-
-const role_count = @typeInfo(Role).@"enum".fields.len;
-
-pub fn cap(role: Role) query.CaptureId {
-    return @intFromEnum(role);
-}
-
-const Lists = struct {
-    classes: std.ArrayList(ClassDef) = .empty,
-    methods: std.ArrayList(MethodDef) = .empty,
-    typed_decls: std.ArrayList(TypedDecl) = .empty,
-    calls: std.ArrayList(Call) = .empty,
-    imports: std.ArrayList(Import) = .empty,
-};
 
 pub fn extract(
     gpa: std.mem.Allocator,
@@ -187,6 +192,10 @@ pub fn extract(
     };
 }
 
+pub fn cap(role: Role) query.CaptureId {
+    return @intFromEnum(role);
+}
+
 fn assemble(
     arena: std.mem.Allocator,
     source: []const u8,
@@ -217,8 +226,8 @@ fn assemble(
             .range = rangeOf(span_node),
         });
 
-        return;
     }
+
     if (match.get(cap(.decl_name))) |name_node| {
         if (!isFirstInExpressionList(name_node)) return;
 
@@ -233,6 +242,7 @@ fn assemble(
 
         return;
     }
+
     if (match.get(cap(.call_method))) |method_node| {
         const span_node = match.get(cap(.call_node)) orelse method_node;
 
@@ -246,6 +256,7 @@ fn assemble(
 
         return;
     }
+
     if (match.get(cap(.import_source))) |source_node| {
         const raw = try nodeText(arena, source, source_node);
 
@@ -265,6 +276,7 @@ fn isFirstInExpressionList(name_node: Node) bool {
     if (!std.mem.eql(u8, parent.kind(), "expression_list")) return true;
 
     const first = parent.namedChild(0) orelse return false;
+
     return first.eql(name_node);
 }
 

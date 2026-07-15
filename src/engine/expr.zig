@@ -6,6 +6,14 @@ const expression_open: u8 = '(';
 const expression_close: u8 = ')';
 const capture_marker: u8 = '@';
 
+pub const ParseError = error{
+    MalformedExpression,
+    UnknownOperator,
+    UnknownMeasure,
+    UnknownCapture,
+    InvalidNumber,
+} || std.mem.Allocator.Error;
+
 pub const Measure = enum {
     complexity,
     nesting,
@@ -114,16 +122,10 @@ const Tokenizer = struct {
 
 pub fn captureName(atom: []const u8) ?[]const u8 {
     if (atom.len < 2 or atom[0] != capture_marker) return null;
+
     return atom[1..];
 }
 
-pub const ParseError = error{
-    MalformedExpression,
-    UnknownOperator,
-    UnknownMeasure,
-    UnknownCapture,
-    InvalidNumber,
-} || std.mem.Allocator.Error;
 
 pub fn parse(
     arena: std.mem.Allocator,

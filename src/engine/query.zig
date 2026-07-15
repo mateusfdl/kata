@@ -7,10 +7,10 @@ const Error = std.mem.Allocator.Error;
 
 pub const CaptureId = u16;
 
-/// The kind gate for a pattern node. `symbol` and `anonymous` both match a node
+/// the kind gate for a pattern node. `symbol` and `anonymous` both match a node
 /// by its kata kind id (u16); the two variants differ only so lowering can
-/// resolve a named kind against `idForNodeKind(name, true)` versus an anonymous
-/// token against `(name, false)`. Named and anonymous kata ids occupy disjoint
+/// resolve a named kind against `idfornodekind(name, true)` versus an anonymous
+/// token against `(name, false)`. named and anonymous kata ids occupy disjoint
 /// ranges, so at match time both are a plain integer compare. `symbols` matches
 /// a node whose kata kind id is in the (sorted) set, used for a supertype
 /// expanded to its concrete member kinds. `alternation` matches when any branch
@@ -22,8 +22,8 @@ pub const Kind = union(enum) {
     alternation: []const Pattern,
 };
 
-/// How a field pattern relates to its parent. `field` is a tree-sitter
-/// field-tagged child, keyed by its kata Field id (resolved at lower time);
+/// how a field pattern relates to its parent. `field` is a tree-sitter
+/// field-tagged child, keyed by its field id (resolved at lower time);
 /// `child` is any immediate named child (unanchored); `children` is zero-or-more
 /// immediate named children.
 pub const Relation = union(enum) {
@@ -44,7 +44,7 @@ pub const Pattern = struct {
     absent_fields: []const u16 = &.{},
 };
 
-/// A single successful match: capture id -> bound node. Slots left null were not
+/// a single successful match: capture id -> bound node. slots left null were not
 /// bound (e.g. an alternation branch that did not fire).
 pub const Match = struct {
     nodes: []const ?Node,
@@ -54,40 +54,6 @@ pub const Match = struct {
         return self.nodes[id];
     }
 };
-
-/// Run `pattern` over the subtree at `root`, returning one Match per satisfying
-/// assignment in pre-order. `capture_count` sizes each Match. Matching a node
-/// with an unanchored `child` relation that has several satisfying children
-/// yields one Match per child, reproducing tree-sitter query multiplicity. A
-/// capture id shared by several pattern nodes keeps its first binding.
-pub fn run(
-    arena: std.mem.Allocator,
-    pattern: *const Pattern,
-    capture_count: usize,
-    root: Node,
-) Error![]Match {
-    var collector: Collector = .{ .arena = arena };
-    try stream(arena, pattern, capture_count, root, &collector);
-    return collector.matches.toOwnedSlice(arena);
-}
-
-/// Run `pattern` like `run`, but hand each match to `sink.emit` as it is found
-/// instead of materializing a slice. The Match handed to `emit` views the live
-/// binding scratch and is only valid during that call. The sink stops the
-/// enumeration by setting its `done` flag. `scratch` only backs the binding
-/// slots and is released before returning.
-pub fn stream(
-    scratch: std.mem.Allocator,
-    pattern: *const Pattern,
-    capture_count: usize,
-    root: Node,
-    sink: anytype,
-) Error!void {
-    const bindings = try scratch.alloc(?Node, capture_count);
-    defer scratch.free(bindings);
-    @memset(bindings, null);
-    try walk(pattern, root, bindings, sink);
-}
 
 const Collector = struct {
     arena: std.mem.Allocator,
@@ -114,6 +80,41 @@ const Cont = union(enum) {
         fired: ?*bool = null,
     },
 };
+
+
+/// run `pattern` over the subtree at `root`, returning one match per satisfying
+/// assignment in pre-order. `capture_count` sizes each match. matching a node
+/// with an unanchored `child` relation that has several satisfying children
+/// yields one match per child, reproducing tree-sitter query multiplicity. a
+/// capture id shared by several pattern nodes keeps its first binding.
+pub fn run(
+    arena: std.mem.Allocator,
+    pattern: *const Pattern,
+    capture_count: usize,
+    root: Node,
+) Error![]Match {
+    var collector: Collector = .{ .arena = arena };
+    try stream(arena, pattern, capture_count, root, &collector);
+    return collector.matches.toOwnedSlice(arena);
+}
+
+/// run `pattern` like `run`, but hand each match to `sink.emit` as it is found
+/// instead of materializing a slice. the match handed to `emit` views the live
+/// binding scratch and is only valid during that call. the sink stops the
+/// enumeration by setting its `done` flag. `scratch` only backs the binding
+/// slots and is released before returning.
+pub fn stream(
+    scratch: std.mem.Allocator,
+    pattern: *const Pattern,
+    capture_count: usize,
+    root: Node,
+    sink: anytype,
+) Error!void {
+    const bindings = try scratch.alloc(?Node, capture_count);
+    defer scratch.free(bindings);
+    @memset(bindings, null);
+    try walk(pattern, root, bindings, sink);
+}
 
 fn walk(pattern: *const Pattern, n: Node, scratch: []?Node, collector: anytype) Error!void {
     const emit: Cont = .emit;
@@ -144,9 +145,11 @@ fn matchNode(
         defer if (pattern.capture) |c| {
             bindings[c] = saved;
         };
+
         for (pattern.kind.alternation) |*branch| {
             try matchNode(branch, n, bindings, cont, collector);
         }
+
         return;
     }
 
@@ -155,6 +158,7 @@ fn matchNode(
     var saved: ?Node = undefined;
     if (pattern.capture) |c| {
         saved = bindings[c];
+
         if (saved == null) bindings[c] = n;
     }
     defer if (pattern.capture) |c| {
@@ -242,6 +246,7 @@ fn invoke(cont: *const Cont, bindings: []?Node, collector: anytype) Error!void {
         .emit => try collector.emit(bindings),
         .fields => |f| {
             if (f.fired) |flag| flag.* = true;
+
             try matchFields(f.fields, f.index, f.parent, f.min_child, bindings, f.next, collector);
         },
     }
@@ -260,6 +265,7 @@ fn kindMatches(pattern: *const Pattern, n: Node) bool {
             for (branches) |*branch| {
                 if (kindMatches(branch, n)) return true;
             }
+
             return false;
         },
     };

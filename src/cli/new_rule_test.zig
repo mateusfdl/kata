@@ -55,7 +55,7 @@ test "new-rule: writes the kata template at the expected path" {
 
     try std.testing.expectEqual(@as(u8, new_rule.exit_clean), captured.code);
     try std.testing.expect(std.mem.indexOf(u8, captured.stdout, "ts/no-throw-literal.kata") != null);
-    try std.testing.expect(std.mem.indexOf(u8, captured.stdout, "add ts/no-throw-literal to 'enabled' in rules.yaml to activate it") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured.stdout, "add 'no-throw-literal:' under 'rules: ts:' in rules.yaml to activate it") != null);
 
     const body = try tmp.dir.readFileAlloc(
         std.testing.io,

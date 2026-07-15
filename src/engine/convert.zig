@@ -4,12 +4,12 @@ const ts = @import("tree_sitter");
 const ast = @import("ast.zig");
 const family_mod = @import("family/family.zig");
 
-/// Clone a finished tree-sitter CST rooted at `root` into a flat kata `Ast`. The
-/// walk is an iterative pre-order DFS (depth-safe on adversarial nesting), and it
-/// stores kata kind/field ids resolved through the caller's per-grammar remaps
-/// (the same tables the engine caches), so a converted node's kind equals what
-/// the matcher expects by construction. Anonymous tokens keep their field ids,
-/// which the bool-op metric refinement depends on.
+/// clone a finished tree-sitter CST rooted at `root` into a flat kata `Ast`.
+/// The  walk is an iterative pre-order DFS (depth-safe hopefully), and it
+/// stores kind/field ids resolved through the caller's per-grammar remaps,
+/// so a converted node's kind equals what
+/// the matcher expects by construction.
+/// Anonymous tokens keep their field ids, which the bool-op metric refinement depends on.
 pub fn build(
     fam: family_mod.Family,
     kind_remap: []const u16,
@@ -43,6 +43,7 @@ pub fn build(
 
         if (cursor.gotoFirstChild()) {
             try stack.append(gpa, index);
+
             continue;
         }
 
@@ -50,6 +51,7 @@ pub fn build(
         while (!cursor.gotoNextSibling()) {
             if (!cursor.gotoParent()) break :outer;
             const done = stack.pop().?;
+
             nodes.items[done].subtree_end = @intCast(nodes.items.len);
         }
     }
@@ -65,7 +67,7 @@ pub fn build(
 }
 
 /// tree-sitter's ERROR symbol is `0xFFFF`, past every grammar's table, so it
-/// funnels to kata id 0 (`.unknown`/`.none`) instead of indexing out of bounds.
+/// funnels to kata id 0 .unknown/.none instead of getting hit back by outbounding it huh
 fn remap(table: []const u16, id: u16) u16 {
     return if (id < table.len) table[id] else 0;
 }

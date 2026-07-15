@@ -54,6 +54,7 @@ pub const RuleSet = struct {
                 return;
             }
         }
+
         try self.project.append(self.allocator, entry);
     }
 
@@ -80,6 +81,7 @@ pub const RuleSet = struct {
                 return;
             }
         }
+
         try list.append(self.allocator, entry);
     }
 };

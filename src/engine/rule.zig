@@ -16,31 +16,6 @@ pub const RawRule = struct {
     origin: Source = .embedded,
 };
 
-pub const ScopedId = struct {
-    lang: ?language.Name,
-    id: []const u8,
-    project: bool = false,
-
-    pub fn matches(self: ScopedId, lang: language.Name, id: []const u8) bool {
-        if (self.project) return false;
-
-        const lang_matches = self.lang == null or self.lang.? == lang;
-        return lang_matches and std.mem.eql(u8, self.id, id);
-    }
-
-    pub fn matchesProject(self: ScopedId, id: []const u8) bool {
-        return self.lang == null and std.mem.eql(u8, self.id, id);
-    }
-};
-
-pub fn isValidId(s: []const u8) bool {
-    if (s.len == 0) return false;
-    for (s) |c| {
-        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
-    }
-    return true;
-}
-
 pub const PredicateOp = enum {
     eq,
     not_eq,
@@ -207,9 +182,11 @@ pub fn needsMeasures(patterns: []const CompiledPattern) bool {
         for (cp.meta.predicates) |pred| {
             if (predicateNeedsMeasures(pred)) return true;
         }
+
         const message = cp.meta.message orelse continue;
         if (message == .segments) return true;
     }
+
     return false;
 }
 
@@ -227,6 +204,7 @@ fn groupNeedsMeasures(members: []const Predicate) bool {
     for (members) |member| {
         if (predicateNeedsMeasures(member)) return true;
     }
+
     return false;
 }
 
@@ -234,5 +212,35 @@ fn nestedMatcherNeedsMeasures(nested: *const NestedMatcher) bool {
     for (nested.predicates) |inner| {
         if (predicateNeedsMeasures(inner)) return true;
     }
+
     return false;
+}
+
+pub const RuleSetting = struct {
+    lang: ?language.Name,
+    id: []const u8,
+    project: bool = false,
+    enabled: bool = true,
+    severity: ?diagnostic.Severity = null,
+    exclude: []const []const u8 = &.{},
+
+    pub fn matches(self: RuleSetting, lang: language.Name, id: []const u8) bool {
+        if (self.project) return false;
+
+        const setting_lang = self.lang orelse return false;
+        return setting_lang == lang and std.mem.eql(u8, self.id, id);
+    }
+
+    pub fn matchesProject(self: RuleSetting, id: []const u8) bool {
+        return self.project and std.mem.eql(u8, self.id, id);
+    }
+};
+
+pub fn isValidId(s: []const u8) bool {
+    if (s.len == 0) return false;
+    for (s) |c| {
+        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
+    }
+
+    return true;
 }

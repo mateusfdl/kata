@@ -3,6 +3,7 @@ const mvzr = @import("mvzr");
 
 const fact_rule = @import("engine").fact_rule;
 const lint_diagnostic = @import("engine").diagnostic;
+const lint_rule = @import("engine").rule;
 const test_fixture = @import("../test_fixture.zig");
 
 const ProjectIndex = @import("engine").ProjectIndex;
@@ -439,7 +440,7 @@ test "fact rule: exclude paths skip matching files" {
     try std.testing.expectEqualStrings("src/order-service.ts", violations[0].path);
 }
 
-test "fact rule: warnings demote violations to warn severity" {
+test "fact rule: setting exclude glob suppresses violations for matching files" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
@@ -452,16 +453,38 @@ test "fact rule: warnings demote violations to warn severity" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const bare = [_]fact_rule.ScopedId{.{ .lang = null, .id = "repository-isolation" }};
-    const demoted = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &bare, &index, null);
+    const excluding = [_]lint_rule.RuleSetting{.{ .lang = null, .id = "repository-isolation", .project = true, .exclude = &.{"src/order-*.ts"} }};
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &excluding, &index, null);
+    try std.testing.expectEqual(@as(usize, 0), violations.len);
+
+    const other_glob = [_]lint_rule.RuleSetting{.{ .lang = null, .id = "repository-isolation", .project = true, .exclude = &.{"test/**"} }};
+    const kept = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &other_glob, &index, null);
+    try std.testing.expectEqual(@as(usize, 1), kept.len);
+}
+
+test "fact rule: config severity overrides violation severity" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+    try index.put(try f.engine.extractFacts(gpa, user_repository_ts, .ts, "src/user-repository.ts"));
+    try index.put(try f.engine.extractFacts(gpa, order_service_ts, .ts, "src/order-service.ts"));
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const demoting = [_]lint_rule.RuleSetting{.{ .lang = null, .id = "repository-isolation", .project = true, .severity = .warn }};
+    const demoted = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &demoting, &index, null);
     try std.testing.expectEqual(@as(usize, 1), demoted.len);
     try std.testing.expectEqual(lint_diagnostic.Severity.warn, demoted[0].diagnostic.severity);
 
-    const project_scoped = [_]fact_rule.ScopedId{.{ .lang = null, .id = "repository-isolation", .project = true }};
-    const also_demoted = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &project_scoped, &index, null);
-    try std.testing.expectEqual(lint_diagnostic.Severity.warn, also_demoted[0].diagnostic.severity);
+    const without_severity = [_]lint_rule.RuleSetting{.{ .lang = null, .id = "repository-isolation", .project = true }};
+    const default_severity = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &without_severity, &index, null);
+    try std.testing.expectEqual(lint_diagnostic.Severity.@"error", default_severity[0].diagnostic.severity);
 
-    const lang_scoped = [_]fact_rule.ScopedId{.{ .lang = .ts, .id = "repository-isolation" }};
+    const lang_scoped = [_]lint_rule.RuleSetting{.{ .lang = .ts, .id = "repository-isolation", .severity = .warn }};
     const untouched = try fact_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &lang_scoped, &index, null);
     try std.testing.expectEqual(lint_diagnostic.Severity.@"error", untouched[0].diagnostic.severity);
 }

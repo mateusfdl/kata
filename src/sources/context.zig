@@ -95,7 +95,7 @@ pub const Resolver = struct {
         });
         errdefer rule_set.deinit();
 
-        const resolved = config.resolve(self.global_config, if (project_config) |*c| c else null);
+        const resolved = try config.resolve(arena, self.global_config, if (project_config) |*c| c else null);
         config.applySelection(&rule_set, resolved);
 
         ctx.* = .{
@@ -108,7 +108,7 @@ pub const Resolver = struct {
             .engine = undefined,
         };
         ctx.engine = Engine.init(self.gpa, &ctx.rule_set, dsl.engine_compiler.ruleCompiler());
-        ctx.engine.warnings = resolved.warnings;
+        ctx.engine.settings = resolved.settings;
 
         return ctx;
     }

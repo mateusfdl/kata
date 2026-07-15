@@ -4,26 +4,22 @@ const fs = @import("../fs.zig");
 const lint = @import("engine");
 const loader = @import("loader.zig");
 
+const diagnostic = lint.diagnostic;
 const language = lint.language;
 const project_rule = lint.project_rule;
 const rule = lint.rule;
 
 pub const max_config_bytes = fs.config.max_config_bytes;
 
-pub const ScopedId = rule.ScopedId;
+pub const RuleSetting = rule.RuleSetting;
 
 pub const Presence = struct {
-    enabled: bool = false,
-    disabled: bool = false,
-    warnings: bool = false,
     project_rules: bool = false,
     ratchet: bool = false,
 };
 
 pub const Config = struct {
-    enabled: []const ScopedId,
-    disabled: []const ScopedId,
-    warnings: []const ScopedId,
+    settings: []const RuleSetting,
     project_rules: []const project_rule.ProjectRule,
     ratchet: bool,
     present: Presence,
@@ -37,26 +33,59 @@ pub const Config = struct {
 };
 
 pub const Resolved = struct {
-    enabled: []const ScopedId = &.{},
-    disabled: []const ScopedId = &.{},
-    warnings: []const ScopedId = &.{},
+    settings: []const RuleSetting = &.{},
     project_rules: []const project_rule.ProjectRule = &.{},
     ratchet: bool = false,
 };
 
-pub fn resolve(global: ?*const Config, project: ?*const Config) Resolved {
+pub fn resolve(
+    arena: std.mem.Allocator,
+    global: ?*const Config,
+    project: ?*const Config,
+) std.mem.Allocator.Error!Resolved {
     var out: Resolved = .{};
     applyPresent(&out, global);
     applyPresent(&out, project);
+    out.settings = try mergeSettings(arena, global, project);
     return out;
+}
+
+fn mergeSettings(
+    arena: std.mem.Allocator,
+    global: ?*const Config,
+    project: ?*const Config,
+) std.mem.Allocator.Error![]const RuleSetting {
+    const g = if (global) |c| c.settings else &.{};
+    const p = if (project) |c| c.settings else &.{};
+
+    if (p.len == 0) return g;
+    if (g.len == 0) return p;
+
+    var merged: std.ArrayList(RuleSetting) = .empty;
+    try merged.appendSlice(arena, g);
+
+    for (p) |setting| {
+        if (findSetting(merged.items, setting)) |idx| {
+            merged.items[idx] = setting;
+        } else {
+            try merged.append(arena, setting);
+        }
+    }
+
+    return merged.toOwnedSlice(arena);
+}
+
+fn findSetting(settings: []const RuleSetting, setting: RuleSetting) ?usize {
+    for (settings, 0..) |existing, i| {
+        if (existing.project == setting.project and existing.lang == setting.lang and std.mem.eql(u8, existing.id, setting.id)) return i;
+    }
+
+    return null;
 }
 
 fn applyPresent(out: *Resolved, cfg_opt: ?*const Config) void {
     const cfg = cfg_opt orelse return;
 
-    if (cfg.present.enabled) out.enabled = cfg.enabled;
-    if (cfg.present.disabled) out.disabled = cfg.disabled;
-    if (cfg.present.warnings) out.warnings = cfg.warnings;
     if (cfg.present.project_rules) out.project_rules = cfg.project_rules;
     if (cfg.present.ratchet) out.ratchet = cfg.ratchet;
 }
@@ -67,7 +96,6 @@ pub const ParseError = error{
     BadIndent,
     MalformedListItem,
     ContentAfterKey,
-    UnknownLanguage,
     InvalidRuleId,
     UnexpectedListItem,
     UnknownProjectRuleKind,
@@ -78,6 +106,12 @@ pub const ParseError = error{
     WrongKindProjectRuleKey,
     IncompleteImportBoundary,
     InvalidRatchetValue,
+    UnknownScope,
+    MalformedRuleEntry,
+    UnknownRuleKey,
+    InvalidEnabledValue,
+    InvalidSeverityValue,
+    DuplicateRule,
 } || std.mem.Allocator.Error;
 
 pub const Diagnostic = struct {
@@ -86,12 +120,11 @@ pub const Diagnostic = struct {
 
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
-        error.UnknownTopLevelKey => "unknown top-level key (expected 'enabled', 'disabled', 'warnings', 'project-rules', or 'ratchet')",
+        error.UnknownTopLevelKey => "unknown top-level key (expected 'rules', 'project-rules', or 'ratchet')",
         error.TabInIndent => "tabs are not allowed in indentation",
         error.BadIndent => "indent must be 0 or 2 spaces",
         error.MalformedListItem => "list item must be '  - <rule-id>'",
         error.ContentAfterKey => "no inline content allowed after key",
-        error.UnknownLanguage => "unknown language (expected " ++ language.supported_list ++ ")",
         error.InvalidRuleId => "rule id must match [A-Za-z0-9_-]+",
         error.UnexpectedListItem => "list item without a preceding key",
         error.UnknownProjectRuleKind => "unknown project rule kind (expected 'restricted-callers' or 'import-boundary')",
@@ -102,11 +135,32 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.WrongKindProjectRuleKey => "'callee-suffix' and 'caller-suffix' apply to restricted-callers; 'from' and 'deny' apply to import-boundary",
         error.IncompleteImportBoundary => "import-boundary requires 'from' and 'deny'",
         error.InvalidRatchetValue => "ratchet must be 'true' or 'false'",
+        error.UnknownScope => "unknown scope (expected 'go', 'ts', 'tsx', 'typescript', or 'project')",
+        error.MalformedRuleEntry => "rule must be '    <id>:' followed by indented '<key>: <value>' properties",
+        error.UnknownRuleKey => "unknown rule key (expected 'enabled', 'severity', or 'exclude')",
+        error.InvalidEnabledValue => "enabled must be 'true' or 'false'",
+        error.InvalidSeverityValue => "severity must be 'error' or 'warn'",
+        error.DuplicateRule => "rule is already configured for this scope",
         else => @errorName(err),
     };
 }
 
-const State = enum { top, in_enabled, in_disabled, in_warnings, in_project_rules };
+const State = enum { top, in_project_rules, in_rules };
+
+const Scope = struct {
+    langs: []const language.Name,
+    project: bool,
+};
+
+const PendingRule = struct {
+    scope: Scope,
+    id: []const u8,
+    line: u32,
+    enabled: bool = true,
+    severity: ?diagnostic.Severity = null,
+    exclude: std.ArrayList([]const u8) = .empty,
+    in_exclude: bool = false,
+};
 
 const PendingProjectRule = struct {
     id: []const u8,
@@ -125,13 +179,13 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     errdefer arena_ptr.deinit();
     const arena = arena_ptr.allocator();
 
-    var enabled: std.ArrayList(ScopedId) = .empty;
-    var disabled: std.ArrayList(ScopedId) = .empty;
-    var warnings: std.ArrayList(ScopedId) = .empty;
+    var settings: std.ArrayList(RuleSetting) = .empty;
     var project_rules: std.ArrayList(project_rule.ProjectRule) = .empty;
     var ratchet = false;
     var present: Presence = .{};
     var pending: ?PendingProjectRule = null;
+    var pending_rule: ?PendingRule = null;
+    var scope: ?Scope = null;
 
     var line_no: u32 = 0;
     var iter = std.mem.splitScalar(u8, source, '\n');
@@ -154,6 +208,8 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
 
         if (indent == 0) {
             try finalizePending(arena, &pending, &project_rules, diag);
+            try finalizePendingRule(arena, &pending_rule, &settings, diag);
+            scope = null;
             if (std.mem.startsWith(u8, content, "ratchet:")) {
                 ratchet = try parseRatchetValue(content["ratchet:".len..]);
                 present.ratchet = true;
@@ -165,12 +221,44 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
             continue;
         }
 
+        if (state == .in_rules) {
+            switch (indent) {
+                2 => {
+                    try finalizePendingRule(arena, &pending_rule, &settings, diag);
+                    diag.line = line_no;
+                    scope = try parseScopeKey(content);
+                },
+                4 => {
+                    try finalizePendingRule(arena, &pending_rule, &settings, diag);
+                    diag.line = line_no;
+                    const s = scope orelse return error.BadIndent;
+                    pending_rule = try startRuleEntry(arena, s, content, line_no);
+                },
+                6 => {
+                    if (pending_rule) |*p| {
+                        try setRuleProperty(p, content);
+                        continue;
+                    }
+                    return error.BadIndent;
+                },
+                8 => {
+                    if (pending_rule) |*p| {
+                        if (p.in_exclude) {
+                            try appendExcludeItem(arena, p, content);
+                            continue;
+                        }
+                    }
+                    return error.BadIndent;
+                },
+                else => return error.BadIndent,
+            }
+            continue;
+        }
+
         if (indent == 2) {
             switch (state) {
                 .top => return error.UnexpectedListItem,
-                .in_enabled => try appendListItem(arena, &enabled, content),
-                .in_disabled => try appendListItem(arena, &disabled, content),
-                .in_warnings => try appendListItem(arena, &warnings, content),
+                .in_rules => unreachable,
                 .in_project_rules => {
                     try finalizePending(arena, &pending, &project_rules, diag);
                     diag.line = line_no;
@@ -193,13 +281,12 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
 
     diag.line = line_no;
     try finalizePending(arena, &pending, &project_rules, diag);
+    try finalizePendingRule(arena, &pending_rule, &settings, diag);
 
     diag.line = 0;
 
     return .{
-        .enabled = try enabled.toOwnedSlice(arena),
-        .disabled = try disabled.toOwnedSlice(arena),
-        .warnings = try warnings.toOwnedSlice(arena),
+        .settings = try settings.toOwnedSlice(arena),
         .project_rules = try project_rules.toOwnedSlice(arena),
         .ratchet = ratchet,
         .present = present,
@@ -209,10 +296,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
 
 fn markPresent(present: *Presence, state: State) void {
     switch (state) {
-        .top => {},
-        .in_enabled => present.enabled = true,
-        .in_disabled => present.disabled = true,
-        .in_warnings => present.warnings = true,
+        .top, .in_rules => {},
         .in_project_rules => present.project_rules = true,
     }
 }
@@ -351,41 +435,164 @@ fn parseTopLevelKey(content: []const u8) ParseError!State {
 }
 
 fn sectionState(key: []const u8) ?State {
-    if (std.mem.eql(u8, key, "enabled")) return .in_enabled;
-    if (std.mem.eql(u8, key, "disabled")) return .in_disabled;
-    if (std.mem.eql(u8, key, "warnings")) return .in_warnings;
+    if (std.mem.eql(u8, key, "rules")) return .in_rules;
     if (std.mem.eql(u8, key, "project-rules")) return .in_project_rules;
 
     return null;
 }
 
-fn appendListItem(
+fn parseScopeKey(content: []const u8) ParseError!Scope {
+    if (!std.mem.endsWith(u8, content, ":")) {
+        if (std.mem.indexOfScalar(u8, content, ':')) |colon| {
+            const key = std.mem.trimEnd(u8, content[0..colon], " ");
+            if (scopeFromKey(key) != null) return error.ContentAfterKey;
+        }
+        return error.UnknownScope;
+    }
+
+    return scopeFromKey(content[0 .. content.len - 1]) orelse error.UnknownScope;
+}
+
+fn scopeFromKey(key: []const u8) ?Scope {
+    if (std.mem.eql(u8, key, "go")) return .{ .langs = &.{.go}, .project = false };
+    if (std.mem.eql(u8, key, "ts")) return .{ .langs = &.{.ts}, .project = false };
+    if (std.mem.eql(u8, key, "tsx")) return .{ .langs = &.{.tsx}, .project = false };
+    if (std.mem.eql(u8, key, "typescript")) return .{ .langs = &.{ .ts, .tsx }, .project = false };
+    if (std.mem.eql(u8, key, "project")) return .{ .langs = &.{}, .project = true };
+
+    return null;
+}
+
+fn startRuleEntry(
     arena: std.mem.Allocator,
-    list: *std.ArrayList(ScopedId),
+    scope: Scope,
+    content: []const u8,
+    line: u32,
+) ParseError!PendingRule {
+    if (!std.mem.endsWith(u8, content, ":")) {
+        if (std.mem.indexOfScalar(u8, content, ':') != null) return error.ContentAfterKey;
+        return error.MalformedRuleEntry;
+    }
+
+    const id = content[0 .. content.len - 1];
+
+    if (!rule.isValidId(id)) return error.InvalidRuleId;
+
+    return .{ .scope = scope, .id = try arena.dupe(u8, id), .line = line };
+}
+
+fn setRuleProperty(pending: *PendingRule, content: []const u8) ParseError!void {
+    pending.in_exclude = false;
+
+    const colon = std.mem.indexOfScalar(u8, content, ':') orelse return error.MalformedRuleEntry;
+    const key = std.mem.trimEnd(u8, content[0..colon], " ");
+    const value = std.mem.trim(u8, content[colon + 1 ..], " ");
+
+    if (std.mem.eql(u8, key, "enabled")) {
+        pending.enabled = try parseBoolValue(value, error.InvalidEnabledValue);
+        return;
+    }
+
+    if (std.mem.eql(u8, key, "severity")) {
+        pending.severity = try parseSeverityValue(value);
+        return;
+    }
+
+    if (std.mem.eql(u8, key, "exclude")) {
+        if (value.len != 0) return error.ContentAfterKey;
+        pending.in_exclude = true;
+        return;
+    }
+
+    return error.UnknownRuleKey;
+}
+
+fn parseBoolValue(value: []const u8, invalid: ParseError) ParseError!bool {
+    if (std.mem.eql(u8, value, "true")) return true;
+    if (std.mem.eql(u8, value, "false")) return false;
+
+    return invalid;
+}
+
+fn parseSeverityValue(value: []const u8) ParseError!diagnostic.Severity {
+    if (std.mem.eql(u8, value, "error")) return .@"error";
+    if (std.mem.eql(u8, value, "warn")) return .warn;
+
+    return error.InvalidSeverityValue;
+}
+
+fn appendExcludeItem(
+    arena: std.mem.Allocator,
+    pending: *PendingRule,
     content: []const u8,
 ) ParseError!void {
     if (!std.mem.startsWith(u8, content, "- ")) return error.MalformedListItem;
 
-    const item = std.mem.trimStart(u8, content[2..], " ");
+    const item = stripQuotes(std.mem.trim(u8, content[2..], " "));
 
     if (item.len == 0) return error.MalformedListItem;
 
-    if (std.mem.indexOfScalar(u8, item, '/')) |slash| {
-        const scope = item[0..slash];
-        const id = item[slash + 1 ..];
-        if (!rule.isValidId(scope) or !rule.isValidId(id)) return error.InvalidRuleId;
-        if (std.mem.eql(u8, scope, "project")) {
-            try list.append(arena, .{ .lang = null, .id = try arena.dupe(u8, id), .project = true });
-            return;
-        }
-        const lang = language.Name.fromString(scope) orelse return error.UnknownLanguage;
-        try list.append(arena, .{ .lang = lang, .id = try arena.dupe(u8, id) });
+    try pending.exclude.append(arena, try arena.dupe(u8, item));
+}
+
+fn stripQuotes(s: []const u8) []const u8 {
+    if (s.len < 2) return s;
+
+    const first = s[0];
+    const last = s[s.len - 1];
+    if ((first == '\'' and last == '\'') or (first == '"' and last == '"')) return s[1 .. s.len - 1];
+
+    return s;
+}
+
+fn finalizePendingRule(
+    arena: std.mem.Allocator,
+    pending: *?PendingRule,
+    settings: *std.ArrayList(RuleSetting),
+    diag: *Diagnostic,
+) ParseError!void {
+    var p = pending.* orelse return;
+
+    pending.* = null;
+
+    const exclude = try p.exclude.toOwnedSlice(arena);
+
+    if (p.scope.project) {
+        try appendSetting(arena, settings, .{
+            .lang = null,
+            .id = p.id,
+            .project = true,
+            .enabled = p.enabled,
+            .severity = p.severity,
+            .exclude = exclude,
+        }, p.line, diag);
         return;
     }
 
-    if (!rule.isValidId(item)) return error.InvalidRuleId;
+    for (p.scope.langs) |lang| {
+        try appendSetting(arena, settings, .{
+            .lang = lang,
+            .id = p.id,
+            .enabled = p.enabled,
+            .severity = p.severity,
+            .exclude = exclude,
+        }, p.line, diag);
+    }
+}
 
-    try list.append(arena, .{ .lang = null, .id = try arena.dupe(u8, item) });
+fn appendSetting(
+    arena: std.mem.Allocator,
+    settings: *std.ArrayList(RuleSetting),
+    setting: RuleSetting,
+    line: u32,
+    diag: *Diagnostic,
+) ParseError!void {
+    if (findSetting(settings.items, setting) != null) {
+        diag.line = line;
+        return error.DuplicateRule;
+    }
+
+    try settings.append(arena, setting);
 }
 
 fn stripComment(line: []const u8) []const u8 {
@@ -451,24 +658,16 @@ pub fn applySelection(set: *loader.RuleSet, resolved: Resolved) void {
 }
 
 fn isActiveProject(id: []const u8, resolved: Resolved) bool {
-    return anyMatchesProject(resolved.enabled, id) and !anyMatchesProject(resolved.disabled, id);
-}
-
-fn anyMatchesProject(ids: []const ScopedId, id: []const u8) bool {
-    for (ids) |scoped| {
-        if (scoped.matchesProject(id)) return true;
+    for (resolved.settings) |setting| {
+        if (setting.matchesProject(id)) return setting.enabled;
     }
 
     return false;
 }
 
 fn isActive(lang: language.Name, id: []const u8, resolved: Resolved) bool {
-    return matchesAny(resolved.enabled, lang, id) and !matchesAny(resolved.disabled, lang, id);
-}
-
-fn matchesAny(ids: []const ScopedId, lang: language.Name, id: []const u8) bool {
-    for (ids) |scoped| {
-        if (scoped.matches(lang, id)) return true;
+    for (resolved.settings) |setting| {
+        if (setting.matches(lang, id)) return setting.enabled;
     }
 
     return false;

@@ -311,7 +311,7 @@ test "daemon: project violations demoted by warnings leave the report clean" {
     defer arena.deinit();
     var f = try newFixture(gpa);
     defer f.deinit();
-    f.engine.warnings = &.{.{ .lang = null, .id = "repository-isolation" }};
+    f.engine.settings = &.{.{ .lang = null, .id = "repository-isolation", .project = true, .severity = .warn }};
 
     var state = daemon.ProjectState.init(gpa, &repository_isolation);
     defer state.deinit();
@@ -712,7 +712,7 @@ test "daemon: project ratchet demotes unchanged counts while the daemon default 
     defer h.deinit();
 
     try h.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
-    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\nenabled:\n  - flag-zzz\n" });
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\nrules:\n  ts:\n    flag-zzz:\n" });
     try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.kata", .data = flag_zzz_kata_rule });
     try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const zzz = 1;\n" });
 
@@ -779,7 +779,7 @@ test "daemon: cached project context lints with kata project rules" {
     defer h.deinit();
 
     try h.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
-    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "enabled:\n  - flag-zzz\n" });
+    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "rules:\n  ts:\n    flag-zzz:\n" });
     try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.kata", .data = flag_zzz_kata_rule });
     try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/main.ts", .data = "const ok = 1;\n" });
 

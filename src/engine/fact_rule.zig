@@ -9,7 +9,6 @@ const rule = @import("rule.zig");
 
 const ProjectIndex = @import("ProjectIndex.zig").ProjectIndex;
 
-pub const ScopedId = rule.ScopedId;
 pub const Violation = project_rule.Violation;
 
 pub const FactKind = enum {
@@ -131,7 +130,7 @@ const Context = struct {
 pub fn evaluate(
     allocator: std.mem.Allocator,
     rules: []const CompiledFactRule,
-    warnings: []const ScopedId,
+    settings: []const rule.RuleSetting,
     index: *const ProjectIndex,
     path_filter: ?[]const u8,
 ) ![]Violation {
@@ -145,33 +144,25 @@ pub fn evaluate(
     if (path_filter) |path| {
         if (index.get(path)) |file| {
             const ctx: Context = .{ .allocator = allocator, .file = file, .class_names = &class_names };
-            for (rules) |r| try evaluateFile(&out, allocator, r, ctx);
+            for (rules) |r| try evaluateFile(&out, allocator, r, settings, ctx);
         }
     } else {
         for (rules) |r| {
             var files = index.files.valueIterator();
             while (files.next()) |file| {
                 const ctx: Context = .{ .allocator = allocator, .file = file, .class_names = &class_names };
-                try evaluateFile(&out, allocator, r, ctx);
+                try evaluateFile(&out, allocator, r, settings, ctx);
             }
         }
     }
 
     for (out.items) |*v| {
-        if (matchesWarning(warnings, v.diagnostic.rule_id)) v.diagnostic.severity = .warn;
+        if (project_rule.settingSeverity(settings, v.diagnostic.rule_id)) |severity| v.diagnostic.severity = severity;
     }
 
     std.mem.sort(Violation, out.items, {}, project_rule.violationLessThan);
 
     return out.toOwnedSlice(allocator);
-}
-
-fn matchesWarning(warnings: []const ScopedId, id: []const u8) bool {
-    for (warnings) |w| {
-        if (w.matchesProject(id)) return true;
-    }
-
-    return false;
 }
 
 fn needsClassIndex(rules: []const CompiledFactRule) bool {
@@ -207,11 +198,14 @@ fn evaluateFile(
     out: *std.ArrayList(Violation),
     allocator: std.mem.Allocator,
     r: CompiledFactRule,
+    settings: []const rule.RuleSetting,
     ctx: Context,
 ) !void {
     for (r.exclude_paths) |pattern| {
         if (glob.match(pattern, ctx.file.path)) return;
     }
+
+    if (project_rule.settingExcludes(settings, r.id, ctx.file.path)) return;
 
     switch (r.fact) {
         .class => for (ctx.file.classes) |c| try evaluateFact(out, allocator, r, ctx, .{ .class = c }),

@@ -7,7 +7,7 @@ relying on the model.
 Rules live under `rules/<lang>/<id>.kata` (embedded at build time) and may be
 extended with user rules under `$XDG_CONFIG_HOME/kata/rules/` and per-project
 rules under `<project>/.kata/rules/`. A rule file makes a rule available; it
-only runs once declared under `enabled:` in `rules.yaml`. Supported languages:
+only runs once declared under `rules:` in `rules.yaml`. Supported languages:
 `ts`, `tsx`, `go`.
 
 ## Build
@@ -122,39 +122,47 @@ autostarts the daemon if absent, and restarts it on a `stale` reply.
 
 ## Configuration
 
-No rule runs by default. Activation is opt-in: declare rules under `enabled:`
+No rule runs by default. Activation is opt-in: declare rules under `rules:`
 in `$XDG_CONFIG_HOME/kata/rules.yaml` (or `$HOME/.config/kata/rules.yaml`).
 Without a config, `kata check` is a clean no-op.
 
 ```yaml
-enabled:
-  - go/no-panic
-  - no-comments
-disabled:
-  - tsx/no-comments
+rules:
+  go:
+    no-panic:
+    max-nesting:
+      enabled: false
+  typescript:
+    no-comments:
+      severity: warn
+    simple-repositories:
+      exclude:
+        - 'test/**/*.ts'
+ratchet: true
 ```
-
-The active set is `enabled` minus `disabled`. `disabled` exists for pruning:
-a project that inherits the global `enabled` list can subtract single rules
-without redeclaring everything.
 
 Schema:
 
-- Top-level keys: `enabled`, `disabled`, `warnings`, `project-rules`,
-  `ratchet`.
-- `enabled:` and `disabled:` take lists of rule ids.
-- Scoped form `lang/id` targets that rule in one language.
-- Bare form `id` targets every rule with that id across all languages.
+- Top-level keys: `rules`, `project-rules`, `ratchet`.
+- `rules:` nests scope keys, each scope nests rule ids: `go`, `ts`, `tsx`,
+  `typescript` (both `ts` and `tsx`), and `project` (DSL project rules).
+- A listed rule is active. `enabled: false` deactivates it; `enabled: true`
+  is accepted but redundant.
+- `severity: error | warn` overrides the rule's own severity in both
+  directions.
+- `exclude:` takes a list of glob patterns; the rule skips matching paths on
+  top of any `exclude paths` clause in the rule itself.
+- Listing the same rule twice for one scope is an error, including a
+  `typescript` entry overlapping a `ts` or `tsx` entry for the same id.
 - Entries matching no available rule are ignored.
-- `warnings:` demotes active rules to warnings; it does not activate them.
 - `#` starts a comment to end of line. Blank lines are ignored.
-- Indentation is exactly two spaces. Tabs are rejected.
+- Indentation is two spaces per level. Tabs are rejected.
 - Unknown top-level keys are rejected to prevent silent typos.
 
 Errors are reported with a line number and abort startup:
 
 ```
-kata: rules.yaml: line 1: unknown top-level key (expected 'enabled', 'disabled', 'warnings', 'project-rules', or 'ratchet')
+kata: rules.yaml: line 1: unknown top-level key (expected 'rules', 'project-rules', or 'ratchet')
 ```
 
 The daemon reads the global `rules.yaml` once at startup. Edit the file then
@@ -179,13 +187,15 @@ Precedence:
 
 - Rules load embedded → user (`$XDG_CONFIG_HOME/kata/rules/`) → project
   (`.kata/rules/`). A later tier silently shadows an earlier one by rule id.
-- Config keys resolve per key: a key defined in the project `rules.yaml`
-  replaces the global value wholesale; omitted keys fall through to the global
-  file. A project `enabled:` therefore replaces the global active set entirely,
-  an empty one deactivates every rule for that project, and `ratchet` can be
-  turned on for a single project.
+- The `rules:` tree merges per rule: a project entry replaces the global
+  entry for that scope and rule; unlisted rules inherit from the global file.
+  A project prunes one inherited rule with `enabled: false` and can override
+  just its `severity` or `exclude`.
+- `project-rules:` and `ratchet:` resolve per key: defined in the project
+  `rules.yaml` they replace the global value wholesale; omitted they fall
+  through, so `ratchet` can be turned on for a single project.
 - Activation is opt-in at every tier: a rule file under `.kata/rules/` does
-  nothing until an `enabled:` entry (project or inherited global) names it.
+  nothing until a `rules:` entry (project or inherited global) names it.
 
 The daemon resolves the project per request from the file path, so one daemon
 serves every project. Edits under `.kata/` (rule files added, changed, or
@@ -197,7 +207,7 @@ project's context on the fly.
 Drop `.kata` files under `$XDG_CONFIG_HOME/kata/rules/<lang>/` (or
 `$HOME/.config/kata/rules/<lang>/`) to add your own rules. The basename of the
 file is the rule id; the layout mirrors the embedded `rules/` tree. Like every
-rule, a custom rule stays inactive until listed under `enabled:` in
+rule, a custom rule stays inactive until listed under `rules:` in
 `rules.yaml`.
 
 A user or project rule that shares an id with an earlier tier shadows it
@@ -217,7 +227,7 @@ kata new-rule ts no-throw-literal
 
 It creates the parent directory if needed, refuses to overwrite an existing
 file, and prints the path of the new `.kata` file ready for editing, plus a
-reminder to add the rule to `enabled:`.
+reminder to add the rule under `rules:`.
 
 ### Rule syntax
 
@@ -466,8 +476,9 @@ are opt-in via the `project` scope, and evaluate against facts extracted from
 every checked file:
 
 ```yaml
-enabled:
-  - project/repository-isolation
+rules:
+  project:
+    repository-isolation:
 ```
 
 ```kata
@@ -529,9 +540,10 @@ rule no-infra-from-domain {
 }
 ```
 
-`disabled:` and `warnings:` accept the same `project/<id>` scope; bare ids
-match project rules too. The yaml `project-rules:` config keeps working
-unchanged next to DSL project rules. Compile errors report the project scope:
+Entries under the `project` scope take the same `enabled`, `severity`, and
+`exclude` keys as language rules. The yaml `project-rules:` config keeps
+working unchanged next to DSL project rules. Compile errors report the
+project scope:
 
 ```
 kata: rule project/bad-rule: project rules do not take a lang clause - filter with field(@x, lang)

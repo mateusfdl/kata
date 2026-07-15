@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const lint_diagnostic = @import("engine").diagnostic;
+const lint_rule = @import("engine").rule;
 const project_rule = @import("engine").project_rule;
 const test_fixture = @import("../test_fixture.zig");
 
@@ -103,7 +104,7 @@ test "project rule: path filter keeps cross-file context but reports one file" {
     try std.testing.expectEqual(@as(usize, 0), clean.len);
 }
 
-test "project rule: warnings demote violations to warn severity" {
+test "project rule: setting exclude glob suppresses violations for matching files" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
@@ -115,14 +116,13 @@ test "project rule: warnings demote violations to warn severity" {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const warnings = [_]project_rule.ScopedId{.{ .lang = null, .id = "repository-isolation" }};
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &warnings, &index, null);
+    const excluding = [_]lint_rule.RuleSetting{.{ .lang = null, .id = "repository-isolation", .project = true, .exclude = &.{"src/order-*.ts"} }};
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &excluding, &index, null);
 
-    try std.testing.expectEqual(@as(usize, 1), violations.len);
-    try std.testing.expectEqual(lint_diagnostic.Severity.warn, violations[0].diagnostic.severity);
+    try std.testing.expectEqual(@as(usize, 0), violations.len);
 }
 
-test "project rule: project-scoped warnings demote violations to warn severity" {
+test "project rule: config severity demotes violations to warn severity" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
     defer f.deinit();
@@ -134,8 +134,8 @@ test "project rule: project-scoped warnings demote violations to warn severity" 
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
 
-    const warnings = [_]project_rule.ScopedId{.{ .lang = null, .id = "repository-isolation", .project = true }};
-    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &warnings, &index, null);
+    const settings = [_]lint_rule.RuleSetting{.{ .lang = null, .id = "repository-isolation", .project = true, .severity = .warn }};
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &settings, &index, null);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     try std.testing.expectEqual(lint_diagnostic.Severity.warn, violations[0].diagnostic.severity);

@@ -14,6 +14,25 @@ pub const MetricKind = enum {
     bool_op,
 };
 
+/// spans sorted parent-before-child plus, for every span, the index of the
+/// innermost function span that strictly contains it (null when the span sits
+/// outside any captured function). the owner and depth passes rely on the
+/// parent-before-child order.
+const Analysis = struct {
+    spans: []const Span,
+    owners: []const ?usize,
+
+    fn deinit(self: Analysis, allocator: std.mem.Allocator) void {
+        allocator.free(self.owners);
+        allocator.free(self.spans);
+    }
+};
+
+const Container = struct {
+    kind: MetricKind,
+    end: u32,
+};
+
 pub fn classify(table: []const ?MetricKind, node: Node) ?MetricKind {
     const id = node.kindId();
     if (id >= table.len) return null;
@@ -66,20 +85,6 @@ const Span = struct {
     end: u32,
 };
 
-/// Spans sorted parent-before-child plus, for every span, the index of the
-/// innermost function span that strictly contains it (null when the span sits
-/// outside any captured function). The owner and depth passes rely on the
-/// parent-before-child order.
-const Analysis = struct {
-    spans: []const Span,
-    owners: []const ?usize,
-
-    fn deinit(self: Analysis, allocator: std.mem.Allocator) void {
-        allocator.free(self.owners);
-        allocator.free(self.spans);
-    }
-};
-
 fn analyze(
     allocator: std.mem.Allocator,
     compiled: *const Compiled,
@@ -97,7 +102,7 @@ fn analyze(
     return .{ .spans = spans, .owners = owners };
 }
 
-/// Single stack pass: spans arrive parent-before-child, so the functions still
+/// single stack pass: spans arrive parent-before-child, so the functions still
 /// open at a span's start are exactly the functions containing it.
 fn computeOwners(allocator: std.mem.Allocator, spans: []const Span) std.mem.Allocator.Error![]?usize {
     const owners = try allocator.alloc(?usize, spans.len);
@@ -115,7 +120,7 @@ fn computeOwners(allocator: std.mem.Allocator, spans: []const Span) std.mem.Allo
     return owners;
 }
 
-/// A span that extends past the top of the stack cannot be contained by it;
+/// a span that extends past the top of the stack cannot be contained by it;
 /// syntax spans never partially overlap, so the top has ended and is done.
 fn popEnded(stack: *std.ArrayList(usize), spans: []const Span, span: Span) void {
     while (stack.items.len > 0 and span.end > spans[stack.items[stack.items.len - 1]].end) {
@@ -160,7 +165,7 @@ pub fn nestingOf(
     const analysis = try analyze(allocator, compiled, node);
     defer analysis.deinit(allocator);
 
-    // Collapse ownership to one class: constructs belonging to `node` share a
+    // collapse ownership to one class: constructs belonging to `node` share a
     // key, constructs inside nested functions drop out entirely.
     const keys = try allocator.alloc(?usize, analysis.spans.len);
     defer allocator.free(keys);
@@ -177,7 +182,7 @@ pub fn nestingOf(
     return deepest;
 }
 
-/// A span collected under `node` belongs to `node` itself when no captured
+/// a span collected under `node` belongs to `node` itself when no captured
 /// function strictly contains it, or when the innermost one is `node` (the
 /// query root is captured too, so it shows up as a function span).
 fn ownedByRoot(spans: []const Span, owner: ?usize, node: Node) bool {
@@ -256,7 +261,7 @@ fn collectSpans(
     }
 }
 
-/// Start ascending, end descending: an enclosing span always sorts before the
+/// start ascending, end descending: an enclosing span always sorts before the
 /// spans it contains.
 fn spanLessThan(_: void, a: Span, b: Span) bool {
     if (a.start != b.start) return a.start < b.start;
@@ -268,18 +273,15 @@ fn containsSpan(outer: Span, inner: Span) bool {
     return outer.start <= inner.start and inner.end <= outer.end;
 }
 
-const Container = struct {
-    kind: MetricKind,
-    end: u32,
-};
-
-/// Depth of every nesting construct: 1 + the number of enclosing levels that
+/// depth of every nesting construct: 1 + the number of enclosing levels that
 /// share its owner key (spans with a null key, or that are not nesting
-/// constructs, get depth 0). Containers sharing a kind and end byte collapse
+/// constructs, get depth 0). containers sharing a kind and end byte collapse
 /// into one level: the nested if_statements of an `else if` chain all end at
-/// the same byte, so a chain counts as a single level of indentation. The
+/// the same byte, so a chain counts as a single level of indentation. the
 /// construct's own (kind, end) is excluded for the same reason — an `else if`
 /// link sits at the depth of its chain head, not one below it.
+///
+/// TODO: For god sake get rid of it
 fn nestingDepths(
     allocator: std.mem.Allocator,
     spans: []const Span,
@@ -287,6 +289,7 @@ fn nestingDepths(
 ) std.mem.Allocator.Error![]u32 {
     const depths = try allocator.alloc(u32, spans.len);
     errdefer allocator.free(depths);
+
     @memset(depths, 0);
 
     var stack: std.ArrayList(usize) = .empty;
@@ -296,6 +299,7 @@ fn nestingDepths(
 
     for (spans, 0..) |span, i| {
         popEnded(&stack, spans, span);
+
         if (!isNestingConstruct(span.kind)) continue;
         const key = keys[i] orelse continue;
 
@@ -303,14 +307,17 @@ fn nestingDepths(
         for (stack.items) |pi| {
             const p_key = keys[pi] orelse continue;
             if (p_key != key) continue;
+
             const p = spans[pi];
             if (!containsSpan(p, span)) continue;
             const entry: Container = .{ .kind = p.kind, .end = p.end };
+
             if (entry.kind == span.kind and entry.end == span.end) continue;
             if (!hasContainer(levels.items, entry)) try levels.append(allocator, entry);
         }
 
         depths[i] = @intCast(levels.items.len + 1);
+
         try stack.append(allocator, i);
     }
 
@@ -321,5 +328,6 @@ fn hasContainer(containers: []const Container, entry: Container) bool {
     for (containers) |c| {
         if (c.kind == entry.kind and c.end == entry.end) return true;
     }
+
     return false;
 }

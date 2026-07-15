@@ -160,7 +160,10 @@ pub fn main(init: std.process.Init) u8 {
     }
 
     var diag: config.Diagnostic = .{};
-    var cfg_opt = config.loadFromDisk(gpa, io, init.environ_map, &diag) catch |err| return dieConfig(stderr, diag, err);
+    var cfg_opt: ?config.Config = if (subcommand == .rule_test)
+        null
+    else
+        config.loadFromDisk(gpa, io, init.environ_map, &diag) catch |err| return dieConfig(stderr, diag, err);
     defer if (cfg_opt) |*cfg| cfg.deinit();
 
     var resolver: context_mod.Resolver = .{

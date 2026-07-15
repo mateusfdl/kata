@@ -18,123 +18,22 @@ fn expectParseErr(source: []const u8, expected_err: anyerror, expected_line: u32
     try std.testing.expectEqual(expected_line, diag.line);
 }
 
-test "config: empty source yields empty disables" {
+test "config: empty source yields no settings" {
     var cfg = try expectParseOk("");
     defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 0), cfg.disabled.len);
+    try std.testing.expectEqual(@as(usize, 0), cfg.settings.len);
 }
 
-test "config: only comments yields empty disables" {
+test "config: only comments yields no settings" {
     var cfg = try expectParseOk("# this is a comment\n# another\n");
     defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 0), cfg.disabled.len);
+    try std.testing.expectEqual(@as(usize, 0), cfg.settings.len);
 }
 
-test "config: disabled key with no items yields empty disables" {
-    var cfg = try expectParseOk("disabled:\n");
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 0), cfg.disabled.len);
-}
-
-test "config: parses a single scoped entry" {
-    var cfg = try expectParseOk("disabled:\n  - ts/no-console\n");
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 1), cfg.disabled.len);
-    try std.testing.expectEqual(@as(?language.Name, .ts), cfg.disabled[0].lang);
-    try std.testing.expectEqualStrings("no-console", cfg.disabled[0].id);
-}
-
-test "config: parses a single bare entry" {
-    var cfg = try expectParseOk("disabled:\n  - no-console\n");
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 1), cfg.disabled.len);
-    try std.testing.expectEqual(@as(?language.Name, null), cfg.disabled[0].lang);
-    try std.testing.expectEqualStrings("no-console", cfg.disabled[0].id);
-}
-
-test "config: parses mixed scoped and bare entries" {
-    const src =
-        \\disabled:
-        \\  - ts/no-console
-        \\  - no-any
-        \\  - tsx/no-comments
-        \\  - go/no-swallowed-errors
-        \\
-    ;
-    var cfg = try expectParseOk(src);
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 4), cfg.disabled.len);
-    try std.testing.expectEqual(@as(?language.Name, .ts), cfg.disabled[0].lang);
-    try std.testing.expectEqualStrings("no-console", cfg.disabled[0].id);
-    try std.testing.expectEqual(@as(?language.Name, null), cfg.disabled[1].lang);
-    try std.testing.expectEqualStrings("no-any", cfg.disabled[1].id);
-    try std.testing.expectEqual(@as(?language.Name, .tsx), cfg.disabled[2].lang);
-    try std.testing.expectEqualStrings("no-comments", cfg.disabled[2].id);
-    try std.testing.expectEqual(@as(?language.Name, .go), cfg.disabled[3].lang);
-    try std.testing.expectEqualStrings("no-swallowed-errors", cfg.disabled[3].id);
-}
-
-test "config: trailing comment is stripped" {
-    var cfg = try expectParseOk("disabled:  # top-level\n  - ts/no-console  # the rule\n");
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 1), cfg.disabled.len);
-    try std.testing.expectEqualStrings("no-console", cfg.disabled[0].id);
-}
-
-test "config: warnings default to empty" {
-    var cfg = try expectParseOk("disabled:\n  - ts/no-console\n");
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 0), cfg.warnings.len);
-}
-
-test "config: parses warnings list with scoped and bare entries" {
-    const src =
-        \\warnings:
-        \\  - ts/max-complexity
-        \\  - max-nesting
-        \\
-    ;
-    var cfg = try expectParseOk(src);
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 2), cfg.warnings.len);
-    try std.testing.expectEqual(@as(?language.Name, .ts), cfg.warnings[0].lang);
-    try std.testing.expectEqualStrings("max-complexity", cfg.warnings[0].id);
-    try std.testing.expectEqual(@as(?language.Name, null), cfg.warnings[1].lang);
-    try std.testing.expectEqualStrings("max-nesting", cfg.warnings[1].id);
-}
-
-test "config: warnings list rejects invalid rule id" {
-    try expectParseErr("warnings:\n  - ts/no.console\n", error.InvalidRuleId, 2);
-}
-
-test "config: enabled defaults to empty" {
-    var cfg = try expectParseOk("disabled:\n  - ts/no-console\n");
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 0), cfg.enabled.len);
-}
-
-test "config: parses enabled list with scoped and bare entries" {
-    const src =
-        \\enabled:
-        \\  - go/no-panic
-        \\  - no-comments
-        \\
-    ;
-    var cfg = try expectParseOk(src);
-    defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 2), cfg.enabled.len);
-    try std.testing.expectEqual(@as(?language.Name, .go), cfg.enabled[0].lang);
-    try std.testing.expectEqualStrings("no-panic", cfg.enabled[0].id);
-    try std.testing.expectEqual(@as(?language.Name, null), cfg.enabled[1].lang);
-    try std.testing.expectEqualStrings("no-comments", cfg.enabled[1].id);
-}
-
-test "config: enabled list rejects invalid rule id" {
-    try expectParseErr("enabled:\n  - ts/no.console\n", error.InvalidRuleId, 2);
-}
-
-test "config: enabled list rejects unknown language" {
-    try expectParseErr("enabled:\n  - rust/no-unsafe\n", error.UnknownLanguage, 2);
+test "config: retired list keys are unknown" {
+    try expectParseErr("enabled:\n  - ts/no-console\n", error.UnknownTopLevelKey, 1);
+    try expectParseErr("disabled:\n  - ts/no-console\n", error.UnknownTopLevelKey, 1);
+    try expectParseErr("warnings:\n  - ts/no-console\n", error.UnknownTopLevelKey, 1);
 }
 
 test "config: ratchet defaults to false" {
@@ -160,33 +59,25 @@ test "config: ratchet rejects non-boolean values" {
 }
 
 test "config: CRLF line endings are tolerated" {
-    var cfg = try expectParseOk("disabled:\r\n  - ts/no-console\r\n");
+    var cfg = try expectParseOk("rules:\r\n  go:\r\n    no-panic:\r\n");
     defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 1), cfg.disabled.len);
+    try std.testing.expectEqual(@as(usize, 1), cfg.settings.len);
 }
 
 test "config: tab in indent is rejected with line number" {
-    try expectParseErr("disabled:\n\t- ts/no-console\n", error.TabInIndent, 2);
+    try expectParseErr("rules:\n\tgo:\n", error.TabInIndent, 2);
 }
 
 test "config: unknown top-level key is rejected with line number" {
     try expectParseErr("disable:\n  - ts/no-console\n", error.UnknownTopLevelKey, 1);
 }
 
-test "config: malformed list item is rejected" {
-    try expectParseErr("disabled:\n  -\n", error.MalformedListItem, 2);
-}
-
-test "config: invalid rule id chars are rejected" {
-    try expectParseErr("disabled:\n  - ts/no.console\n", error.InvalidRuleId, 2);
-}
-
-test "config: unknown language is rejected" {
-    try expectParseErr("disabled:\n  - rust/no-unsafe\n", error.UnknownLanguage, 2);
+test "config: malformed exclude item is rejected" {
+    try expectParseErr("rules:\n  go:\n    no-panic:\n      exclude:\n        -\n", error.MalformedListItem, 5);
 }
 
 test "config: bad indent is rejected" {
-    try expectParseErr("disabled:\n    - ts/no-console\n", error.BadIndent, 2);
+    try expectParseErr("ratchet: true\n   - ts/no-console\n", error.BadIndent, 2);
 }
 
 test "config: list item without preceding key is rejected" {
@@ -194,7 +85,7 @@ test "config: list item without preceding key is rejected" {
 }
 
 test "config: content after key without colon is rejected" {
-    try expectParseErr("disabled here\n", error.UnknownTopLevelKey, 1);
+    try expectParseErr("rules here\n", error.UnknownTopLevelKey, 1);
 }
 
 test "config: misspelled scalar key reports an unknown key" {
@@ -202,7 +93,7 @@ test "config: misspelled scalar key reports an unknown key" {
 }
 
 test "config: inline content after a known key is rejected" {
-    try expectParseErr("disabled: ts/no-console\n", error.ContentAfterKey, 1);
+    try expectParseErr("project-rules: no-console\n", error.ContentAfterKey, 1);
 }
 
 const RuleFixture = struct {
@@ -259,35 +150,35 @@ test "selection: no configs removes every rule" {
     defer fx.deinit();
     try fx.build();
 
-    config.applySelection(&fx.set, config.resolve(null, null));
+    config.applySelection(&fx.set, try config.resolve(fx.arena(), null, null));
 
     try std.testing.expectEqual(@as(usize, 0), fx.countTs());
     try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
     try std.testing.expectEqual(@as(usize, 0), fx.countGo());
 }
 
-test "selection: config without enabled key removes every rule" {
+test "selection: config without rules key removes every rule" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
 
-    var cfg = try expectParseOk("disabled:\n  - ts/no-console\nratchet: true\n");
+    var cfg = try expectParseOk("ratchet: true\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, config.resolve(&cfg, null));
+    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 0), fx.countTs());
     try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
     try std.testing.expectEqual(@as(usize, 0), fx.countGo());
 }
 
-test "selection: scoped enable keeps exactly one rule" {
+test "selection: scoped rule keeps exactly one rule" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
 
-    var cfg = try expectParseOk("enabled:\n  - ts/no-console\n");
+    var cfg = try expectParseOk("rules:\n  ts:\n    no-console:\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, config.resolve(&cfg, null));
+    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
@@ -295,14 +186,14 @@ test "selection: scoped enable keeps exactly one rule" {
     try std.testing.expect(hasId(fx.set.get(.ts), "no-console"));
 }
 
-test "selection: bare enable keeps the rule across languages" {
+test "selection: typescript scope keeps the rule in ts and tsx" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
 
-    var cfg = try expectParseOk("enabled:\n  - no-console\n");
+    var cfg = try expectParseOk("rules:\n  typescript:\n    no-console:\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, config.resolve(&cfg, null));
+    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 1), fx.countTsx());
@@ -311,21 +202,24 @@ test "selection: bare enable keeps the rule across languages" {
     try std.testing.expect(hasId(fx.set.get(.tsx), "no-console"));
 }
 
-test "selection: disabled prunes an enabled rule" {
+test "selection: enabled false prunes a rule" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
 
     var cfg = try expectParseOk(
-        \\enabled:
-        \\  - no-console
-        \\  - no-any
-        \\disabled:
-        \\  - ts/no-console
+        \\rules:
+        \\  typescript:
+        \\    no-any:
+        \\  ts:
+        \\    no-console:
+        \\      enabled: false
+        \\  tsx:
+        \\    no-console:
         \\
     );
     defer cfg.deinit();
-    config.applySelection(&fx.set, config.resolve(&cfg, null));
+    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 2), fx.countTsx());
@@ -335,33 +229,20 @@ test "selection: disabled prunes an enabled rule" {
     try std.testing.expect(hasId(fx.set.get(.tsx), "no-console"));
 }
 
-test "selection: enabled entry matching nothing is ignored" {
+test "selection: rule entry matching nothing is ignored" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
 
-    var cfg = try expectParseOk("enabled:\n  - no-console\n  - made-up\n  - ts/no-such-rule\n");
+    var cfg = try expectParseOk("rules:\n  ts:\n    no-console:\n    made-up:\n    no-such-rule:\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, config.resolve(&cfg, null));
+    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
-    try std.testing.expectEqual(@as(usize, 1), fx.countTsx());
-    try std.testing.expectEqual(@as(usize, 0), fx.countGo());
-}
-
-test "selection: warnings entry does not enable a rule" {
-    var fx = RuleFixture.init();
-    defer fx.deinit();
-    try fx.build();
-
-    var cfg = try expectParseOk("warnings:\n  - no-console\n");
-    defer cfg.deinit();
-    config.applySelection(&fx.set, config.resolve(&cfg, null));
-
-    try std.testing.expectEqual(@as(usize, 0), fx.countTs());
     try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
     try std.testing.expectEqual(@as(usize, 0), fx.countGo());
 }
+
 
 test "config: parses an import-boundary project rule" {
     const src =
@@ -435,7 +316,7 @@ test "errorMessage: returns descriptive text for known errors" {
         config.errorMessage(error.TabInIndent),
     );
     try std.testing.expectEqualStrings(
-        "unknown top-level key (expected 'enabled', 'disabled', 'warnings', 'project-rules', or 'ratchet')",
+        "unknown top-level key (expected 'rules', 'project-rules', or 'ratchet')",
         config.errorMessage(error.UnknownTopLevelKey),
     );
 }
@@ -464,8 +345,9 @@ test "config: parses a project rule" {
 
 test "config: parses multiple project rules alongside other sections" {
     const src =
-        \\disabled:
-        \\  - ts/no-console
+        \\rules:
+        \\  ts:
+        \\    no-console:
         \\project-rules:
         \\  repository-isolation:
         \\    kind: restricted-callers
@@ -479,7 +361,7 @@ test "config: parses multiple project rules alongside other sections" {
     ;
     var cfg = try expectParseOk(src);
     defer cfg.deinit();
-    try std.testing.expectEqual(@as(usize, 1), cfg.disabled.len);
+    try std.testing.expectEqual(@as(usize, 1), cfg.settings.len);
     try std.testing.expectEqual(@as(usize, 2), cfg.project_rules.len);
     try std.testing.expectEqualStrings("gateway-isolation", cfg.project_rules[1].id);
     try std.testing.expectEqualStrings("Gateway", cfg.project_rules[1].kind.restricted_callers.callee_suffix);
@@ -511,7 +393,7 @@ test "config: project rule property without a rule is rejected" {
 }
 
 test "config: four-space indent outside project rules is rejected" {
-    try expectParseErr("disabled:\n    - ts/no-console\n", error.BadIndent, 2);
+    try expectParseErr("ratchet: true\n    - ts/no-console\n", error.BadIndent, 2);
 }
 
 test "config: project rule entry without colon is rejected" {
@@ -519,11 +401,8 @@ test "config: project rule entry without colon is rejected" {
 }
 
 test "config: top-level keys record presence" {
-    var cfg = try expectParseOk("enabled:\ndisabled:\nwarnings:\nproject-rules:\nratchet: false\n");
+    var cfg = try expectParseOk("project-rules:\nratchet: false\n");
     defer cfg.deinit();
-    try std.testing.expectEqual(true, cfg.present.enabled);
-    try std.testing.expectEqual(true, cfg.present.disabled);
-    try std.testing.expectEqual(true, cfg.present.warnings);
     try std.testing.expectEqual(true, cfg.present.project_rules);
     try std.testing.expectEqual(true, cfg.present.ratchet);
 }
@@ -531,112 +410,62 @@ test "config: top-level keys record presence" {
 test "config: empty source records no presence" {
     var cfg = try expectParseOk("");
     defer cfg.deinit();
-    try std.testing.expectEqual(false, cfg.present.enabled);
-    try std.testing.expectEqual(false, cfg.present.disabled);
-    try std.testing.expectEqual(false, cfg.present.warnings);
     try std.testing.expectEqual(false, cfg.present.project_rules);
     try std.testing.expectEqual(false, cfg.present.ratchet);
 }
 
 test "resolve: no configs yields defaults" {
-    const r = config.resolve(null, null);
-    try std.testing.expectEqual(@as(usize, 0), r.enabled.len);
-    try std.testing.expectEqual(@as(usize, 0), r.disabled.len);
-    try std.testing.expectEqual(@as(usize, 0), r.warnings.len);
+    const r = try config.resolve(std.testing.allocator, null, null);
+    try std.testing.expectEqual(@as(usize, 0), r.settings.len);
     try std.testing.expectEqual(@as(usize, 0), r.project_rules.len);
     try std.testing.expectEqual(false, r.ratchet);
 }
 
 test "resolve: global only passes through every key" {
     const src =
-        \\enabled:
-        \\  - go/no-panic
-        \\disabled:
-        \\  - ts/no-console
-        \\warnings:
-        \\  - max-complexity
+        \\rules:
+        \\  go:
+        \\    no-panic:
         \\ratchet: true
         \\
     ;
     var g = try expectParseOk(src);
     defer g.deinit();
 
-    const r = config.resolve(&g, null);
-    try std.testing.expectEqual(@as(usize, 1), r.enabled.len);
-    try std.testing.expectEqualStrings("no-panic", r.enabled[0].id);
-    try std.testing.expectEqual(@as(usize, 1), r.disabled.len);
-    try std.testing.expectEqualStrings("no-console", r.disabled[0].id);
-    try std.testing.expectEqual(@as(usize, 1), r.warnings.len);
-    try std.testing.expectEqualStrings("max-complexity", r.warnings[0].id);
+    const r = try config.resolve(g.arena.allocator(), &g, null);
+    try std.testing.expectEqual(@as(usize, 1), r.settings.len);
+    try std.testing.expectEqualStrings("no-panic", r.settings[0].id);
     try std.testing.expectEqual(true, r.ratchet);
 }
 
-test "resolve: project enabled list replaces global wholesale" {
-    var g = try expectParseOk("enabled:\n  - ts/no-console\n  - no-any\n");
+test "resolve: project empty rules key inherits global settings" {
+    var g = try expectParseOk("rules:\n  ts:\n    no-console:\n");
     defer g.deinit();
-    var p = try expectParseOk("enabled:\n  - go/no-panic\n");
+    var p = try expectParseOk("rules:\n");
     defer p.deinit();
 
-    const r = config.resolve(&g, &p);
-    try std.testing.expectEqual(@as(usize, 1), r.enabled.len);
-    try std.testing.expectEqual(@as(?language.Name, .go), r.enabled[0].lang);
-    try std.testing.expectEqualStrings("no-panic", r.enabled[0].id);
-}
-
-test "resolve: project empty enabled list disables everything" {
-    var g = try expectParseOk("enabled:\n  - ts/no-console\n");
-    defer g.deinit();
-    var p = try expectParseOk("enabled:\n");
-    defer p.deinit();
-
-    const r = config.resolve(&g, &p);
-    try std.testing.expectEqual(@as(usize, 0), r.enabled.len);
-}
-
-test "resolve: omitted project enabled falls through to global" {
-    var g = try expectParseOk("enabled:\n  - ts/no-console\n");
-    defer g.deinit();
-    var p = try expectParseOk("ratchet: true\n");
-    defer p.deinit();
-
-    const r = config.resolve(&g, &p);
-    try std.testing.expectEqual(@as(usize, 1), r.enabled.len);
-    try std.testing.expectEqualStrings("no-console", r.enabled[0].id);
-}
-
-test "resolve: project disabled list replaces global wholesale" {
-    var g = try expectParseOk("disabled:\n  - ts/no-console\n  - no-any\n");
-    defer g.deinit();
-    var p = try expectParseOk("disabled:\n  - go/no-panic\n");
-    defer p.deinit();
-
-    const r = config.resolve(&g, &p);
-    try std.testing.expectEqual(@as(usize, 1), r.disabled.len);
-    try std.testing.expectEqual(@as(?language.Name, .go), r.disabled[0].lang);
-    try std.testing.expectEqualStrings("no-panic", r.disabled[0].id);
-}
-
-test "resolve: project empty disabled list clears global disables" {
-    var g = try expectParseOk("disabled:\n  - ts/no-console\n");
-    defer g.deinit();
-    var p = try expectParseOk("disabled:\n");
-    defer p.deinit();
-
-    const r = config.resolve(&g, &p);
-    try std.testing.expectEqual(@as(usize, 0), r.disabled.len);
+    const r = try config.resolve(g.arena.allocator(), &g, &p);
+    try std.testing.expectEqual(@as(usize, 1), r.settings.len);
+    try std.testing.expectEqualStrings("no-console", r.settings[0].id);
 }
 
 test "resolve: omitted project keys fall through to global" {
-    var g = try expectParseOk("disabled:\n  - ts/no-console\nwarnings:\n  - max-complexity\n");
+    const global_src =
+        \\project-rules:
+        \\  repository-isolation:
+        \\    kind: restricted-callers
+        \\    callee-suffix: Repository
+        \\    caller-suffix: Repository
+        \\
+    ;
+    var g = try expectParseOk(global_src);
     defer g.deinit();
     var p = try expectParseOk("ratchet: true\n");
     defer p.deinit();
 
-    const r = config.resolve(&g, &p);
-    try std.testing.expectEqual(@as(usize, 1), r.disabled.len);
-    try std.testing.expectEqualStrings("no-console", r.disabled[0].id);
-    try std.testing.expectEqual(@as(usize, 1), r.warnings.len);
-    try std.testing.expectEqualStrings("max-complexity", r.warnings[0].id);
+    const r = try config.resolve(g.arena.allocator(), &g, &p);
+    try std.testing.expectEqual(@as(usize, 1), r.project_rules.len);
+    try std.testing.expectEqualStrings("repository-isolation", r.project_rules[0].id);
     try std.testing.expectEqual(true, r.ratchet);
 }
 
@@ -646,7 +475,7 @@ test "resolve: explicit project ratchet false overrides global true" {
     var p = try expectParseOk("ratchet: false\n");
     defer p.deinit();
 
-    const r = config.resolve(&g, &p);
+    const r = try config.resolve(g.arena.allocator(), &g, &p);
     try std.testing.expectEqual(false, r.ratchet);
 }
 
@@ -672,61 +501,330 @@ test "resolve: project rules replace global project rules" {
     var p = try expectParseOk(project_src);
     defer p.deinit();
 
-    const r = config.resolve(&g, &p);
+    const r = try config.resolve(g.arena.allocator(), &g, &p);
     try std.testing.expectEqual(@as(usize, 1), r.project_rules.len);
     try std.testing.expectEqualStrings("no-domain-to-infra", r.project_rules[0].id);
 }
 
-test "config: enabled accepts project scoped ids" {
-    var cfg = try expectParseOk("enabled:\n  - project/repository-isolation\n  - ts/no-console\n");
-    defer cfg.deinit();
-
-    try std.testing.expectEqual(@as(usize, 2), cfg.enabled.len);
-    try std.testing.expectEqual(@as(?language.Name, null), cfg.enabled[0].lang);
-    try std.testing.expectEqual(true, cfg.enabled[0].project);
-    try std.testing.expectEqualStrings("repository-isolation", cfg.enabled[0].id);
-    try std.testing.expectEqual(@as(?language.Name, .ts), cfg.enabled[1].lang);
-    try std.testing.expectEqual(false, cfg.enabled[1].project);
-}
-
-test "selection: project raws need a project scoped enable" {
+test "selection: project raws need a project scope entry" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
     try fx.set.upsertProject(.{ .id = "isolation", .source = "1" }, .project);
     try fx.set.upsertProject(.{ .id = "boundaries", .source = "2" }, .project);
 
-    var cfg = try expectParseOk("enabled:\n  - project/isolation\n");
+    var cfg = try expectParseOk("rules:\n  project:\n    isolation:\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, config.resolve(&cfg, null));
+    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.set.projectRaws().len);
     try std.testing.expectEqualStrings("isolation", fx.set.projectRaws()[0].id);
 }
 
-test "selection: project scoped ids never enable language rules" {
+test "selection: project scope never enables language rules" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
 
-    var cfg = try expectParseOk("enabled:\n  - project/no-console\n");
+    var cfg = try expectParseOk("rules:\n  project:\n    no-console:\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, config.resolve(&cfg, null));
+    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 0), fx.countTs());
 }
 
-test "selection: bare ids enable project raws and disabled wins" {
+test "selection: project scope enabled false prunes a project raw" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
     try fx.set.upsertProject(.{ .id = "isolation", .source = "1" }, .project);
     try fx.set.upsertProject(.{ .id = "boundaries", .source = "2" }, .project);
 
-    var cfg = try expectParseOk("enabled:\n  - isolation\n  - boundaries\ndisabled:\n  - project/boundaries\n");
+    var cfg = try expectParseOk("rules:\n  project:\n    isolation:\n    boundaries:\n      enabled: false\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, config.resolve(&cfg, null));
+    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.set.projectRaws().len);
     try std.testing.expectEqualStrings("isolation", fx.set.projectRaws()[0].id);
 }
+
+test "resolve: project setting replaces the matching global rule" {
+    var g = try expectParseOk("rules:\n  go:\n    no-panic:\n      severity: warn\n");
+    defer g.deinit();
+    var p = try expectParseOk("rules:\n  go:\n    no-panic:\n      enabled: false\n");
+    defer p.deinit();
+
+    const r = try config.resolve(g.arena.allocator(), &g, &p);
+    try std.testing.expectEqual(@as(usize, 1), r.settings.len);
+    try std.testing.expectEqual(false, r.settings[0].enabled);
+    try std.testing.expectEqual(@as(?lint.diagnostic.Severity, null), r.settings[0].severity);
+}
+
+test "resolve: unlisted rules inherit from global settings" {
+    var g = try expectParseOk("rules:\n  go:\n    no-panic:\n    max-nesting:\n");
+    defer g.deinit();
+    var p = try expectParseOk("rules:\n  go:\n    max-nesting:\n      enabled: false\n");
+    defer p.deinit();
+
+    const r = try config.resolve(g.arena.allocator(), &g, &p);
+    try std.testing.expectEqual(@as(usize, 2), r.settings.len);
+    try std.testing.expectEqualStrings("no-panic", r.settings[0].id);
+    try std.testing.expectEqual(true, r.settings[0].enabled);
+    try std.testing.expectEqualStrings("max-nesting", r.settings[1].id);
+    try std.testing.expectEqual(false, r.settings[1].enabled);
+}
+
+test "resolve: project adds a new rule to the global settings" {
+    var g = try expectParseOk("rules:\n  go:\n    no-panic:\n");
+    defer g.deinit();
+    var p = try expectParseOk("rules:\n  ts:\n    no-console:\n");
+    defer p.deinit();
+
+    const r = try config.resolve(g.arena.allocator(), &g, &p);
+    try std.testing.expectEqual(@as(usize, 2), r.settings.len);
+    try std.testing.expectEqualStrings("no-panic", r.settings[0].id);
+    try std.testing.expectEqual(@as(?language.Name, .ts), r.settings[1].lang);
+    try std.testing.expectEqualStrings("no-console", r.settings[1].id);
+}
+
+test "resolve: project without rules key inherits global settings" {
+    var g = try expectParseOk("rules:\n  go:\n    no-panic:\n");
+    defer g.deinit();
+    var p = try expectParseOk("ratchet: true\n");
+    defer p.deinit();
+
+    const r = try config.resolve(g.arena.allocator(), &g, &p);
+    try std.testing.expectEqual(@as(usize, 1), r.settings.len);
+    try std.testing.expectEqualStrings("no-panic", r.settings[0].id);
+    try std.testing.expectEqual(true, r.ratchet);
+}
+
+test "resolve: narrow ts entry overrides only the ts half of a global typescript entry" {
+    var g = try expectParseOk("rules:\n  typescript:\n    no-any:\n");
+    defer g.deinit();
+    var p = try expectParseOk("rules:\n  ts:\n    no-any:\n      enabled: false\n");
+    defer p.deinit();
+
+    const r = try config.resolve(g.arena.allocator(), &g, &p);
+    try std.testing.expectEqual(@as(usize, 2), r.settings.len);
+    try std.testing.expectEqual(@as(?language.Name, .ts), r.settings[0].lang);
+    try std.testing.expectEqual(false, r.settings[0].enabled);
+    try std.testing.expectEqual(@as(?language.Name, .tsx), r.settings[1].lang);
+    try std.testing.expectEqual(true, r.settings[1].enabled);
+}
+
+test "resolve: project setting overrides a global project scope setting" {
+    var g = try expectParseOk("rules:\n  project:\n    isolation:\n");
+    defer g.deinit();
+    var p = try expectParseOk("rules:\n  project:\n    isolation:\n      enabled: false\n");
+    defer p.deinit();
+
+    const r = try config.resolve(g.arena.allocator(), &g, &p);
+    try std.testing.expectEqual(@as(usize, 1), r.settings.len);
+    try std.testing.expectEqual(true, r.settings[0].project);
+    try std.testing.expectEqual(false, r.settings[0].enabled);
+}
+
+test "rules: empty rules key yields no settings" {
+    var cfg = try expectParseOk("rules:\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 0), cfg.settings.len);
+}
+
+test "rules: bare rule entry defaults to enabled" {
+    var cfg = try expectParseOk("rules:\n  go:\n    no-panic:\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 1), cfg.settings.len);
+    const s = cfg.settings[0];
+    try std.testing.expectEqual(@as(?language.Name, .go), s.lang);
+    try std.testing.expectEqualStrings("no-panic", s.id);
+    try std.testing.expectEqual(false, s.project);
+    try std.testing.expectEqual(true, s.enabled);
+    try std.testing.expectEqual(@as(?lint.diagnostic.Severity, null), s.severity);
+    try std.testing.expectEqual(@as(usize, 0), s.exclude.len);
+}
+
+test "rules: enabled false is parsed" {
+    var cfg = try expectParseOk("rules:\n  go:\n    max-nesting:\n      enabled: false\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 1), cfg.settings.len);
+    try std.testing.expectEqual(false, cfg.settings[0].enabled);
+}
+
+test "rules: enabled true is parsed" {
+    var cfg = try expectParseOk("rules:\n  go:\n    max-nesting:\n      enabled: true\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(true, cfg.settings[0].enabled);
+}
+
+test "rules: severity warn is parsed" {
+    var cfg = try expectParseOk("rules:\n  go:\n    no-panic:\n      severity: warn\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(?lint.diagnostic.Severity, .warn), cfg.settings[0].severity);
+}
+
+test "rules: severity error is parsed" {
+    var cfg = try expectParseOk("rules:\n  go:\n    no-panic:\n      severity: error\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(?lint.diagnostic.Severity, .@"error"), cfg.settings[0].severity);
+}
+
+test "rules: typescript expands to ts and tsx" {
+    const src =
+        \\rules:
+        \\  typescript:
+        \\    simple-repositories:
+        \\      exclude:
+        \\        - 'test/**/*.ts'
+        \\        - src/gen/**
+        \\
+    ;
+    var cfg = try expectParseOk(src);
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 2), cfg.settings.len);
+    try std.testing.expectEqual(@as(?language.Name, .ts), cfg.settings[0].lang);
+    try std.testing.expectEqual(@as(?language.Name, .tsx), cfg.settings[1].lang);
+    for (cfg.settings) |s| {
+        try std.testing.expectEqualStrings("simple-repositories", s.id);
+        try std.testing.expectEqual(@as(usize, 2), s.exclude.len);
+        try std.testing.expectEqualStrings("test/**/*.ts", s.exclude[0]);
+        try std.testing.expectEqualStrings("src/gen/**", s.exclude[1]);
+    }
+}
+
+test "rules: double-quoted exclude item is unquoted" {
+    var cfg = try expectParseOk("rules:\n  go:\n    no-panic:\n      exclude:\n        - \"cmd/**\"\n");
+    defer cfg.deinit();
+    try std.testing.expectEqualStrings("cmd/**", cfg.settings[0].exclude[0]);
+}
+
+test "rules: property after exclude list ends the list" {
+    const src =
+        \\rules:
+        \\  go:
+        \\    no-panic:
+        \\      exclude:
+        \\        - cmd/**
+        \\      severity: warn
+        \\
+    ;
+    var cfg = try expectParseOk(src);
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 1), cfg.settings[0].exclude.len);
+    try std.testing.expectEqual(@as(?lint.diagnostic.Severity, .warn), cfg.settings[0].severity);
+}
+
+test "rules: project scope yields a project setting" {
+    var cfg = try expectParseOk("rules:\n  project:\n    isolation:\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 1), cfg.settings.len);
+    try std.testing.expectEqual(@as(?language.Name, null), cfg.settings[0].lang);
+    try std.testing.expectEqual(true, cfg.settings[0].project);
+    try std.testing.expectEqualStrings("isolation", cfg.settings[0].id);
+}
+
+test "rules: multiple scopes with comments and blank lines" {
+    const src =
+        \\rules:
+        \\  go:
+        \\    no-panic:  # keep
+        \\    max-nesting:
+        \\      enabled: false
+        \\
+        \\  ts:
+        \\    no-void:
+        \\ratchet: true
+        \\
+    ;
+    var cfg = try expectParseOk(src);
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 3), cfg.settings.len);
+    try std.testing.expectEqualStrings("no-panic", cfg.settings[0].id);
+    try std.testing.expectEqual(true, cfg.settings[0].enabled);
+    try std.testing.expectEqualStrings("max-nesting", cfg.settings[1].id);
+    try std.testing.expectEqual(false, cfg.settings[1].enabled);
+    try std.testing.expectEqual(@as(?language.Name, .ts), cfg.settings[2].lang);
+    try std.testing.expectEqualStrings("no-void", cfg.settings[2].id);
+    try std.testing.expectEqual(true, cfg.ratchet);
+}
+
+test "rules: unknown scope is rejected" {
+    try expectParseErr("rules:\n  rust:\n", error.UnknownScope, 2);
+}
+
+test "rules: scope without colon is rejected" {
+    try expectParseErr("rules:\n  go\n", error.UnknownScope, 2);
+}
+
+test "rules: unknown rule key is rejected" {
+    try expectParseErr("rules:\n  go:\n    no-panic:\n      foo: bar\n", error.UnknownRuleKey, 4);
+}
+
+test "rules: invalid enabled value is rejected" {
+    try expectParseErr("rules:\n  go:\n    no-panic:\n      enabled: yes\n", error.InvalidEnabledValue, 4);
+}
+
+test "rules: invalid severity value is rejected" {
+    try expectParseErr("rules:\n  go:\n    no-panic:\n      severity: info\n", error.InvalidSeverityValue, 4);
+}
+
+test "rules: duplicate rule is rejected at the second occurrence" {
+    const src =
+        \\rules:
+        \\  go:
+        \\    no-panic:
+        \\    no-panic:
+        \\      enabled: false
+        \\
+    ;
+    try expectParseErr(src, error.DuplicateRule, 4);
+}
+
+test "rules: typescript and ts overlap is rejected" {
+    const src =
+        \\rules:
+        \\  typescript:
+        \\    no-any:
+        \\  ts:
+        \\    no-any:
+        \\
+    ;
+    try expectParseErr(src, error.DuplicateRule, 5);
+}
+
+test "rules: invalid rule id is rejected" {
+    try expectParseErr("rules:\n  go:\n    no.panic:\n", error.InvalidRuleId, 3);
+}
+
+test "rules: rule entry without colon is rejected" {
+    try expectParseErr("rules:\n  go:\n    no-panic\n", error.MalformedRuleEntry, 3);
+}
+
+test "rules: property without a rule is rejected" {
+    try expectParseErr("rules:\n  go:\n      enabled: false\n", error.BadIndent, 3);
+}
+
+test "rules: rule entry without a scope is rejected" {
+    try expectParseErr("rules:\n    no-panic:\n", error.BadIndent, 2);
+}
+
+test "rules: exclude item without exclude key is rejected" {
+    try expectParseErr("rules:\n  go:\n    no-panic:\n        - cmd/**\n", error.BadIndent, 4);
+}
+
+test "rules: inline content after rules key is rejected" {
+    try expectParseErr("rules: go\n", error.ContentAfterKey, 1);
+}
+
+test "rules: inline content after scope key is rejected" {
+    try expectParseErr("rules:\n  go: no-panic\n", error.ContentAfterKey, 2);
+}
+
+test "rules: inline content after exclude key is rejected" {
+    try expectParseErr("rules:\n  go:\n    no-panic:\n      exclude: cmd/**\n", error.ContentAfterKey, 4);
+}
+
+test "rules: odd indent is rejected" {
+    try expectParseErr("rules:\n   go:\n", error.BadIndent, 2);
+}
+

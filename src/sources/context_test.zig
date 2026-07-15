@@ -133,7 +133,7 @@ test "context: no anchor resolves the global context" {
     try s.tmp.dir.createDirPath(io, "user/ts");
     try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/my-user-rule.kata", .data = kata_ident });
 
-    var global = try parseGlobal("enabled:\n  - my-user-rule\n");
+    var global = try parseGlobal("rules:\n  ts:\n    my-user-rule:\n");
     defer global.deinit();
 
     var r = s.resolver(try s.path("user"), &global);
@@ -158,7 +158,7 @@ test "context: anchored file loads project rules on top of user rules" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/project-only.kata", .data = kata_project_only });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
-    var global = try parseGlobal("enabled:\n  - shared-rule\n  - project-only\n");
+    var global = try parseGlobal("rules:\n  ts:\n    shared-rule:\n    project-only:\n");
     defer global.deinit();
 
     var r = s.resolver(try s.path("user"), &global);
@@ -172,7 +172,7 @@ test "context: anchored file loads project rules on top of user rules" {
     try std.testing.expectEqual(@as(usize, 0), ctx.rule_set.warnings.items.len);
 }
 
-test "context: project rules.yaml overrides global config per key" {
+test "context: project rules.yaml overrides the matching global rule" {
     const io = std.testing.io;
     var s = try Setup.init(io);
     defer s.deinit();
@@ -181,10 +181,10 @@ test "context: project rules.yaml overrides global config per key" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/drop-me.kata", .data = kata_ident });
     try s.tmp.dir.createDirPath(io, "proj/.kata");
     try s.tmp.dir.createDirPath(io, "proj/src");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\ndisabled:\n  - ts/drop-me\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\nrules:\n  ts:\n    drop-me:\n      enabled: false\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
-    var global = try parseGlobal("enabled:\n  - drop-me\n");
+    var global = try parseGlobal("rules:\n  ts:\n    drop-me:\n");
     defer global.deinit();
 
     var r = s.resolver(try s.path("user"), &global);
@@ -222,7 +222,7 @@ test "context: project rules.yaml enables its own rules" {
 
     try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
     try s.tmp.dir.createDirPath(io, "proj/src");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "enabled:\n  - ts/local\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "rules:\n  ts:\n    local:\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.kata", .data = kata_ident });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
@@ -320,7 +320,7 @@ test "cache: same project resolves once and is reused" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/a.ts", .data = "const a = 1;\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/b.ts", .data = "const b = 2;\n" });
 
-    var global = try parseGlobal("enabled:\n  - local\n");
+    var global = try parseGlobal("rules:\n  ts:\n    local:\n");
     defer global.deinit();
 
     var r = s.resolver(null, &global);
@@ -346,7 +346,7 @@ test "cache: distinct projects get their own contexts" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "one/a.ts", .data = "const a = 1;\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "two/b.ts", .data = "const b = 2;\n" });
 
-    var global = try parseGlobal("enabled:\n  - rule-one\n  - rule-two\n");
+    var global = try parseGlobal("rules:\n  ts:\n    rule-one:\n    rule-two:\n");
     defer global.deinit();
 
     var r = s.resolver(null, &global);
@@ -389,7 +389,7 @@ test "cache: edited rule file rebuilds the project context" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/local.kata", .data = kata_local_old });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const a = 1;\n" });
 
-    var global = try parseGlobal("enabled:\n  - local\n");
+    var global = try parseGlobal("rules:\n  ts:\n    local:\n");
     defer global.deinit();
 
     var r = s.resolver(null, &global);
@@ -414,7 +414,7 @@ test "cache: added rule file rebuilds the project context" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/one.kata", .data = kata_one });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const a = 1;\n" });
 
-    var global = try parseGlobal("enabled:\n  - one\n  - two\n");
+    var global = try parseGlobal("rules:\n  ts:\n    one:\n    two:\n");
     defer global.deinit();
 
     var r = s.resolver(null, &global);
@@ -468,7 +468,7 @@ test "context: project kata rule lints through the engine" {
     ;
     try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
     try s.tmp.dir.createDirPath(io, "proj/src");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "enabled:\n  - ts/no-zzz\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "rules:\n  ts:\n    no-zzz:\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/no-zzz.kata", .data = no_zzz_rule });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
@@ -541,7 +541,7 @@ test "context: project composition rule lints through the engine" {
     ;
     try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
     try s.tmp.dir.createDirPath(io, "proj/src");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "enabled:\n  - ts/console-outside-logger\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "rules:\n  ts:\n    console-outside-logger:\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/console-outside-logger.kata", .data = outside_logger_rule });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
@@ -556,6 +556,140 @@ test "context: project composition rule lints through the engine" {
     try std.testing.expectEqualStrings("console-outside-logger", diags[0].rule_id);
     try std.testing.expectEqualStrings("console is only allowed inside Logger", diags[0].message);
     try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+}
+
+test "context: config severity warn demotes rule diagnostics" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    const no_zzz_rule =
+        \\rule no-zzz {
+        \\  lang ts
+        \\  match identifier @match
+        \\  where { text(@match) == "zzz" }
+        \\  emit @match { message "zzz is banned" }
+        \\}
+    ;
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.createDirPath(io, "proj/src");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "rules:\n  ts:\n    no-zzz:\n      severity: warn\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/no-zzz.kata", .data = no_zzz_rule });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
+
+    var r = s.resolver(null, null);
+    const ctx = try r.resolve(try s.path("proj/src/main.ts"));
+    defer ctx.deinit();
+
+    const diags = try ctx.engine.lint(gpa, "const zzz = 1;\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(lint.diagnostic.Severity.warn, diags[0].severity);
+}
+
+test "context: config severity error promotes a dsl warn rule" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    const no_zzz_warn_rule =
+        \\rule no-zzz {
+        \\  lang ts
+        \\  severity warn
+        \\  match identifier @match
+        \\  where { text(@match) == "zzz" }
+        \\  emit @match { message "zzz is banned" }
+        \\}
+    ;
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.createDirPath(io, "proj/src");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "rules:\n  ts:\n    no-zzz:\n      severity: error\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/no-zzz.kata", .data = no_zzz_warn_rule });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
+
+    var r = s.resolver(null, null);
+    const ctx = try r.resolve(try s.path("proj/src/main.ts"));
+    defer ctx.deinit();
+
+    const diags = try ctx.engine.lint(gpa, "const zzz = 1;\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(lint.diagnostic.Severity.@"error", diags[0].severity);
+}
+
+test "context: config exclude glob suppresses rule diagnostics for matching paths" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    const no_zzz_rule =
+        \\rule no-zzz {
+        \\  lang ts
+        \\  match identifier @match
+        \\  where { text(@match) == "zzz" }
+        \\  emit @match { message "zzz is banned" }
+        \\}
+    ;
+    const yaml =
+        "rules:\n" ++
+        "  ts:\n" ++
+        "    no-zzz:\n" ++
+        "      exclude:\n" ++
+        "        - 'src/gen/**'\n";
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.createDirPath(io, "proj/src");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = yaml });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/no-zzz.kata", .data = no_zzz_rule });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
+
+    var r = s.resolver(null, null);
+    const ctx = try r.resolve(try s.path("proj/src/main.ts"));
+    defer ctx.deinit();
+
+    const excluded = try ctx.engine.lint(gpa, "const zzz = 1;\n", .ts, "src/gen/a.ts");
+    defer gpa.free(excluded);
+    try std.testing.expectEqual(@as(usize, 0), excluded.len);
+
+    const kept = try ctx.engine.lint(gpa, "const zzz = 1;\n", .ts, "src/main.ts");
+    defer gpa.free(kept);
+    try std.testing.expectEqual(@as(usize, 1), kept.len);
+}
+
+test "context: dsl warn severity stays without config severity" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    const no_zzz_warn_rule =
+        \\rule no-zzz {
+        \\  lang ts
+        \\  severity warn
+        \\  match identifier @match
+        \\  where { text(@match) == "zzz" }
+        \\  emit @match { message "zzz is banned" }
+        \\}
+    ;
+    try s.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try s.tmp.dir.createDirPath(io, "proj/src");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "rules:\n  ts:\n    no-zzz:\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/no-zzz.kata", .data = no_zzz_warn_rule });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
+
+    var r = s.resolver(null, null);
+    const ctx = try r.resolve(try s.path("proj/src/main.ts"));
+    defer ctx.deinit();
+
+    const diags = try ctx.engine.lint(gpa, "const zzz = 1;\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(lint.diagnostic.Severity.warn, diags[0].severity);
 }
 
 const isolation_fact_rule =
@@ -582,7 +716,7 @@ test "context: project fact rule compiles through the resolver" {
 
     try s.tmp.dir.createDirPath(io, "proj/.kata/rules/project");
     try s.tmp.dir.createDirPath(io, "proj/src");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "enabled:\n  - project/repository-isolation\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "rules:\n  project:\n    repository-isolation:\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/project/repository-isolation.kata", .data = isolation_fact_rule });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 

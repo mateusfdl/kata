@@ -31,5 +31,6 @@ pub fn hasErrors(diagnostics: []const Diagnostic) bool {
     for (diagnostics) |d| {
         if (d.severity == .@"error") return true;
     }
+
     return false;
 }

@@ -74,15 +74,18 @@ pub const Node = struct {
     pub fn childByFieldId(self: Node, field_id: u16) ?Node {
         const nodes = self.tree.nodes;
         const end = self.stored().subtree_end;
+
         var j = self.index + 1;
         while (j < end) : (j = nodes[j].subtree_end) {
             if (nodes[j].field_id == field_id) return fromKata(self.tree, j);
         }
+
         return null;
     }
 
     pub fn fieldNameForChild(self: Node, index: u32) ?[]const u8 {
         const c = self.childAt(index, false) orelse return null;
+
         return family.of(self.tree.family).fieldName(c.stored().field_id);
     }
 
@@ -90,12 +93,15 @@ pub const Node = struct {
         const nodes = self.tree.nodes;
         const p = self.stored().parent;
         if (p == ast.no_parent) return null;
+
         const end = nodes[p].subtree_end;
+
         var prev: ?ast.NodeIndex = null;
         var j = p + 1;
         while (j < end and j != self.index) : (j = nodes[j].subtree_end) {
             if (nodes[j].flags.named) prev = j;
         }
+
         return if (prev) |pi| fromKata(self.tree, pi) else null;
     }
 
@@ -111,11 +117,13 @@ pub const Node = struct {
         return self.tree == other.tree and self.index == other.index;
     }
 
-    /// Source text this node spans, or null when the node reaches past the end
+    /// source text this node spans, or null when the node reaches past the end
     /// of `source` (a node from a different parse).
     pub fn text(self: Node, source: []const u8) ?[]const u8 {
         const end = self.endByte();
+
         if (end > source.len) return null;
+
         return source[self.startByte()..end];
     }
 
@@ -124,9 +132,11 @@ pub const Node = struct {
         const end = self.stored().subtree_end;
         var count: u32 = 0;
         var j = self.index + 1;
+
         while (j < end) : (j = nodes[j].subtree_end) {
             if (!named_only or nodes[j].flags.named) count += 1;
         }
+
         return count;
     }
 
@@ -135,12 +145,14 @@ pub const Node = struct {
         const end = self.stored().subtree_end;
         var seen: u32 = 0;
         var j = self.index + 1;
+
         while (j < end) : (j = nodes[j].subtree_end) {
             if (!named_only or nodes[j].flags.named) {
                 if (seen == index) return fromKata(self.tree, j);
                 seen += 1;
             }
         }
+
         return null;
     }
 };

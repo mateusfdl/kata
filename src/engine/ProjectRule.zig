@@ -8,8 +8,6 @@ const rule = @import("rule.zig");
 
 const ProjectIndex = @import("ProjectIndex.zig").ProjectIndex;
 
-pub const ScopedId = rule.ScopedId;
-
 pub const ProjectRule = struct {
     id: []const u8,
     kind: Kind,
@@ -50,7 +48,7 @@ pub const Violation = struct {
 pub fn evaluate(
     allocator: std.mem.Allocator,
     rules: []const ProjectRule,
-    warnings: []const ScopedId,
+    settings: []const rule.RuleSetting,
     index: *const ProjectIndex,
     path_filter: ?[]const u8,
 ) ![]Violation {
@@ -64,20 +62,39 @@ pub fn evaluate(
         }
     }
 
+    var i: usize = 0;
+    while (i < out.items.len) {
+        if (settingExcludes(settings, out.items[i].diagnostic.rule_id, out.items[i].path)) {
+            _ = out.swapRemove(i);
+        } else {
+            i += 1;
+        }
+    }
+
     for (out.items) |*v| {
-        if (matchesWarning(warnings, v.diagnostic.language, v.diagnostic.rule_id)) v.diagnostic.severity = .warn;
+        if (settingSeverity(settings, v.diagnostic.rule_id)) |severity| v.diagnostic.severity = severity;
     }
 
     std.mem.sort(Violation, out.items, {}, violationLessThan);
     return out.toOwnedSlice(allocator);
 }
 
-pub fn matchesWarning(warnings: []const ScopedId, lang_str: []const u8, id: []const u8) bool {
-    for (warnings) |w| {
-        if (w.matchesProject(id)) return true;
-        const lang = language.Name.fromString(lang_str) orelse continue;
-        if (w.matches(lang, id)) return true;
+pub fn settingSeverity(settings: []const rule.RuleSetting, id: []const u8) ?diagnostic.Severity {
+    for (settings) |s| {
+        if (s.matchesProject(id)) return s.severity;
     }
+
+    return null;
+}
+
+pub fn settingExcludes(settings: []const rule.RuleSetting, id: []const u8, path: []const u8) bool {
+    for (settings) |s| {
+        if (!s.matchesProject(id)) continue;
+        for (s.exclude) |pattern| {
+            if (glob.match(pattern, path)) return true;
+        }
+    }
+
     return false;
 }
 

@@ -21,7 +21,7 @@ pub const ProjectIndex = struct {
         const gop = try self.files.getOrPut(self.allocator, file_facts.path);
 
         if (gop.found_existing) {
-            // The existing key's bytes live in the old facts' arena, so the
+            // the existing key's bytes live in the old facts' arena, so the
             // key must be swapped to the new path before the old arena dies.
             var old = gop.value_ptr.*;
             gop.key_ptr.* = file_facts.path;

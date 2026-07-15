@@ -249,8 +249,8 @@ fn appendProjectDiagnostics(
     try project.index.put(try engine.extractFacts(project.index.allocator, source, lang, path));
 
     const fact_rules = try engine.ensureCompiledFact();
-    const violations = try project_rule.evaluate(arena, project.rules, engine.warnings, &project.index, path);
-    const fact_violations = try lint.fact_rule.evaluate(arena, fact_rules, engine.warnings, &project.index, path);
+    const violations = try project_rule.evaluate(arena, project.rules, engine.settings, &project.index, path);
+    const fact_violations = try lint.fact_rule.evaluate(arena, fact_rules, engine.settings, &project.index, path);
     var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
     try out.appendSlice(arena, diagnostics);
 

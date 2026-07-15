@@ -36,9 +36,9 @@ pub fn of(fam: Family) *const Adapter {
     };
 }
 
-/// Indexed by kata kind id: the enum field value IS the id, so the table is a
-/// pure compile-time projection of the classifier over the family's named kinds.
-/// The anonymous range stays null (no metric is an anonymous token).
+/// indexed by kata kind id: the enum field value is the id, so the table is a
+/// pure compile-time projection of the classifier over the family's named kinds
+/// the anonymous range stays null (no metric is an anonymous token).
 pub fn MetricTable(
     comptime Kind: type,
     comptime size: u16,
@@ -48,11 +48,13 @@ pub fn MetricTable(
         pub fn build(gpa: std.mem.Allocator) std.mem.Allocator.Error![]?metric.MetricKind {
             const table = try gpa.alloc(?metric.MetricKind, size);
             @memset(table, null);
+
             inline for (@typeInfo(Kind).@"enum".fields) |f| {
                 if (f.value != 0) {
                     if (classifyKind(@enumFromInt(f.value))) |mk| table[f.value] = mk;
                 }
             }
+
             return table;
         }
     };

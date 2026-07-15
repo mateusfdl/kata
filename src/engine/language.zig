@@ -49,6 +49,7 @@ pub const supported_list = blk: {
 
     for (names, 0..) |n, i| {
         if (i > 0) text = text ++ (if (i == names.len - 1) ", or " else ", ");
+
         text = text ++ infos.get(n).canonical;
     }
 
@@ -61,7 +62,9 @@ pub fn parseDirName(name: []const u8, out: []Name) ![]Name {
 
     while (it.next()) |token| {
         if (n >= out.len) return error.InvalidRule;
+
         out[n] = Name.fromString(token) orelse return error.InvalidRule;
+
         n += 1;
     }
 

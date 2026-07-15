@@ -158,13 +158,13 @@ test "check: project rules report cross-file violations" {
     try std.testing.expect(std.mem.indexOf(u8, written, "checked 2 files, 1 violations, 0 warnings") != null);
 }
 
-test "check: warnings demote project violations and exit clean" {
+test "check: setting severity warn demotes project violations and exits clean" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
     var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
     defer f.deinit();
-    f.engine.warnings = &.{.{ .lang = null, .id = "domain-no-infra" }};
+    f.engine.settings = &.{.{ .lang = null, .id = "domain-no-infra", .project = true, .severity = .warn }};
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

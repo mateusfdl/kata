@@ -50,7 +50,7 @@ pub fn run(
         else => return output.format(opts.stderr, "write rule {s}: {s}\n", .{ file_path, @errorName(err) }, exit_internal_error),
     };
 
-    return output.format(opts.stdout, "{s}\nadd {s}/{s} to 'enabled' in rules.yaml to activate it\n", .{ file_path, lang.toString(), id }, exit_clean);
+    return output.format(opts.stdout, "{s}\nadd '{s}:' under 'rules: {s}:' in rules.yaml to activate it\n", .{ file_path, id, lang.toString() }, exit_clean);
 }
 
 fn renderTemplate(arena: std.mem.Allocator, lang: language.Name, id: []const u8) ![]u8 {
