@@ -225,7 +225,6 @@ fn assemble(
             .end = span_node.endByte(),
             .range = rangeOf(span_node),
         });
-
     }
 
     if (match.get(cap(.decl_name))) |name_node| {

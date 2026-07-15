@@ -81,7 +81,6 @@ const Cont = union(enum) {
     },
 };
 
-
 /// run `pattern` over the subtree at `root`, returning one match per satisfying
 /// assignment in pre-order. `capture_count` sizes each match. matching a node
 /// with an unanchored `child` relation that has several satisfying children

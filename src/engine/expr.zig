@@ -126,7 +126,6 @@ pub fn captureName(atom: []const u8) ?[]const u8 {
     return atom[1..];
 }
 
-
 pub fn parse(
     arena: std.mem.Allocator,
     source: []const u8,

@@ -243,7 +243,6 @@ test "selection: rule entry matching nothing is ignored" {
     try std.testing.expectEqual(@as(usize, 0), fx.countGo());
 }
 
-
 test "config: parses an import-boundary project rule" {
     const src =
         \\project-rules:
@@ -827,4 +826,3 @@ test "rules: inline content after exclude key is rejected" {
 test "rules: odd indent is rejected" {
     try expectParseErr("rules:\n   go:\n", error.BadIndent, 2);
 }
-
