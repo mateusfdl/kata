@@ -23,9 +23,22 @@
         let
           cfg = config.programs.kata;
 
-          renderIds =
-            key: ids:
-            lib.optionalString (ids != [ ]) ("${key}:\n" + lib.concatMapStrings (id: "  - ${id}\n") ids);
+          renderRuleBody =
+            rule:
+            lib.optionalString (rule.enabled != null) "      enabled: ${lib.boolToString rule.enabled}\n"
+            + lib.optionalString (rule.severity != null) "      severity: ${rule.severity}\n"
+            + lib.optionalString (rule.exclude != [ ]) (
+              "      exclude:\n" + lib.concatMapStrings (glob: "        - '${glob}'\n") rule.exclude
+            );
+
+          renderScope =
+            scope: rules:
+            "  ${scope}:\n"
+            + lib.concatStrings (lib.mapAttrsToList (id: rule: "    ${id}:\n" + renderRuleBody rule) rules);
+
+          renderRules =
+            rules:
+            lib.optionalString (rules != { }) ("rules:\n" + lib.concatStrings (lib.mapAttrsToList renderScope rules));
 
           renderProjectRule =
             id: rule:
@@ -42,9 +55,7 @@
             );
 
           rulesYaml =
-            renderIds "enabled" cfg.settings.enabled
-            + renderIds "disabled" cfg.settings.disabled
-            + renderIds "warnings" cfg.settings.warnings
+            renderRules cfg.settings.rules
             + renderProjectRules cfg.settings.projectRules
             + lib.optionalString cfg.settings.ratchet "ratchet: true\n";
         in
@@ -60,31 +71,41 @@
             };
 
             settings = {
-              enabled = lib.mkOption {
-                type = lib.types.listOf lib.types.str;
-                default = [ ];
-                example = [
-                  "go/no-panic"
-                  "no-comments"
-                ];
-                description = "Rule ids to activate, optionally scoped by language. Rules not listed stay inactive.";
-              };
-
-              disabled = lib.mkOption {
-                type = lib.types.listOf lib.types.str;
-                default = [ ];
-                example = [
-                  "ts/no-console"
-                  "no-any"
-                ];
-                description = "Rule ids to disable, optionally scoped by language.";
-              };
-
-              warnings = lib.mkOption {
-                type = lib.types.listOf lib.types.str;
-                default = [ ];
-                example = [ "go/no-panic" ];
-                description = "Rule ids demoted to warnings, optionally scoped by language.";
+              rules = lib.mkOption {
+                type = lib.types.attrsOf (
+                  lib.types.attrsOf (
+                    lib.types.submodule {
+                      options = {
+                        enabled = lib.mkOption {
+                          type = lib.types.nullOr lib.types.bool;
+                          default = null;
+                          description = "Whether the rule is active. Listing a rule already activates it; set false to deactivate an inherited one.";
+                        };
+                        severity = lib.mkOption {
+                          type = lib.types.nullOr (
+                            lib.types.enum [
+                              "error"
+                              "warn"
+                            ]
+                          );
+                          default = null;
+                          description = "Override the rule's severity.";
+                        };
+                        exclude = lib.mkOption {
+                          type = lib.types.listOf lib.types.str;
+                          default = [ ];
+                          description = "Glob patterns of files the rule skips.";
+                        };
+                      };
+                    }
+                  )
+                );
+                default = { };
+                example = {
+                  go.no-panic.severity = "warn";
+                  typescript.simple-repositories.exclude = [ "test/**/*.ts" ];
+                };
+                description = "Rules to activate, keyed by scope (go, ts, tsx, typescript, project) then rule id.";
               };
 
               projectRules = lib.mkOption {
