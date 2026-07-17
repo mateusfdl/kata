@@ -32,7 +32,10 @@ make test             # unit tests
 
 When checking a directory, `kata` honors full gitignore semantics: globs, character
 classes, `**`, negations, anchoring, dir-only patterns, and nested `.gitignore` files
-(deeper files override shallower ones, last matching pattern wins). A built-in default
+(deeper files override shallower ones, last matching pattern wins). Scopes are loaded
+from the enclosing worktree root (the nearest ancestor with a `.git` marker) down, so
+checking a subdirectory still applies the repository's root `.gitignore`; patterns that
+would exclude the target itself are not applied to it. A built-in default
 set applies at lowest precedence and can be re-enabled by a user negation such as `!dist/`:
 
 ```
