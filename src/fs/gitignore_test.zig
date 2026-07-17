@@ -223,6 +223,110 @@ test "gitignore: scope dir-only patterns skip files" {
     try expectVerdict(scope, "a/build", true, .ignored);
 }
 
+fn expectDecide(stack: *const gitignore.Stack, path: []const u8, is_dir: bool, want: gitignore.Verdict) !void {
+    try std.testing.expectEqual(want, stack.decide(path, is_dir));
+}
+
+test "gitignore: stack built-in defaults" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const stack = try gitignore.Stack.init(arena.allocator());
+    try expectDecide(&stack, "node_modules", true, .ignored);
+    try expectDecide(&stack, ".git", true, .ignored);
+    try expectDecide(&stack, "a/.git", true, .ignored);
+    try expectDecide(&stack, "a/x.min.js", false, .ignored);
+    try expectDecide(&stack, "vendor", false, .unmatched);
+    try expectDecide(&stack, "src/a.ts", false, .unmatched);
+}
+
+test "gitignore: stack user negation overrides defaults" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var stack = try gitignore.Stack.init(arena.allocator());
+    try stack.pushScope("", "!dist/\n");
+    try expectDecide(&stack, "dist", true, .included);
+    try expectDecide(&stack, "build", true, .ignored);
+}
+
+test "gitignore: stack deeper scope wins" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var stack = try gitignore.Stack.init(arena.allocator());
+    try stack.pushScope("", "sub/gen/\n");
+    try stack.pushScope("sub", "!gen/\n");
+    try expectDecide(&stack, "sub/gen", true, .included);
+}
+
+test "gitignore: stack popTo drops scopes outside the entry path" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var stack = try gitignore.Stack.init(arena.allocator());
+    try stack.pushScope("a/b", "x/\n");
+    try expectDecide(&stack, "a/b/x", true, .ignored);
+
+    stack.popTo("a/b/y.ts");
+    try expectDecide(&stack, "a/b/x", true, .ignored);
+
+    stack.popTo("a/c/y.ts");
+    try expectDecide(&stack, "a/b/x", true, .unmatched);
+}
+
+test "gitignore: stack excluded ancestors beat negations" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var stack = try gitignore.Stack.init(arena.allocator());
+    try stack.pushScope("", "a/\n!a/b/keep.ts\n");
+    try stack.pushExcluded("a");
+    try expectDecide(&stack, "a/b/keep.ts", false, .ignored);
+    try expectDecide(&stack, "ab/keep.ts", false, .unmatched);
+
+    stack.popTo("c/y.ts");
+    try expectDecide(&stack, "a/b/keep.ts", false, .included);
+}
+
+test "gitignore: negationCouldMatchUnder for unanchored patterns" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var stack = try gitignore.Stack.init(arena.allocator());
+    try std.testing.expect(!stack.negationCouldMatchUnder("any/dir"));
+
+    try stack.pushScope("", "!keep.ts\n");
+    try std.testing.expect(stack.negationCouldMatchUnder("any/dir"));
+}
+
+test "gitignore: negationCouldMatchUnder for anchored patterns" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var stack = try gitignore.Stack.init(arena.allocator());
+    try stack.pushScope("", "!a/b\n");
+    try std.testing.expect(stack.negationCouldMatchUnder("a"));
+    try std.testing.expect(stack.negationCouldMatchUnder("a/b"));
+    try std.testing.expect(!stack.negationCouldMatchUnder("c"));
+    try std.testing.expect(!stack.negationCouldMatchUnder("a/b/c"));
+
+    var star_stack = try gitignore.Stack.init(arena.allocator());
+    try star_stack.pushScope("", "!**/x\n");
+    try std.testing.expect(star_stack.negationCouldMatchUnder("q"));
+}
+
+test "gitignore: negationCouldMatchUnder is scope relative" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var stack = try gitignore.Stack.init(arena.allocator());
+    try stack.pushScope("sub", "!gen/keep.ts\n");
+    try std.testing.expect(stack.negationCouldMatchUnder("sub/gen"));
+    try std.testing.expect(!stack.negationCouldMatchUnder("sub/x"));
+    try std.testing.expect(!stack.negationCouldMatchUnder("other"));
+}
+
 test "gitignore: parse double-star segments" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();

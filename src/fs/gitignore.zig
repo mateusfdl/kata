@@ -2,6 +2,102 @@ const std = @import("std");
 
 pub const Verdict = enum { ignored, included, unmatched };
 
+pub const default_patterns =
+    ".git/\n" ++
+    "node_modules/\n" ++
+    "vendor/\n" ++
+    "dist/\n" ++
+    "build/\n" ++
+    "out/\n" ++
+    "coverage/\n" ++
+    "*.min.js\n" ++
+    "*.min.css\n";
+
+pub const Stack = struct {
+    arena: std.mem.Allocator,
+    scopes: std.ArrayList(Scope),
+    excluded: std.ArrayList([]const u8),
+
+    pub fn init(arena: std.mem.Allocator) error{OutOfMemory}!Stack {
+        var stack: Stack = .{ .arena = arena, .scopes = .empty, .excluded = .empty };
+        try stack.scopes.append(arena, try Scope.parse(arena, "", default_patterns));
+
+        return stack;
+    }
+
+    pub fn pushScope(stack: *Stack, dir_path: []const u8, bytes: []const u8) error{OutOfMemory}!void {
+        const duped = try stack.arena.dupe(u8, dir_path);
+        try stack.scopes.append(stack.arena, try Scope.parse(stack.arena, duped, bytes));
+    }
+
+    pub fn pushExcluded(stack: *Stack, dir_path: []const u8) error{OutOfMemory}!void {
+        try stack.excluded.append(stack.arena, try stack.arena.dupe(u8, dir_path));
+    }
+
+    pub fn popTo(stack: *Stack, entry_path: []const u8) void {
+        while (stack.scopes.items.len > 0) {
+            const top = stack.scopes.items[stack.scopes.items.len - 1];
+            if (top.dir_path.len == 0 or relativeTo(entry_path, top.dir_path) != null) break;
+            _ = stack.scopes.pop();
+        }
+        while (stack.excluded.items.len > 0) {
+            const top = stack.excluded.items[stack.excluded.items.len - 1];
+            if (relativeTo(entry_path, top) != null) break;
+            _ = stack.excluded.pop();
+        }
+    }
+
+    pub fn decide(stack: *const Stack, rel_path: []const u8, is_dir: bool) Verdict {
+        for (stack.excluded.items) |dir| {
+            if (relativeTo(rel_path, dir) != null) return .ignored;
+        }
+
+        var i = stack.scopes.items.len;
+        while (i > 0) {
+            i -= 1;
+            const scope = stack.scopes.items[i];
+            const rel = relativeTo(rel_path, scope.dir_path) orelse continue;
+            if (scope.match(rel, is_dir)) |verdict| return verdict;
+        }
+
+        return .unmatched;
+    }
+
+    pub fn negationCouldMatchUnder(stack: *const Stack, dir_path: []const u8) bool {
+        for (stack.scopes.items) |scope| {
+            const rel = relativeTo(dir_path, scope.dir_path) orelse continue;
+            for (scope.patterns) |pattern| {
+                if (!pattern.negated) continue;
+                if (!pattern.anchored) return true;
+                if (anchoredCouldMatchUnder(pattern.segments, rel)) return true;
+            }
+        }
+
+        return false;
+    }
+};
+
+fn relativeTo(path: []const u8, dir: []const u8) ?[]const u8 {
+    if (dir.len == 0) return path;
+    if (path.len <= dir.len) return null;
+    if (!std.mem.startsWith(u8, path, dir) or path[dir.len] != '/') return null;
+
+    return path[dir.len + 1 ..];
+}
+
+fn anchoredCouldMatchUnder(segments: []const []const u8, rel: []const u8) bool {
+    var parts = std.mem.splitScalar(u8, rel, '/');
+    var i: usize = 0;
+    while (parts.next()) |part| {
+        if (i >= segments.len) return false;
+        if (std.mem.eql(u8, segments[i], "**")) return true;
+        if (!matchSegment(segments[i], part)) return false;
+        i += 1;
+    }
+
+    return true;
+}
+
 pub const Scope = struct {
     dir_path: []const u8,
     patterns: []const Pattern,
