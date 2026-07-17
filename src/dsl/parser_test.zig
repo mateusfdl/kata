@@ -38,6 +38,7 @@ test "parser: parses one valid local rule" {
     try std.testing.expectEqualStrings("tsx", file.rules[0].languages[1]);
     try std.testing.expectEqual(ast.Severity.@"error", file.rules[0].severity);
     try std.testing.expectEqual(ast.Maturity.stable, file.rules[0].maturity);
+    try std.testing.expectEqual(@as(usize, 0), file.rules[0].former_ids.len);
     try std.testing.expectEqualStrings("call", file.rules[0].emit.capture.name);
     try std.testing.expectEqualStrings("Avoid console.log", file.rules[0].emit.message);
 
@@ -206,6 +207,7 @@ test "parser: parses optional clauses in any order" {
         \\  exclude paths "vendor/**", generated
         \\  match identifier @id
         \\  maturity experimental
+        \\  former-ids legacy-name
         \\  kind local
         \\  emit @id { message "configured" }
         \\  lang ts
@@ -216,6 +218,8 @@ test "parser: parses optional clauses in any order" {
     try std.testing.expectEqual(ast.RuleKind.local, rule.kind);
     try std.testing.expectEqual(ast.Severity.warn, rule.severity);
     try std.testing.expectEqual(ast.Maturity.experimental, rule.maturity);
+    try std.testing.expectEqual(@as(usize, 1), rule.former_ids.len);
+    try std.testing.expectEqualStrings("legacy-name", rule.former_ids[0]);
     try std.testing.expectEqual(@as(usize, 2), rule.exclude_paths.len);
     try std.testing.expectEqualStrings("vendor/**", rule.exclude_paths[0]);
     try std.testing.expectEqualStrings("generated", rule.exclude_paths[1]);
@@ -243,6 +247,77 @@ test "parser: parses maturity clause values" {
         const file = try parse(arena.allocator(), source, &diag);
         try std.testing.expectEqual(case.expected, file.rules[0].maturity);
     }
+}
+
+test "parser: parses former-ids clause" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule renamed {
+        \\  former-ids old-name, "other-old"
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id { message "renamed" }
+        \\}
+    , &diag);
+
+    const rule = file.rules[0];
+    try std.testing.expectEqual(@as(usize, 2), rule.former_ids.len);
+    try std.testing.expectEqualStrings("old-name", rule.former_ids[0]);
+    try std.testing.expectEqualStrings("other-old", rule.former_ids[1]);
+}
+
+test "parser: rejects invalid former-ids items" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var trailing_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.InvalidRuleId, parse(arena.allocator(),
+        \\rule bad {
+        \\  former-ids old-
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id { message "bad" }
+        \\}
+    , &trailing_diag));
+
+    var leading_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.InvalidRuleId, parse(arena.allocator(),
+        \\rule bad {
+        \\  former-ids "-old"
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id { message "bad" }
+        \\}
+    , &leading_diag));
+
+    var empty_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.InvalidRuleId, parse(arena.allocator(),
+        \\rule bad {
+        \\  former-ids ""
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id { message "bad" }
+        \\}
+    , &empty_diag));
+}
+
+test "parser: rejects duplicate former-ids clause" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.DuplicateClause, parse(arena.allocator(),
+        \\rule bad {
+        \\  former-ids old-a
+        \\  former-ids old-b
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id { message "bad" }
+        \\}
+    , &diag));
 }
 
 test "parser: rejects invalid maturity value" {
