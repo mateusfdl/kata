@@ -542,14 +542,14 @@ const deferred_calls = std.StaticStringMap(void).initComptime(.{
 });
 
 const call_dispatch = std.StaticStringMap(CallHandler).initComptime(.{
-    .{ bytes.call_matches,     matchesPredicate },
-    .{ call_capture,           capturedPredicate },
-    .{ bytes.call_glob,        globPredicate },
-    .{ bytes.call_any_of,      anyOfHelperPredicate },
-    .{ bytes.call_none_of,     noneOfPredicate },
+    .{ bytes.call_matches, matchesPredicate },
+    .{ call_capture, capturedPredicate },
+    .{ bytes.call_glob, globPredicate },
+    .{ bytes.call_any_of, anyOfHelperPredicate },
+    .{ bytes.call_none_of, noneOfPredicate },
     .{ bytes.call_starts_with, startsWithPredicate },
-    .{ bytes.call_ends_with,   endsWithPredicate },
-    .{ bytes.call_contains,    containsPredicate },
+    .{ bytes.call_ends_with, endsWithPredicate },
+    .{ bytes.call_contains, containsPredicate },
 });
 
 fn callPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
