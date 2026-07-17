@@ -21,6 +21,7 @@ comptime {
     _ = @import("sources/config_test.zig");
     _ = @import("sources/context_test.zig");
     _ = @import("sources/loader_test.zig");
+    _ = @import("fs/gitignore_parity_test.zig");
     _ = @import("fs/gitignore_test.zig");
     _ = @import("fs/source_test.zig");
     _ = @import("fs/discover_test.zig");
