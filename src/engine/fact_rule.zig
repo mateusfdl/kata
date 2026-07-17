@@ -234,6 +234,7 @@ fn evaluateFact(
             .rule_id = r.id,
             .language = ctx.file.lang.toString(),
             .severity = r.severity,
+            .maturity = r.maturity,
             .message = try renderMessage(allocator, r.message, ctx, fact),
             .range = factRange(fact),
         },

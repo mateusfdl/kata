@@ -222,6 +222,7 @@ pub const RuleSetting = struct {
     id: []const u8,
     project: bool = false,
     enabled: bool = true,
+    enabled_explicit: bool = false,
     severity: ?diagnostic.Severity = null,
     exclude: []const []const u8 = &.{},
 

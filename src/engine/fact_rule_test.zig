@@ -406,12 +406,14 @@ test "fact rule: missing message operands render as question marks" {
             .{ .operand = .receiver_type },
         },
         .severity = .warn,
+        .maturity = .experimental,
     };
     const violations = try fact_rule.evaluate(arena_state.allocator(), &.{all_calls}, &.{}, &index, null);
 
     try std.testing.expectEqual(@as(usize, 1), violations.len);
     try std.testing.expectEqualStrings("receiver type is ?", violations[0].diagnostic.message);
     try std.testing.expectEqual(lint_diagnostic.Severity.warn, violations[0].diagnostic.severity);
+    try std.testing.expectEqual(lint_diagnostic.Maturity.experimental, violations[0].diagnostic.maturity);
 }
 
 test "fact rule: exclude paths skip matching files" {

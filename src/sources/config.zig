@@ -158,6 +158,7 @@ const PendingRule = struct {
     id: []const u8,
     line: u32,
     enabled: bool = true,
+    enabled_explicit: bool = false,
     severity: ?diagnostic.Severity = null,
     exclude: std.ArrayList([]const u8) = .empty,
     in_exclude: bool = false,
@@ -491,6 +492,7 @@ fn setRuleProperty(pending: *PendingRule, content: []const u8) ParseError!void {
 
     if (std.mem.eql(u8, key, "enabled")) {
         pending.enabled = try parseBoolValue(value, error.InvalidEnabledValue);
+        pending.enabled_explicit = true;
         return;
     }
 
@@ -564,6 +566,7 @@ fn finalizePendingRule(
             .id = p.id,
             .project = true,
             .enabled = p.enabled,
+            .enabled_explicit = p.enabled_explicit,
             .severity = p.severity,
             .exclude = exclude,
         }, p.line, diag);
@@ -575,6 +578,7 @@ fn finalizePendingRule(
             .lang = lang,
             .id = p.id,
             .enabled = p.enabled,
+            .enabled_explicit = p.enabled_explicit,
             .severity = p.severity,
             .exclude = exclude,
         }, p.line, diag);
@@ -648,7 +652,7 @@ pub fn applySelection(
         var i: usize = 0;
 
         while (i < list.items.len) {
-            if (isActive(lang, list.items[i].id, resolved.*)) {
+            if (try shouldKeep(set, lang, list.items[i].id, resolved.*, table)) {
                 i += 1;
             } else {
                 _ = list.swapRemove(i);
@@ -658,12 +662,46 @@ pub fn applySelection(
 
     var i: usize = 0;
     while (i < set.project.items.len) {
-        if (isActiveProject(set.project.items[i].id, resolved.*)) {
+        if (try shouldKeep(set, null, set.project.items[i].id, resolved.*, table)) {
             i += 1;
         } else {
             _ = set.project.swapRemove(i);
         }
     }
+}
+
+fn shouldKeep(
+    set: *loader.RuleSet,
+    scope: ?language.Name,
+    id: []const u8,
+    resolved: Resolved,
+    table: *const lifecycle.Table,
+) !bool {
+    const setting = findSelectionSetting(scope, id, resolved) orelse return false;
+    if (!setting.enabled) return false;
+
+    switch (table.maturityOf(scope, id)) {
+        .stable => {},
+        .experimental => {
+            if (!setting.enabled_explicit) {
+                try set.warnings.append(set.allocator, .{ .kind = .experimental, .lang = scope, .id = id });
+
+                return false;
+            }
+        },
+        .deprecated => try set.warnings.append(set.allocator, .{ .kind = .deprecated, .lang = scope, .id = id }),
+    }
+
+    return true;
+}
+
+fn findSelectionSetting(scope: ?language.Name, id: []const u8, resolved: Resolved) ?RuleSetting {
+    for (resolved.settings) |setting| {
+        const hit = if (scope) |lang| setting.matches(lang, id) else setting.matchesProject(id);
+        if (hit) return setting;
+    }
+
+    return null;
 }
 
 fn resolveFormerIds(
@@ -710,20 +748,4 @@ fn appendRenamedWarning(set: *loader.RuleSet, lang: ?language.Name, id: []const 
         .id = id,
         .canonical = canonical,
     });
-}
-
-fn isActiveProject(id: []const u8, resolved: Resolved) bool {
-    for (resolved.settings) |setting| {
-        if (setting.matchesProject(id)) return setting.enabled;
-    }
-
-    return false;
-}
-
-fn isActive(lang: language.Name, id: []const u8, resolved: Resolved) bool {
-    for (resolved.settings) |setting| {
-        if (setting.matches(lang, id)) return setting.enabled;
-    }
-
-    return false;
 }

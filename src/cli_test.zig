@@ -57,6 +57,7 @@ const Report = struct {
             end: struct { line: u32, column: u32 },
         },
         severity: []const u8,
+        maturity: []const u8,
     },
     clean: bool,
 };
@@ -99,6 +100,7 @@ test "cli: violation exits 2" {
     try std.testing.expectEqualStrings("no-as-any", parsed.value.diagnostics[0].rule_id);
     try std.testing.expectEqualStrings("as any is not allowed", parsed.value.diagnostics[0].message);
     try std.testing.expectEqualStrings("error", parsed.value.diagnostics[0].severity);
+    try std.testing.expectEqualStrings("stable", parsed.value.diagnostics[0].maturity);
 }
 
 test "cli: --filename infers language" {

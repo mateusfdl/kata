@@ -445,6 +445,9 @@ fn drainWarnings(stderr: *std.Io.Writer, rule_set: *const loader_mod.RuleSet) vo
             .renamed => stderr.print("kata: warning: rule id '{s}' was renamed to '{s}'; update rules.yaml\n", .{
                 w.id, w.canonical.?,
             }) catch return,
+            .experimental => stderr.print("kata: warning: rule {s}/{s} is experimental; set 'enabled: true' to activate it\n", .{
+                scope, w.id,
+            }) catch return,
             .deprecated => stderr.print("kata: warning: rule {s}/{s} is deprecated\n", .{
                 scope, w.id,
             }) catch return,

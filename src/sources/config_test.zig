@@ -374,6 +374,84 @@ test "selection: live id never consults the retired registry" {
     try std.testing.expectEqual(@as(usize, 0), fx.set.warnings.items.len);
 }
 
+test "selection: experimental rule needs explicit enabled true" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    fx.set = .{ .allocator = fx.arena() };
+    try fx.set.append(.ts, .{ .id = "risky", .source = dslRule("risky", "ts", "  maturity experimental\n") });
+    const table = try buildTable(&fx);
+
+    var cfg = try expectParseOk("rules:\n  ts:\n    risky:\n");
+    defer cfg.deinit();
+    var resolved = try config.resolve(fx.arena(), &cfg, null);
+    var diag: lint.rule.Diagnostic = .{};
+    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
+
+    try std.testing.expectEqual(@as(usize, 0), fx.countTs());
+    try std.testing.expectEqual(@as(usize, 1), fx.set.warnings.items.len);
+    const w = fx.set.warnings.items[0];
+    try std.testing.expectEqual(lint.Warning.Kind.experimental, w.kind);
+    try std.testing.expectEqual(language.Name.ts, w.lang.?);
+    try std.testing.expectEqualStrings("risky", w.id);
+}
+
+test "selection: experimental rule with explicit enabled true activates" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    fx.set = .{ .allocator = fx.arena() };
+    try fx.set.append(.ts, .{ .id = "risky", .source = dslRule("risky", "ts", "  maturity experimental\n") });
+    const table = try buildTable(&fx);
+
+    var cfg = try expectParseOk("rules:\n  ts:\n    risky:\n      enabled: true\n");
+    defer cfg.deinit();
+    var resolved = try config.resolve(fx.arena(), &cfg, null);
+    var diag: lint.rule.Diagnostic = .{};
+    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
+
+    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
+    try std.testing.expect(hasId(fx.set.get(.ts), "risky"));
+    try std.testing.expectEqual(@as(usize, 0), fx.set.warnings.items.len);
+}
+
+test "selection: experimental rule with explicit enabled false stays silent" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    fx.set = .{ .allocator = fx.arena() };
+    try fx.set.append(.ts, .{ .id = "risky", .source = dslRule("risky", "ts", "  maturity experimental\n") });
+    const table = try buildTable(&fx);
+
+    var cfg = try expectParseOk("rules:\n  ts:\n    risky:\n      enabled: false\n");
+    defer cfg.deinit();
+    var resolved = try config.resolve(fx.arena(), &cfg, null);
+    var diag: lint.rule.Diagnostic = .{};
+    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
+
+    try std.testing.expectEqual(@as(usize, 0), fx.countTs());
+    try std.testing.expectEqual(@as(usize, 0), fx.set.warnings.items.len);
+}
+
+test "selection: deprecated rule activates with a warning" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    fx.set = .{ .allocator = fx.arena() };
+    try fx.set.append(.ts, .{ .id = "legacy", .source = dslRule("legacy", "ts", "  maturity deprecated\n") });
+    const table = try buildTable(&fx);
+
+    var cfg = try expectParseOk("rules:\n  ts:\n    legacy:\n");
+    defer cfg.deinit();
+    var resolved = try config.resolve(fx.arena(), &cfg, null);
+    var diag: lint.rule.Diagnostic = .{};
+    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
+
+    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
+    try std.testing.expect(hasId(fx.set.get(.ts), "legacy"));
+    try std.testing.expectEqual(@as(usize, 1), fx.set.warnings.items.len);
+    const w = fx.set.warnings.items[0];
+    try std.testing.expectEqual(lint.Warning.Kind.deprecated, w.kind);
+    try std.testing.expectEqual(language.Name.ts, w.lang.?);
+    try std.testing.expectEqualStrings("legacy", w.id);
+}
+
 test "config: parses an import-boundary project rule" {
     const src =
         \\project-rules:

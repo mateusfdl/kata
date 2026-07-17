@@ -12,7 +12,7 @@ pub const Warning = struct {
     id: []const u8,
     canonical: ?[]const u8 = null,
 
-    pub const Kind = enum { override, renamed, deprecated };
+    pub const Kind = enum { override, renamed, experimental, deprecated };
 };
 
 pub const RuleSet = struct {

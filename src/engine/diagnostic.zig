@@ -25,6 +25,7 @@ pub const Diagnostic = struct {
     message: []const u8,
     range: Range,
     severity: Severity = .@"error",
+    maturity: Maturity = .stable,
 };
 
 pub const Report = struct {

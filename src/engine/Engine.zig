@@ -310,5 +310,6 @@ fn emitDiagnostic(
             .end = .{ .line = ep.row, .column = ep.column },
         },
         .severity = severity,
+        .maturity = meta.maturity,
     });
 }

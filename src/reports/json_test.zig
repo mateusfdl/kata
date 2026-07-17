@@ -15,7 +15,8 @@ fn diagnostic(severity: lint.diagnostic.Severity) lint.diagnostic.Diagnostic {
 
 const diagnostic_json =
     "{\"rule_id\":\"no-console\",\"language\":\"ts\",\"message\":\"console is not allowed\"," ++
-    "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}},\"severity\":\"error\"}";
+    "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
+    "\"severity\":\"error\",\"maturity\":\"stable\"}";
 
 test "json: clean run renders empty files and the summary" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -75,4 +76,18 @@ test "json: warn severity serializes as warn" {
     try reporter.finish(.{ .files = 1, .violations = 0, .warnings = 1 });
 
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"severity\":\"warn\"") != null);
+}
+
+test "json: experimental maturity serializes as experimental" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    var d = diagnostic(.@"error");
+    d.maturity = .experimental;
+
+    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    try reporter.file("src/app.ts", "console.log(1);\n", &.{d});
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 });
+
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"maturity\":\"experimental\"") != null);
 }
