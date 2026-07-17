@@ -38,6 +38,7 @@ pub const Error = tokenizer.Error || error{
     InvalidRuleId,
     InvalidKind,
     InvalidSeverity,
+    InvalidMaturity,
     InvalidExpression,
     ExpectedComposition,
     ExpectedComparison,
@@ -53,6 +54,10 @@ const Keyword = enum {
     severity,
     @"error",
     warn,
+    maturity,
+    experimental,
+    stable,
+    deprecated,
     exclude,
     paths,
     match,
@@ -178,6 +183,7 @@ pub const Parser = struct {
         var kind: ast.RuleKind = .local;
         var languages: []const []const u8 = &.{};
         var severity: ast.Severity = .@"error";
+        var maturity: ast.Maturity = .stable;
         var exclude_paths: []const []const u8 = &.{};
         var match_clause: ?ast.Match = null;
         var predicates: []const ast.Predicate = &.{};
@@ -185,6 +191,7 @@ pub const Parser = struct {
         var seen_kind = false;
         var seen_lang = false;
         var seen_severity = false;
+        var seen_maturity = false;
         var seen_exclude = false;
         var seen_where = false;
 
@@ -212,6 +219,10 @@ pub const Parser = struct {
                 .severity => {
                     try self.rejectDuplicate(clause, &seen_severity);
                     severity = try self.parseSeverity();
+                },
+                .maturity => {
+                    try self.rejectDuplicate(clause, &seen_maturity);
+                    maturity = try self.parseMaturity();
                 },
                 .exclude => {
                     try self.rejectDuplicate(clause, &seen_exclude);
@@ -271,6 +282,7 @@ pub const Parser = struct {
             .kind = kind,
             .languages = languages,
             .severity = severity,
+            .maturity = maturity,
             .exclude_paths = exclude_paths,
             .match = match_clause,
             .where = predicates,
@@ -295,6 +307,16 @@ pub const Parser = struct {
 
         self.failAt(value);
         return error.InvalidSeverity;
+    }
+
+    fn parseMaturity(self: *Parser) Error!ast.Maturity {
+        const value = try self.expectSymbol(error.ExpectedSymbol);
+        if (isKeyword(value, .experimental)) return .experimental;
+        if (isKeyword(value, .stable)) return .stable;
+        if (isKeyword(value, .deprecated)) return .deprecated;
+
+        self.failAt(value);
+        return error.InvalidMaturity;
     }
 
     fn parseSymbolList(self: *Parser) Error![]const []const u8 {

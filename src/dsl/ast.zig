@@ -9,6 +9,7 @@ pub const Rule = struct {
     kind: RuleKind = .local,
     languages: []const []const u8 = &.{},
     severity: Severity = .@"error",
+    maturity: Maturity = .stable,
     exclude_paths: []const []const u8 = &.{},
     match: ?Match = null,
     where: []const Predicate = &.{},
@@ -24,6 +25,12 @@ pub const RuleKind = enum {
 pub const Severity = enum {
     @"error",
     warn,
+};
+
+pub const Maturity = enum {
+    experimental,
+    stable,
+    deprecated,
 };
 
 pub const Match = union(enum) {

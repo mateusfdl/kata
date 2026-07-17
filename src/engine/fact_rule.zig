@@ -90,6 +90,7 @@ pub const CompiledFactRule = struct {
     predicates: []const Predicate,
     message: []const MessageSegment,
     severity: diagnostic.Severity = .@"error",
+    maturity: diagnostic.Maturity = .stable,
     exclude_paths: []const []const u8 = &.{},
 };
 

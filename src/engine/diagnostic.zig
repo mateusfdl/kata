@@ -13,6 +13,12 @@ pub const Severity = enum {
     warn,
 };
 
+pub const Maturity = enum {
+    experimental,
+    stable,
+    deprecated,
+};
+
 pub const Diagnostic = struct {
     rule_id: []const u8,
     language: []const u8,

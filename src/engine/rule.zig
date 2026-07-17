@@ -129,6 +129,7 @@ pub const PatternMeta = struct {
     rule_id: []const u8,
     exclude_paths: []const []const u8 = &.{},
     severity: diagnostic.Severity = .@"error",
+    maturity: diagnostic.Maturity = .stable,
 };
 
 pub const CompiledPattern = struct {

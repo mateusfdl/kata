@@ -37,6 +37,7 @@ test "parser: parses one valid local rule" {
     try std.testing.expectEqualStrings("ts", file.rules[0].languages[0]);
     try std.testing.expectEqualStrings("tsx", file.rules[0].languages[1]);
     try std.testing.expectEqual(ast.Severity.@"error", file.rules[0].severity);
+    try std.testing.expectEqual(ast.Maturity.stable, file.rules[0].maturity);
     try std.testing.expectEqualStrings("call", file.rules[0].emit.capture.name);
     try std.testing.expectEqualStrings("Avoid console.log", file.rules[0].emit.message);
 
@@ -204,6 +205,7 @@ test "parser: parses optional clauses in any order" {
         \\  severity warn
         \\  exclude paths "vendor/**", generated
         \\  match identifier @id
+        \\  maturity experimental
         \\  kind local
         \\  emit @id { message "configured" }
         \\  lang ts
@@ -213,9 +215,65 @@ test "parser: parses optional clauses in any order" {
     const rule = file.rules[0];
     try std.testing.expectEqual(ast.RuleKind.local, rule.kind);
     try std.testing.expectEqual(ast.Severity.warn, rule.severity);
+    try std.testing.expectEqual(ast.Maturity.experimental, rule.maturity);
     try std.testing.expectEqual(@as(usize, 2), rule.exclude_paths.len);
     try std.testing.expectEqualStrings("vendor/**", rule.exclude_paths[0]);
     try std.testing.expectEqualStrings("generated", rule.exclude_paths[1]);
+}
+
+test "parser: parses maturity clause values" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const cases = [_]struct { line: []const u8, expected: ast.Maturity }{
+        .{ .line = "maturity experimental", .expected = .experimental },
+        .{ .line = "maturity stable", .expected = .stable },
+        .{ .line = "maturity deprecated", .expected = .deprecated },
+    };
+    for (cases) |case| {
+        const source = try std.fmt.allocPrint(arena.allocator(),
+            \\rule lifecycle {{
+            \\  {s}
+            \\  lang ts
+            \\  match identifier @id
+            \\  emit @id {{ message "lifecycle" }}
+            \\}}
+        , .{case.line});
+        var diag: parser.Diagnostic = .{};
+        const file = try parse(arena.allocator(), source, &diag);
+        try std.testing.expectEqual(case.expected, file.rules[0].maturity);
+    }
+}
+
+test "parser: rejects invalid maturity value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.InvalidMaturity, parse(arena.allocator(),
+        \\rule bad {
+        \\  maturity bogus
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id { message "bad" }
+        \\}
+    , &diag));
+}
+
+test "parser: rejects duplicate maturity clause" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.DuplicateClause, parse(arena.allocator(),
+        \\rule bad {
+        \\  maturity experimental
+        \\  maturity stable
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id { message "bad" }
+        \\}
+    , &diag));
 }
 
 test "parser: parses project rules without lang and match" {
