@@ -123,11 +123,13 @@ pub const Parser = struct {
                 try self.parseFragmentDeclaration();
                 continue;
             }
+
             try rules.append(self.allocator, try self.parseRule());
         }
 
         if (rules.items.len == 0) {
             self.failAt(self.current);
+
             return error.ExpectedRule;
         }
         try self.rejectUnusedFragments();
@@ -143,8 +145,10 @@ pub const Parser = struct {
         const entry = try self.fragments.getOrPut(self.allocator, name.lexeme);
         if (entry.found_existing) {
             self.failAt(name);
+
             return error.DuplicateFragment;
         }
+
         entry.value_ptr.* = .{ .pattern = pattern, .range = name.range, .used = false };
     }
 
@@ -155,6 +159,7 @@ pub const Parser = struct {
                 .line = fragment.range.start.line,
                 .column = fragment.range.start.column,
             };
+
             return error.UnusedFragment;
         }
     }
@@ -165,6 +170,7 @@ pub const Parser = struct {
         const id = try self.expectSymbol(error.ExpectedSymbol);
         if (!isRuleId(id.lexeme)) {
             self.failAt(id);
+
             return error.InvalidRuleId;
         }
         _ = try self.expect(.left_brace, error.ExpectedLeftBrace);
@@ -185,11 +191,13 @@ pub const Parser = struct {
         while (self.current.kind != .right_brace) {
             if (self.current.kind == .eof) {
                 self.failAt(self.current);
+
                 return error.ExpectedRightBrace;
             }
             const clause = try self.expectSymbol(error.UnknownClause);
             const keyword = keywordFromToken(clause) orelse {
                 self.failAt(clause);
+
                 return error.UnknownClause;
             };
             switch (keyword) {
@@ -208,28 +216,35 @@ pub const Parser = struct {
                 .exclude => {
                     try self.rejectDuplicate(clause, &seen_exclude);
                     try self.expectKeyword(.paths, error.ExpectedSymbol);
+
                     exclude_paths = try self.parseStringOrSymbolList();
                 },
                 .match => {
                     if (match_clause != null) {
                         self.failAt(clause);
+
                         return error.DuplicateClause;
                     }
+
                     match_clause = try self.parseMatch();
                 },
                 .where => {
                     try self.rejectDuplicate(clause, &seen_where);
+
                     predicates = try self.parseWhere();
                 },
                 .emit => {
                     if (emit != null) {
                         self.failAt(clause);
+
                         return error.DuplicateClause;
                     }
+
                     emit = try self.parseEmit(clause);
                 },
                 else => {
                     self.failAt(clause);
+
                     return error.UnknownClause;
                 },
             }
@@ -268,6 +283,7 @@ pub const Parser = struct {
         const value = try self.expectSymbol(error.ExpectedSymbol);
         if (isKeyword(value, .local)) return .local;
         if (isKeyword(value, .project)) return .project;
+
         self.failAt(value);
         return error.InvalidKind;
     }
@@ -276,6 +292,7 @@ pub const Parser = struct {
         const value = try self.expectSymbol(error.ExpectedSymbol);
         if (isKeyword(value, .@"error")) return .@"error";
         if (isKeyword(value, .warn)) return .warn;
+
         self.failAt(value);
         return error.InvalidSeverity;
     }
@@ -294,6 +311,7 @@ pub const Parser = struct {
         while (try self.consume(.comma)) {
             try items.append(self.allocator, try parseItem(self));
         }
+
         return items.toOwnedSlice(self.allocator);
     }
 
@@ -303,6 +321,7 @@ pub const Parser = struct {
 
     fn parseStringOrSymbol(self: *Parser) Error![]const u8 {
         if (self.current.kind == .string) return self.parseString();
+
         return (try self.expectSymbol(error.ExpectedSymbol)).lexeme;
     }
 
@@ -312,12 +331,14 @@ pub const Parser = struct {
             try self.advance();
             const kind = try self.expectSymbol(error.ExpectedSymbol);
             const capture = try self.parseOptionalCapture();
+
             return .{ .kind = .{
                 .kind = kind.lexeme,
                 .capture = capture,
                 .range = .{ .start = start.range.start, .end = lastRangeEnd(capture, kind) },
             } };
         }
+
         return .{ .node = try self.parseNodePattern(.rejected) };
     }
 
@@ -328,13 +349,16 @@ pub const Parser = struct {
         var fields: []const ast.FieldPattern = &.{};
         var absent_fields: []const []const u8 = &.{};
         var end = node.range.end;
+
         if (capture) |value| end = value.range.end;
         if (try self.consume(.left_brace)) {
             const block = try self.parseFieldBlock();
             fields = block.fields;
+
             absent_fields = block.absent_fields;
             end = block.end;
         }
+
         return .{
             .node_kind = node.value,
             .capture = capture,
@@ -350,16 +374,22 @@ pub const Parser = struct {
         while (self.current.kind != .right_brace) {
             if (self.current.kind == .eof) {
                 self.failAt(self.current);
+
                 return error.ExpectedRightBrace;
             }
+
             if (self.current.kind == .bang) {
                 try absents.append(self.allocator, try self.parseAbsentField());
+
                 continue;
             }
+
             try list.append(self.allocator, try self.parseFieldPattern());
         }
+
         const end = self.current.range.end;
         try self.advance();
+
         return .{
             .fields = try list.toOwnedSlice(self.allocator),
             .absent_fields = try absents.toOwnedSlice(self.allocator),
@@ -372,18 +402,22 @@ pub const Parser = struct {
         try self.advance();
         const entry = self.fragments.getPtr(token.lexeme[1..]) orelse {
             self.failAt(token);
+
             return error.UnknownFragment;
         };
+
         entry.used = true;
         const fragment = entry.pattern;
         if (anonymous == .rejected and hasAnonymousRoot(fragment)) {
             self.failAt(token);
+
             return error.ExpectedSymbol;
         }
 
         const capture = try self.parseOptionalCapture();
         if (capture != null and fragment.capture != null) {
             self.failAt(token);
+
             return error.FragmentCaptureConflict;
         }
         var fields = fragment.fields;
@@ -396,6 +430,7 @@ pub const Parser = struct {
             absent_fields = try self.concatAbsent(fragment.absent_fields, block.absent_fields);
             end = block.end;
         }
+
         return .{
             .node_kind = fragment.node_kind,
             .capture = capture orelse fragment.capture,
@@ -414,6 +449,7 @@ pub const Parser = struct {
         const out = try self.allocator.alloc(ast.FieldPattern, first.len + second.len);
         @memcpy(out[0..first.len], first);
         @memcpy(out[first.len..], second);
+
         return out;
     }
 
@@ -426,6 +462,7 @@ pub const Parser = struct {
         const out = try self.allocator.alloc([]const u8, first.len + second.len);
         @memcpy(out[0..first.len], first);
         @memcpy(out[first.len..], second);
+
         return out;
     }
 
@@ -434,8 +471,10 @@ pub const Parser = struct {
         const name = try self.expectSymbol(error.ExpectedSymbol);
         if (patternRelation(name.lexeme) != .field) {
             self.failAt(name);
+
             return error.InvalidNegatedField;
         }
+
         return name.lexeme;
     }
 
@@ -451,11 +490,13 @@ pub const Parser = struct {
                     return error.ExpectedSymbol;
                 }
                 const token = try self.parseStringLiteral();
+
                 return .{ .value = .{ .anonymous = token.value }, .range = token.range };
             },
             .left_bracket => return self.parseAlternation(anonymous),
             else => {
                 self.failAt(self.current);
+
                 return error.ExpectedSymbol;
             },
         }
@@ -469,7 +510,9 @@ pub const Parser = struct {
             if (self.current.kind == .right_bracket) break;
             try branches.append(self.allocator, try self.parseNodePattern(anonymous));
         }
+
         const end = try self.expect(.right_bracket, error.ExpectedRightBracket);
+
         return .{
             .value = .{ .alternation = try branches.toOwnedSlice(self.allocator) },
             .range = .{ .start = start.range.start, .end = end.range.end },
@@ -480,6 +523,7 @@ pub const Parser = struct {
         const name = try self.expectSymbol(error.ExpectedSymbol);
         _ = try self.expect(.colon, error.ExpectedColon);
         const pattern = try self.parseNodePattern(.allowed);
+
         return .{
             .relation = patternRelation(name.lexeme),
             .pattern = pattern,
@@ -493,15 +537,20 @@ pub const Parser = struct {
         while (self.current.kind != .right_brace) {
             if (self.current.kind == .eof) {
                 self.failAt(self.current);
+
                 return error.ExpectedRightBrace;
             }
+
             try predicates.append(self.allocator, try self.parsePredicate());
         }
+
         try self.advance();
         if (predicates.items.len == 0) {
             self.failAt(start);
+
             return error.EmptyWhere;
         }
+
         return predicates.toOwnedSlice(self.allocator);
     }
 
@@ -510,6 +559,7 @@ pub const Parser = struct {
         if (compositionKeyword(self.current)) |keyword| {
             return self.parseCompositionPredicate(keyword);
         }
+
         return .{ .expression = try self.parseExpression() };
     }
 
@@ -522,6 +572,7 @@ pub const Parser = struct {
         else
             return null;
         if ((try self.peek()).kind != .left_brace) return null;
+
         return op;
     }
 
@@ -532,15 +583,20 @@ pub const Parser = struct {
         while (self.current.kind != .right_brace) {
             if (self.current.kind == .eof) {
                 self.failAt(self.current);
+
                 return error.ExpectedRightBrace;
             }
+
             try predicates.append(self.allocator, try self.parsePredicate());
         }
+
         try self.advance();
         if (predicates.items.len == 0) {
             self.failAt(start);
+
             return error.EmptyWhere;
         }
+
         return .{ .group = .{
             .op = op,
             .predicates = try predicates.toOwnedSlice(self.allocator),
@@ -553,10 +609,13 @@ pub const Parser = struct {
             const matcher = try self.parseNestedMatcher();
             const op = compareOp(self.current.kind) orelse {
                 self.failAt(self.current);
+
                 return error.ExpectedComparison;
             };
+
             try self.advance();
             const value = try self.parseNumberLiteral();
+
             return .{ .count = .{ .matcher = matcher, .op = op, .value = value.value } };
         }
 
@@ -567,12 +626,16 @@ pub const Parser = struct {
             const inner = self.current;
             op = compositionKeyword(inner) orelse {
                 self.failAt(inner);
+
                 return error.ExpectedComposition;
             };
+
             if (op != .inside and op != .has and op != .parent) {
                 self.failAt(inner);
+
                 return error.ExpectedComposition;
             }
+
             try self.advance();
         }
 
@@ -580,6 +643,7 @@ pub const Parser = struct {
         var until: []const []const u8 = &.{};
         if (op == .inside and self.currentIs(.until)) {
             try self.advance();
+
             until = try self.parseSymbolList();
         }
 
@@ -604,7 +668,9 @@ pub const Parser = struct {
         var absent_fields: []const []const u8 = &.{};
         var where: []const ast.Expression = &.{};
         var end = node.range.end;
+
         if (capture) |value| end = value.range.end;
+
         if (try self.consume(.left_brace)) {
             var list: std.ArrayList(ast.FieldPattern) = .empty;
             var absents: std.ArrayList([]const u8) = .empty;
@@ -612,27 +678,38 @@ pub const Parser = struct {
             while (self.current.kind != .right_brace) {
                 if (self.current.kind == .eof) {
                     self.failAt(self.current);
+
                     return error.ExpectedRightBrace;
                 }
                 if (self.current.kind == .bang) {
                     if (seen_where) {
                         self.failAt(self.current);
+
                         return error.ExpectedRightBrace;
                     }
+
                     try absents.append(self.allocator, try self.parseAbsentField());
+
                     continue;
                 }
+
                 const name = try self.expectSymbol(error.ExpectedSymbol);
                 if (isKeyword(name, .where) and self.current.kind == .left_brace) {
                     try self.rejectDuplicate(name, &seen_where);
+
                     where = try self.parseNestedWhere();
+
                     continue;
                 }
+
                 if (seen_where) {
                     self.failAt(name);
+
                     return error.ExpectedRightBrace;
                 }
+
                 _ = try self.expect(.colon, error.ExpectedColon);
+
                 const pattern = try self.parseNodePattern(.allowed);
                 try list.append(self.allocator, .{
                     .relation = patternRelation(name.lexeme),
@@ -640,11 +717,16 @@ pub const Parser = struct {
                     .range = .{ .start = name.range.start, .end = pattern.range.end },
                 });
             }
+
             end = self.current.range.end;
+
             try self.advance();
+
             fields = try list.toOwnedSlice(self.allocator);
+
             absent_fields = try absents.toOwnedSlice(self.allocator);
         }
+
         return .{
             .subject = subject,
             .pattern = .{
@@ -665,28 +747,40 @@ pub const Parser = struct {
         while (self.current.kind != .right_brace) {
             if (self.current.kind == .eof) {
                 self.failAt(self.current);
+
                 return error.ExpectedRightBrace;
             }
+
             if (compositionKeyword(self.current) != null) {
                 self.failAt(self.current);
+
                 return error.NestedComposition;
             }
+
             try expressions.append(self.allocator, try self.parseExpression());
         }
+
         try self.advance();
+
         if (expressions.items.len == 0) {
             self.failAt(start);
+
             return error.EmptyWhere;
         }
+
         return expressions.toOwnedSlice(self.allocator);
     }
 
     fn parseEmit(self: *Parser, start: Token) Error!ast.Emit {
         const capture = try self.expectCapture();
+
         _ = try self.expect(.left_brace, error.ExpectedLeftBrace);
+
         try self.expectKeyword(.message, error.ExpectedMessage);
+
         const message = try self.parseString();
         const end = try self.expect(.right_brace, error.ExpectedRightBrace);
+
         return .{
             .capture = capture,
             .message = message,
@@ -702,8 +796,10 @@ pub const Parser = struct {
         var left = try self.parseAnd();
         while (self.current.kind == .pipe_pipe) {
             try self.advance();
+
             left = try self.logical(.@"or", left, try self.parseAnd());
         }
+
         return left;
     }
 
@@ -711,8 +807,10 @@ pub const Parser = struct {
         var left = try self.parseMembership();
         while (self.current.kind == .amp_amp) {
             try self.advance();
+
             left = try self.logical(.@"and", left, try self.parseMembership());
         }
+
         return left;
     }
 
@@ -722,11 +820,14 @@ pub const Parser = struct {
         if (isKeyword(self.current, .not)) {
             if (!isKeyword(try self.peek(), .in)) return left;
             try self.advance();
+
             negated = true;
         } else if (!isKeyword(self.current, .in)) {
             return left;
         }
+
         try self.advance();
+
         const values = try self.parseSetLiteral();
         return .{ .membership = .{
             .subject = try self.createExpression(left),
@@ -742,16 +843,21 @@ pub const Parser = struct {
         while (self.current.kind != .right_bracket) {
             if (self.current.kind == .eof) {
                 self.failAt(self.current);
+
                 return error.ExpectedRightBracket;
             }
             try items.append(self.allocator, try self.parseStringLiteral());
+
             if (!try self.consume(.comma)) break;
         }
+
         const end = try self.expect(.right_bracket, error.ExpectedRightBracket);
         if (items.items.len == 0) {
             self.failAt(end);
+
             return error.EmptySetLiteral;
         }
+
         return .{ .items = try items.toOwnedSlice(self.allocator), .end = end.range.end };
     }
 
@@ -759,8 +865,10 @@ pub const Parser = struct {
         var left = try self.parseUnary();
         while (compareOp(self.current.kind)) |op| {
             try self.advance();
+
             left = try self.compare(op, left, try self.parseUnary());
         }
+
         return left;
     }
 
@@ -768,12 +876,15 @@ pub const Parser = struct {
         if (self.current.kind == .bang) {
             const token = self.current;
             try self.advance();
+
             const expression = try self.parseUnary();
+
             return .{ .negate = .{
                 .expression = try self.createExpression(expression),
                 .range = .{ .start = token.range.start, .end = expressionEnd(expression) },
             } };
         }
+
         return self.parsePrimary();
     }
 
@@ -791,6 +902,7 @@ pub const Parser = struct {
             },
             else => {
                 self.failAt(self.current);
+
                 return error.InvalidExpression;
             },
         }
@@ -800,8 +912,10 @@ pub const Parser = struct {
         const name = try self.expectSymbol(error.ExpectedSymbol);
         if (!try self.consume(.left_paren)) {
             self.failAt(name);
+
             return error.InvalidExpression;
         }
+
         return self.parseCall(name);
     }
 
@@ -813,7 +927,9 @@ pub const Parser = struct {
                 try args.append(self.allocator, try self.parseArgument());
             }
         }
+
         const end = try self.expect(.right_paren, error.ExpectedRightParen);
+
         return .{ .call = .{
             .name = name.lexeme,
             .args = try args.toOwnedSlice(self.allocator),
@@ -825,11 +941,13 @@ pub const Parser = struct {
         if (self.current.kind != .symbol) return self.parseExpression();
         const name = try self.expectSymbol(error.ExpectedSymbol);
         if (try self.consume(.left_paren)) return self.parseCall(name);
+
         return .{ .symbol = .{ .name = name.lexeme, .range = name.range } };
     }
 
     fn parseOptionalCapture(self: *Parser) Error!?ast.Capture {
         if (self.current.kind != .capture) return null;
+
         return try self.expectCapture();
     }
 
@@ -837,8 +955,10 @@ pub const Parser = struct {
         const token = try self.expect(.number, error.InvalidNumber);
         const value = std.fmt.parseInt(u32, token.lexeme, 10) catch {
             self.failAt(token);
+
             return error.InvalidNumber;
         };
+
         return .{ .value = value, .range = token.range };
     }
 
@@ -851,12 +971,15 @@ pub const Parser = struct {
             if (!bytes.isLexemeByte(c, .backslash)) {
                 try decoded.append(self.allocator, c);
                 index += 1;
+
                 continue;
             }
+
             index += 1;
             try decoded.append(self.allocator, bytes.decodedEscape(token.lexeme[index]).?);
             index += 1;
         }
+
         return .{ .value = try decoded.toOwnedSlice(self.allocator), .range = token.range };
     }
 
@@ -866,6 +989,7 @@ pub const Parser = struct {
 
     fn expectCapture(self: *Parser) Error!ast.Capture {
         const token = try self.expect(.capture, error.ExpectedCapture);
+
         return .{ .name = token.lexeme[1..], .range = token.range };
     }
 
@@ -873,6 +997,7 @@ pub const Parser = struct {
         const token = try self.expectSymbol(failure);
         if (isKeyword(token, keyword)) return;
         self.failAt(token);
+
         return failure;
     }
 
@@ -887,16 +1012,20 @@ pub const Parser = struct {
     fn expect(self: *Parser, kind: TokenKind, failure: Error) Error!Token {
         if (self.current.kind != kind) {
             self.failAt(self.current);
+
             return failure;
         }
+
         const token = self.current;
         try self.advance();
+
         return token;
     }
 
     fn consume(self: *Parser, kind: TokenKind) Error!bool {
         if (self.current.kind != kind) return false;
         try self.advance();
+
         return true;
     }
 
@@ -906,12 +1035,14 @@ pub const Parser = struct {
 
     fn peek(self: *Parser) Error!Token {
         var ahead = self.tokenizer;
+
         return ahead.next();
     }
 
     fn rejectDuplicate(self: *Parser, token: Token, seen: *bool) Error!void {
         if (seen.*) {
             self.failAt(token);
+
             return error.DuplicateClause;
         }
         seen.* = true;
@@ -953,6 +1084,7 @@ fn compositionKeyword(token: Token) ?Keyword {
     if (isKeyword(token, .parent)) return .parent;
     if (isKeyword(token, .count)) return .count;
     if (isKeyword(token, .not)) return .not;
+
     return null;
 }
 
@@ -972,6 +1104,7 @@ fn hasAnonymousRoot(pattern: ast.NodePattern) bool {
 fn patternRelation(name: []const u8) ast.PatternRelation {
     if (std.mem.eql(u8, name, "child")) return .child;
     if (std.mem.eql(u8, name, "children")) return .children;
+
     return .{ .field = name };
 }
 
@@ -982,13 +1115,16 @@ fn isKeyword(token: Token, keyword: Keyword) bool {
 fn keywordFromToken(token: Token) ?Keyword {
     inline for (std.meta.fields(Keyword)) |field| {
         const keyword: Keyword = @enumFromInt(field.value);
+
         if (isKeyword(token, keyword)) return keyword;
     }
+
     return null;
 }
 
 fn isRuleId(id: []const u8) bool {
     if (bytes.isLexemeByte(id[0], .dash)) return false;
+
     return !bytes.isLexemeByte(id[id.len - 1], .dash);
 }
 

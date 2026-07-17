@@ -30,8 +30,20 @@ make test             # unit tests
 | `kata new-rule <lang> <id>` | Scaffold a `.kata` template under `$XDG_CONFIG_HOME/kata/rules/<lang>/<id>.kata`. Refuses to overwrite. |
 | `kata --lang=<ts\|tsx\|go> < src` | One-shot: read source on stdin, emit a JSON report. `--filename=<path>` infers the language. |
 
-When checking a directory, `kata` skips `.git` and any folder named in the target's
-`.gitignore` (plain directory entries only; globs, negations, and nested paths are ignored).
+When checking a directory, `kata` honors full gitignore semantics: globs, character
+classes, `**`, negations, anchoring, dir-only patterns, and nested `.gitignore` files
+(deeper files override shallower ones, last matching pattern wins). A built-in default
+set applies at lowest precedence and can be re-enabled by a user negation such as `!dist/`:
+
+```
+.git/  node_modules/  vendor/  dist/  build/  out/  coverage/  *.min.js  *.min.css
+```
+
+Not consulted: `core.excludesFile`, `$GIT_DIR/info/exclude`, and the git index, so a
+tracked-but-ignored file is still skipped. Explicit targets win: `kata check path/to/file.ts`
+lints the file even if ignored; ignore rules apply only to walk-discovered files. The
+daemon's `--root` pre-indexing uses the same walker, so project facts no longer index
+gitignored generated code.
 
 Exit codes: `0` clean, `2` violations, `64` usage, `70` internal error.
 
