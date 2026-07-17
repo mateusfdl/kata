@@ -9,6 +9,39 @@ fn tmpPath(gpa: std.mem.Allocator, tmp: *std.testing.TmpDir, sub: []const u8) ![
     return std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, sub });
 }
 
+test "rules: readRetired reads the sibling of the rules dir" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "kata/rules");
+    try tmp.dir.writeFile(io, .{ .sub_path = "kata/retired.yaml", .data = "old-id:\n  replaced-by: new-id\n" });
+
+    const rules_dir = try tmpPath(gpa, &tmp, "kata/rules");
+    defer gpa.free(rules_dir);
+
+    const source = (try rules.readRetired(io, gpa, rules_dir)).?;
+    defer gpa.free(source);
+    try std.testing.expectEqualStrings("old-id:\n  replaced-by: new-id\n", source);
+}
+
+test "rules: readRetired returns null when the file is absent" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "kata/rules");
+
+    const rules_dir = try tmpPath(gpa, &tmp, "kata/rules");
+    defer gpa.free(rules_dir);
+
+    try std.testing.expectEqual(@as(?[]u8, null), try rules.readRetired(io, gpa, rules_dir));
+}
+
 test "rules: isFixturePath flags a tests file beside a kata rule" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;

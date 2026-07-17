@@ -168,12 +168,12 @@ fn parseAnnotations(
         for (annotation.ids) |id| {
             var rule_id = id;
             switch (table.resolve(lang, id)) {
-                .renamed => |canonical| {
+                .renamed, .replaced => |canonical| {
                     try stdout.print("{s}:{d} renamed [{s} -> {s}]\n", .{ path, annotation.line + 1, id, canonical });
 
                     rule_id = canonical;
                 },
-                .live, .unknown => {},
+                .live, .removed, .unknown => {},
             }
 
             try expectations.append(arena, .{ .line = target, .rule_id = rule_id });

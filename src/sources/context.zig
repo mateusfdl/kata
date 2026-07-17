@@ -6,6 +6,7 @@ const config = @import("config.zig");
 const dsl = @import("dsl");
 const lifecycle = @import("lifecycle.zig");
 const loader = @import("loader.zig");
+const retired = @import("retired.zig");
 
 const Engine = lint.Engine;
 const language = lint.language;
@@ -43,6 +44,7 @@ pub const Resolver = struct {
     global_config: ?*const config.Config = null,
     diag: config.Diagnostic = .{},
     rule_diag: lint.rule.Diagnostic = .{},
+    retired_diag: retired.Diagnostic = .{},
 
     pub fn resolve(self: *Resolver, anchor: ?[]const u8) !*Context {
         const ctx = try self.gpa.create(Context);
@@ -56,6 +58,22 @@ pub const Resolver = struct {
         const root = try self.discoverRoot(arena, anchor);
 
         return self.build(ctx, arena_ptr, root);
+    }
+
+    fn loadRetired(self: *Resolver, arena: std.mem.Allocator, project_rules_dir: ?[]const u8) !retired.Registry {
+        self.retired_diag = .{};
+        var registry = try retired.parse(arena, retired.embedded_source, &self.retired_diag);
+        if (self.user_rules_dir) |dir| try self.overlayRetired(arena, &registry, dir);
+        if (project_rules_dir) |dir| try self.overlayRetired(arena, &registry, dir);
+
+        return registry;
+    }
+
+    fn overlayRetired(self: *Resolver, arena: std.mem.Allocator, registry: *retired.Registry, rules_dir: []const u8) !void {
+        const source = (try fs.rules.readRetired(self.io, arena, rules_dir)) orelse return;
+        const overlay = try retired.parse(arena, source, &self.retired_diag);
+
+        try retired.merge(arena, registry, overlay);
     }
 
     fn discoverRoot(self: *Resolver, arena: std.mem.Allocator, anchor: ?[]const u8) !?[]const u8 {
@@ -101,10 +119,11 @@ pub const Resolver = struct {
         errdefer rule_set.deinit();
 
         self.rule_diag = .{};
-        const table = try lifecycle.build(arena, &rule_set, &self.rule_diag);
+        var table = try lifecycle.build(arena, &rule_set, &self.rule_diag);
+        table.retired = try self.loadRetired(arena, project_rules_dir);
 
         var resolved = try config.resolve(arena, self.global_config, if (project_config) |*c| c else null);
-        try config.applySelection(arena, &rule_set, &resolved, &table);
+        try config.applySelection(arena, &rule_set, &resolved, &table, &self.rule_diag);
 
         ctx.* = .{
             .gpa = self.gpa,

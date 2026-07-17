@@ -639,8 +639,9 @@ pub fn applySelection(
     set: *loader.RuleSet,
     resolved: *Resolved,
     table: *const lifecycle.Table,
+    diag: *rule.Diagnostic,
 ) !void {
-    resolved.settings = try resolveFormerIds(arena, set, resolved.settings, table);
+    resolved.settings = try resolveFormerIds(arena, set, resolved.settings, table, diag);
 
     for (std.enums.values(language.Name)) |lang| {
         const list = set.by_lang.getPtr(lang);
@@ -670,14 +671,24 @@ fn resolveFormerIds(
     set: *loader.RuleSet,
     settings: []const RuleSetting,
     table: *const lifecycle.Table,
+    diag: *rule.Diagnostic,
 ) ![]const RuleSetting {
     const rewritten = try arena.dupe(RuleSetting, settings);
     for (rewritten) |*setting| {
         const scope: ?language.Name = if (setting.project) null else setting.lang orelse continue;
         switch (table.resolve(scope, setting.id)) {
-            .renamed => |canonical| {
+            .renamed, .replaced => |canonical| {
                 try appendRenamedWarning(set, setting.lang, setting.id, canonical);
                 setting.id = canonical;
+            },
+            .removed => |reason| {
+                diag.* = .{
+                    .lang = setting.lang,
+                    .rule_id = setting.id,
+                    .detail = try std.fmt.allocPrint(arena, "removed: {s}", .{reason}),
+                };
+
+                return error.RetiredRuleRemoved;
             },
             .live, .unknown => {},
         }

@@ -220,8 +220,15 @@ fn dispatchSubcommand(c: Command, subcommand: Subcommand) !u8 {
 
 fn resolveContext(c: Command, anchor: ?[]const u8) !?*context_mod.Context {
     const ctx = c.resolver.resolve(anchor) catch |err| {
-        if (err == error.LifecycleCollision) {
+        if (err == error.LifecycleCollision or err == error.RetiredRuleRemoved) {
             try c.resolver.rule_diag.write("kata", c.stderr);
+            return null;
+        }
+        if (err == error.InvalidRetiredEntry or err == error.MissingRetiredReason) {
+            try c.stderr.print("kata: retired.yaml: line {d}: {s}\n", .{
+                c.resolver.retired_diag.line, sources.retired.errorMessage(err),
+            });
+            try c.stderr.flush();
             return null;
         }
         if (c.resolver.diag.line > 0) {

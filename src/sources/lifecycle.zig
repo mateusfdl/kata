@@ -3,6 +3,7 @@ const std = @import("std");
 const lint = @import("engine");
 const dsl = @import("dsl");
 const loader = @import("loader.zig");
+const retired = @import("retired.zig");
 
 const diagnostic = lint.diagnostic;
 const language = lint.language;
@@ -12,6 +13,8 @@ pub const Error = error{ OutOfMemory, LifecycleCollision };
 pub const Resolution = union(enum) {
     live,
     renamed: []const u8,
+    replaced: []const u8,
+    removed: []const u8,
     unknown,
 };
 
@@ -25,11 +28,18 @@ pub const Table = struct {
     arena: std.mem.Allocator,
     by_lang: std.EnumArray(language.Name, Scope) = .initFill(.{}),
     project: Scope = .{},
+    retired: retired.Registry = .empty,
 
     pub fn resolve(self: *const Table, scope: ?language.Name, id: []const u8) Resolution {
         const maps = self.scopeOf(scope);
         if (maps.live.contains(id)) return .live;
         if (maps.aliases.get(id)) |canonical| return .{ .renamed = canonical };
+        if (self.retired.get(id)) |entry| {
+            return switch (entry) {
+                .replaced => |canonical| .{ .replaced = canonical },
+                .removed => |reason| .{ .removed = reason },
+            };
+        }
 
         return .unknown;
     }

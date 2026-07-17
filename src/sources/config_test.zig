@@ -162,7 +162,8 @@ fn buildTable(fx: *RuleFixture) !lifecycle.Table {
 fn select(fx: *RuleFixture, resolved: config.Resolved) !void {
     var r = resolved;
     const table = try buildTable(fx);
-    try config.applySelection(fx.arena(), &fx.set, &r, &table);
+    var diag: lint.rule.Diagnostic = .{};
+    try config.applySelection(fx.arena(), &fx.set, &r, &table, &diag);
 }
 
 test "selection: no configs removes every rule" {
@@ -273,7 +274,8 @@ test "selection: former id activates the canonical rule" {
     var cfg = try expectParseOk("rules:\n  ts:\n    old-name:\n      severity: warn\n");
     defer cfg.deinit();
     var resolved = try config.resolve(fx.arena(), &cfg, null);
-    try config.applySelection(fx.arena(), &fx.set, &resolved, &table);
+    var diag: lint.rule.Diagnostic = .{};
+    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expect(hasId(fx.set.get(.ts), "new-name"));
@@ -300,7 +302,8 @@ test "selection: former id under typescript scope warns once" {
     var cfg = try expectParseOk("rules:\n  typescript:\n    old-name:\n");
     defer cfg.deinit();
     var resolved = try config.resolve(fx.arena(), &cfg, null);
-    try config.applySelection(fx.arena(), &fx.set, &resolved, &table);
+    var diag: lint.rule.Diagnostic = .{};
+    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 1), fx.countTsx());
@@ -308,6 +311,67 @@ test "selection: former id under typescript scope warns once" {
     try std.testing.expectEqualStrings("new-name", resolved.settings[1].id);
     try std.testing.expectEqual(@as(usize, 1), fx.set.warnings.items.len);
     try std.testing.expectEqual(lint.Warning.Kind.renamed, fx.set.warnings.items[0].kind);
+}
+
+test "selection: replaced retired id activates the replacement" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    fx.set = .{ .allocator = fx.arena() };
+    try fx.set.append(.ts, .{ .id = "new-name", .source = dslRule("new-name", "ts", "") });
+    var table = try buildTable(&fx);
+    try table.retired.put(fx.arena(), "old-name", .{ .replaced = "new-name" });
+
+    var cfg = try expectParseOk("rules:\n  ts:\n    old-name:\n");
+    defer cfg.deinit();
+    var resolved = try config.resolve(fx.arena(), &cfg, null);
+    var diag: lint.rule.Diagnostic = .{};
+    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
+
+    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
+    try std.testing.expect(hasId(fx.set.get(.ts), "new-name"));
+    try std.testing.expectEqualStrings("new-name", resolved.settings[0].id);
+    try std.testing.expectEqual(@as(usize, 1), fx.set.warnings.items.len);
+    const w = fx.set.warnings.items[0];
+    try std.testing.expectEqual(lint.Warning.Kind.renamed, w.kind);
+    try std.testing.expectEqualStrings("old-name", w.id);
+    try std.testing.expectEqualStrings("new-name", w.canonical.?);
+}
+
+test "selection: removed retired id fails with the recorded reason" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    fx.set = .{ .allocator = fx.arena() };
+    try fx.set.append(.ts, .{ .id = "new-name", .source = dslRule("new-name", "ts", "") });
+    var table = try buildTable(&fx);
+    try table.retired.put(fx.arena(), "gone-name", .{ .removed = "superseded by the families seam" });
+
+    var cfg = try expectParseOk("rules:\n  ts:\n    gone-name:\n");
+    defer cfg.deinit();
+    var resolved = try config.resolve(fx.arena(), &cfg, null);
+    var diag: lint.rule.Diagnostic = .{};
+    try std.testing.expectError(error.RetiredRuleRemoved, config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag));
+
+    try std.testing.expectEqual(language.Name.ts, diag.lang.?);
+    try std.testing.expectEqualStrings("gone-name", diag.rule_id);
+    try std.testing.expectEqualStrings("removed: superseded by the families seam", diag.detail);
+}
+
+test "selection: live id never consults the retired registry" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    fx.set = .{ .allocator = fx.arena() };
+    try fx.set.append(.ts, .{ .id = "no-console", .source = dslRule("no-console", "ts", "") });
+    var table = try buildTable(&fx);
+    try table.retired.put(fx.arena(), "no-console", .{ .removed = "should never be consulted" });
+
+    var cfg = try expectParseOk("rules:\n  ts:\n    no-console:\n");
+    defer cfg.deinit();
+    var resolved = try config.resolve(fx.arena(), &cfg, null);
+    var diag: lint.rule.Diagnostic = .{};
+    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
+
+    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
+    try std.testing.expectEqual(@as(usize, 0), fx.set.warnings.items.len);
 }
 
 test "config: parses an import-boundary project rule" {

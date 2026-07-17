@@ -20,6 +20,7 @@ comptime {
     _ = @import("server/daemon_test.zig");
     _ = @import("sources/config_test.zig");
     _ = @import("sources/lifecycle_test.zig");
+    _ = @import("sources/retired_test.zig");
     _ = @import("sources/context_test.zig");
     _ = @import("sources/loader_test.zig");
     _ = @import("fs/gitignore_parity_test.zig");

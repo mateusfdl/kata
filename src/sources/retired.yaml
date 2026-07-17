@@ -1,0 +1,6 @@
+# Retired rule ids, global across scopes.
+#
+# old-id:
+#   replaced-by: new-id
+# gone-id:
+#   reason: "why the rule was removed"
