@@ -26,11 +26,20 @@ fn pathLessThan(_: void, a: []const u8, b: []const u8) bool {
 }
 
 fn expectVisited(tmp: *std.testing.TmpDir, expected: []const []const u8) !void {
+    try expectVisitedUnder(tmp, "", expected);
+}
+
+fn expectVisitedUnder(tmp: *std.testing.TmpDir, sub: []const u8, expected: []const []const u8) !void {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
     var path_buf: [256]u8 = undefined;
-    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const tmp_rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    var sub_buf: [256]u8 = undefined;
+    const rel = if (sub.len == 0)
+        tmp_rel
+    else
+        try std.fmt.bufPrint(&sub_buf, "{s}/{s}", .{ tmp_rel, sub });
 
     var paths: std.ArrayList([]const u8) = .empty;
     defer {
@@ -54,6 +63,7 @@ test "walk: gitignore glob patterns prune directories at any depth" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
+    try tmp.dir.createDirPath(io, ".git");
     try tmp.dir.writeFile(io, .{ .sub_path = ".gitignore", .data = "**/gen/\n" });
     try tmp.dir.createDirPath(io, "a/gen");
     try tmp.dir.writeFile(io, .{ .sub_path = "a/gen/x.ts", .data = "" });
@@ -68,6 +78,7 @@ test "walk: nested gitignore overrides shallower scopes" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
+    try tmp.dir.createDirPath(io, ".git");
     try tmp.dir.writeFile(io, .{ .sub_path = ".gitignore", .data = "gen/\n" });
     try tmp.dir.createDirPath(io, "gen");
     try tmp.dir.writeFile(io, .{ .sub_path = "gen/a.ts", .data = "" });
@@ -83,6 +94,7 @@ test "walk: file patterns filter with negation" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
+    try tmp.dir.createDirPath(io, ".git");
     try tmp.dir.writeFile(io, .{ .sub_path = ".gitignore", .data = "gen/*.ts\n!gen/keep.ts\n" });
     try tmp.dir.createDirPath(io, "gen");
     try tmp.dir.writeFile(io, .{ .sub_path = "gen/a.ts", .data = "" });
@@ -112,6 +124,7 @@ test "walk: negation inside an excluded directory cannot re-include" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
+    try tmp.dir.createDirPath(io, ".git");
     try tmp.dir.writeFile(io, .{ .sub_path = ".gitignore", .data = "a/\n!a/b/keep.ts\n" });
     try tmp.dir.createDirPath(io, "a/b");
     try tmp.dir.writeFile(io, .{ .sub_path = "a/b/keep.ts", .data = "" });
@@ -119,6 +132,63 @@ test "walk: negation inside an excluded directory cannot re-include" {
     try tmp.dir.writeFile(io, .{ .sub_path = "ok.ts", .data = "" });
 
     try expectVisited(&tmp, &.{"ok.ts"});
+}
+
+test "walk: ancestor gitignore applies when walking a subdirectory" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, ".git");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".gitignore", .data = "app/gen/\n" });
+    try tmp.dir.createDirPath(io, "app/gen");
+    try tmp.dir.writeFile(io, .{ .sub_path = "app/gen/x.ts", .data = "" });
+    try tmp.dir.createDirPath(io, "app/src");
+    try tmp.dir.writeFile(io, .{ .sub_path = "app/src/y.ts", .data = "" });
+
+    try expectVisitedUnder(&tmp, "app", &.{"src/y.ts"});
+}
+
+test "walk: intermediate ancestor gitignore applies when walking a subdirectory" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, ".git");
+    try tmp.dir.createDirPath(io, "pkg/app/gen");
+    try tmp.dir.writeFile(io, .{ .sub_path = "pkg/.gitignore", .data = "gen/\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "pkg/app/gen/x.ts", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "pkg/app/ok.ts", .data = "" });
+
+    try expectVisitedUnder(&tmp, "pkg/app", &.{"ok.ts"});
+}
+
+test "walk: deeper scope overrides ancestor patterns" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, ".git");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".gitignore", .data = "*.gen.ts\n" });
+    try tmp.dir.createDirPath(io, "app");
+    try tmp.dir.writeFile(io, .{ .sub_path = "app/.gitignore", .data = "!keep.gen.ts\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "app/a.gen.ts", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "app/keep.gen.ts", .data = "" });
+
+    try expectVisitedUnder(&tmp, "app", &.{"keep.gen.ts"});
+}
+
+test "walk: explicit subdirectory target wins over ancestor exclusion" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, ".git");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".gitignore", .data = "app/\n" });
+    try tmp.dir.createDirPath(io, "app");
+    try tmp.dir.writeFile(io, .{ .sub_path = "app/x.ts", .data = "" });
+
+    try expectVisitedUnder(&tmp, "app", &.{"x.ts"});
 }
 
 test "walk: indexPath drops dot target so paths are root relative" {

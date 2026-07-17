@@ -125,6 +125,10 @@ fn pathLessThan(_: void, a: []const u8, b: []const u8) bool {
 }
 
 fn expectWalkerParity(files: []const FileSpec) !void {
+    try expectWalkerParityUnder(files, "");
+}
+
+fn expectWalkerParityUnder(files: []const FileSpec, sub: []const u8) !void {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
@@ -146,13 +150,22 @@ fn expectWalkerParity(files: []const FileSpec) !void {
     var lines = std.mem.splitScalar(u8, status.stdout, '\n');
     while (lines.next()) |line| {
         if (!std.mem.startsWith(u8, line, "?? ")) continue;
-        const path = line[3..];
+        var path = line[3..];
         if (!std.mem.endsWith(u8, path, ".ts")) continue;
+        if (sub.len > 0) {
+            if (!std.mem.startsWith(u8, path, sub) or path[sub.len] != '/') continue;
+            path = path[sub.len + 1 ..];
+        }
         try git_paths.append(gpa, path);
     }
 
     var path_buf: [256]u8 = undefined;
-    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const tmp_rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    var sub_buf: [256]u8 = undefined;
+    const rel = if (sub.len == 0)
+        tmp_rel
+    else
+        try std.fmt.bufPrint(&sub_buf, "{s}/{s}", .{ tmp_rel, sub });
 
     var kata_paths: std.ArrayList([]const u8) = .empty;
     defer {
@@ -228,6 +241,17 @@ test "parity: walker suppresses negations under excluded directories" {
         .{ .path = "a/b/drop.ts" },
         .{ .path = "ok.ts" },
     });
+}
+
+test "parity: walker subdirectory target consults ancestor gitignore" {
+    try expectWalkerParityUnder(&.{
+        .{ .path = ".gitignore", .data = "app/gen/\n*.skip.ts\n" },
+        .{ .path = "app/gen/x.ts" },
+        .{ .path = "app/a.skip.ts" },
+        .{ .path = "app/nested/b.skip.ts" },
+        .{ .path = "app/ok.ts" },
+        .{ .path = "top.ts" },
+    }, "app");
 }
 
 test "parity: walker built-in defaults mirror an explicit gitignore" {
