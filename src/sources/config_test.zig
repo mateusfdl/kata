@@ -2,6 +2,7 @@ const std = @import("std");
 
 const lint = @import("engine");
 const config = @import("config.zig");
+const lifecycle = @import("lifecycle.zig");
 const loader = @import("loader.zig");
 
 const language = lint.language;
@@ -145,12 +146,31 @@ fn hasId(rules: []const lint.rule.RawRule, id: []const u8) bool {
     return false;
 }
 
+fn dslRule(comptime id: []const u8, comptime lang: []const u8, comptime clauses: []const u8) []const u8 {
+    return "rule " ++ id ++ " {\n" ++ clauses ++
+        "  lang " ++ lang ++ "\n" ++
+        "  match identifier @id\n" ++
+        "  emit @id { message \"m\" }\n" ++
+        "}\n";
+}
+
+fn buildTable(fx: *RuleFixture) !lifecycle.Table {
+    var rule_diag: lint.rule.Diagnostic = .{};
+    return lifecycle.build(fx.arena(), &fx.set, &rule_diag);
+}
+
+fn select(fx: *RuleFixture, resolved: config.Resolved) !void {
+    var r = resolved;
+    const table = try buildTable(fx);
+    try config.applySelection(fx.arena(), &fx.set, &r, &table);
+}
+
 test "selection: no configs removes every rule" {
     var fx = RuleFixture.init();
     defer fx.deinit();
     try fx.build();
 
-    config.applySelection(&fx.set, try config.resolve(fx.arena(), null, null));
+    try select(&fx, try config.resolve(fx.arena(), null, null));
 
     try std.testing.expectEqual(@as(usize, 0), fx.countTs());
     try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
@@ -164,7 +184,7 @@ test "selection: config without rules key removes every rule" {
 
     var cfg = try expectParseOk("ratchet: true\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
+    try select(&fx, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 0), fx.countTs());
     try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
@@ -178,7 +198,7 @@ test "selection: scoped rule keeps exactly one rule" {
 
     var cfg = try expectParseOk("rules:\n  ts:\n    no-console:\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
+    try select(&fx, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
@@ -193,7 +213,7 @@ test "selection: typescript scope keeps the rule in ts and tsx" {
 
     var cfg = try expectParseOk("rules:\n  typescript:\n    no-console:\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
+    try select(&fx, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 1), fx.countTsx());
@@ -219,7 +239,7 @@ test "selection: enabled false prunes a rule" {
         \\
     );
     defer cfg.deinit();
-    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
+    try select(&fx, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 2), fx.countTsx());
@@ -236,11 +256,58 @@ test "selection: rule entry matching nothing is ignored" {
 
     var cfg = try expectParseOk("rules:\n  ts:\n    no-console:\n    made-up:\n    no-such-rule:\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
+    try select(&fx, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
     try std.testing.expectEqual(@as(usize, 0), fx.countGo());
+}
+
+test "selection: former id activates the canonical rule" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    fx.set = .{ .allocator = fx.arena() };
+    try fx.set.append(.ts, .{ .id = "new-name", .source = dslRule("new-name", "ts", "  former-ids old-name\n") });
+    const table = try buildTable(&fx);
+
+    var cfg = try expectParseOk("rules:\n  ts:\n    old-name:\n      severity: warn\n");
+    defer cfg.deinit();
+    var resolved = try config.resolve(fx.arena(), &cfg, null);
+    try config.applySelection(fx.arena(), &fx.set, &resolved, &table);
+
+    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
+    try std.testing.expect(hasId(fx.set.get(.ts), "new-name"));
+    try std.testing.expectEqual(@as(usize, 1), resolved.settings.len);
+    try std.testing.expectEqualStrings("new-name", resolved.settings[0].id);
+    try std.testing.expectEqual(@as(?lint.diagnostic.Severity, .warn), resolved.settings[0].severity);
+
+    try std.testing.expectEqual(@as(usize, 1), fx.set.warnings.items.len);
+    const w = fx.set.warnings.items[0];
+    try std.testing.expectEqual(lint.Warning.Kind.renamed, w.kind);
+    try std.testing.expectEqual(language.Name.ts, w.lang.?);
+    try std.testing.expectEqualStrings("old-name", w.id);
+    try std.testing.expectEqualStrings("new-name", w.canonical.?);
+}
+
+test "selection: former id under typescript scope warns once" {
+    var fx = RuleFixture.init();
+    defer fx.deinit();
+    fx.set = .{ .allocator = fx.arena() };
+    try fx.set.append(.ts, .{ .id = "new-name", .source = dslRule("new-name", "ts, tsx", "  former-ids old-name\n") });
+    try fx.set.append(.tsx, .{ .id = "new-name", .source = dslRule("new-name", "ts, tsx", "  former-ids old-name\n") });
+    const table = try buildTable(&fx);
+
+    var cfg = try expectParseOk("rules:\n  typescript:\n    old-name:\n");
+    defer cfg.deinit();
+    var resolved = try config.resolve(fx.arena(), &cfg, null);
+    try config.applySelection(fx.arena(), &fx.set, &resolved, &table);
+
+    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
+    try std.testing.expectEqual(@as(usize, 1), fx.countTsx());
+    try std.testing.expectEqualStrings("new-name", resolved.settings[0].id);
+    try std.testing.expectEqualStrings("new-name", resolved.settings[1].id);
+    try std.testing.expectEqual(@as(usize, 1), fx.set.warnings.items.len);
+    try std.testing.expectEqual(lint.Warning.Kind.renamed, fx.set.warnings.items[0].kind);
 }
 
 test "config: parses an import-boundary project rule" {
@@ -514,7 +581,7 @@ test "selection: project raws need a project scope entry" {
 
     var cfg = try expectParseOk("rules:\n  project:\n    isolation:\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
+    try select(&fx, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.set.projectRaws().len);
     try std.testing.expectEqualStrings("isolation", fx.set.projectRaws()[0].id);
@@ -527,7 +594,7 @@ test "selection: project scope never enables language rules" {
 
     var cfg = try expectParseOk("rules:\n  project:\n    no-console:\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
+    try select(&fx, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 0), fx.countTs());
 }
@@ -541,7 +608,7 @@ test "selection: project scope enabled false prunes a project raw" {
 
     var cfg = try expectParseOk("rules:\n  project:\n    isolation:\n    boundaries:\n      enabled: false\n");
     defer cfg.deinit();
-    config.applySelection(&fx.set, try config.resolve(fx.arena(), &cfg, null));
+    try select(&fx, try config.resolve(fx.arena(), &cfg, null));
 
     try std.testing.expectEqual(@as(usize, 1), fx.set.projectRaws().len);
     try std.testing.expectEqualStrings("isolation", fx.set.projectRaws()[0].id);

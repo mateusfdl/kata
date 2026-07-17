@@ -103,8 +103,8 @@ pub const Resolver = struct {
         self.rule_diag = .{};
         const table = try lifecycle.build(arena, &rule_set, &self.rule_diag);
 
-        const resolved = try config.resolve(arena, self.global_config, if (project_config) |*c| c else null);
-        config.applySelection(&rule_set, resolved);
+        var resolved = try config.resolve(arena, self.global_config, if (project_config) |*c| c else null);
+        try config.applySelection(arena, &rule_set, &resolved, &table);
 
         ctx.* = .{
             .gpa = self.gpa,
