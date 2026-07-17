@@ -1,5 +1,40 @@
 const std = @import("std");
 
+pub const Verdict = enum { ignored, included, unmatched };
+
+pub const Scope = struct {
+    dir_path: []const u8,
+    patterns: []const Pattern,
+
+    pub fn parse(
+        arena: std.mem.Allocator,
+        dir_path: []const u8,
+        bytes: []const u8,
+    ) error{OutOfMemory}!Scope {
+        var patterns: std.ArrayList(Pattern) = .empty;
+        var lines = std.mem.splitScalar(u8, bytes, '\n');
+        while (lines.next()) |line| {
+            const pattern = try Pattern.parse(arena, line) orelse continue;
+            try patterns.append(arena, pattern);
+        }
+
+        return .{ .dir_path = dir_path, .patterns = try patterns.toOwnedSlice(arena) };
+    }
+
+    pub fn match(scope: Scope, rel_to_scope: []const u8, is_dir: bool) ?Verdict {
+        var i = scope.patterns.len;
+        while (i > 0) {
+            i -= 1;
+            const pattern = scope.patterns[i];
+            if (pattern.matches(rel_to_scope, is_dir)) {
+                return if (pattern.negated) .included else .ignored;
+            }
+        }
+
+        return null;
+    }
+};
+
 pub const Pattern = struct {
     negated: bool,
     dir_only: bool,

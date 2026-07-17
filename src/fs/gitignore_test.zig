@@ -181,6 +181,48 @@ test "gitignore: dir-only patterns require a directory" {
     try expectMatches(a, "**/build/", "a/build", false, false);
 }
 
+fn expectVerdict(scope: gitignore.Scope, path: []const u8, is_dir: bool, want: ?gitignore.Verdict) !void {
+    try std.testing.expectEqual(want, scope.match(path, is_dir));
+}
+
+test "gitignore: scope parse drops comments and blank lines" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const scope = try gitignore.Scope.parse(arena.allocator(), "", "# header\n\nnode_modules/\r\n\ndist/\n");
+    try std.testing.expectEqualStrings("", scope.dir_path);
+    try std.testing.expectEqual(@as(usize, 2), scope.patterns.len);
+}
+
+test "gitignore: scope last matching pattern wins" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const scope = try gitignore.Scope.parse(arena.allocator(), "", "logs/*.log\n!logs/keep.log\n");
+    try expectVerdict(scope, "logs/a.log", false, .ignored);
+    try expectVerdict(scope, "logs/keep.log", false, .included);
+    try expectVerdict(scope, "logs/x.txt", false, null);
+}
+
+test "gitignore: scope negation before exclusion loses" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const scope = try gitignore.Scope.parse(arena.allocator(), "", "!keep.log\nkeep*\n");
+    try expectVerdict(scope, "keep.log", false, .ignored);
+}
+
+test "gitignore: scope dir-only patterns skip files" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const scope = try gitignore.Scope.parse(arena.allocator(), "sub", "build/\n");
+    try std.testing.expectEqualStrings("sub", scope.dir_path);
+    try expectVerdict(scope, "build", true, .ignored);
+    try expectVerdict(scope, "build", false, null);
+    try expectVerdict(scope, "a/build", true, .ignored);
+}
+
 test "gitignore: parse double-star segments" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
