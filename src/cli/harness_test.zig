@@ -256,6 +256,52 @@ test "harness: a single expectation does not cover two diagnostics" {
     try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:2 unexpected [flag-any]") != null);
 }
 
+const renamed_flag_any_rule =
+    \\rule flag-any {
+    \\  former-ids old-flag
+    \\  lang ts, tsx
+    \\  match as_expression @match {
+    \\    child: predefined_type @t
+    \\  }
+    \\  where { text(@t) == "any" }
+    \\  emit @match { message "as any is not allowed" }
+    \\}
+;
+
+test "harness: former id expectation matches the renamed rule" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "flag-any.kata", renamed_flag_any_rule, "sample.ts", "// kata-expect: old-flag\n" ++
+        "const x = foo as any;\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.pass, outcome);
+    const expected = try std.fmt.allocPrint(
+        s.arena.allocator(),
+        "{s}/ts/tests/sample.ts:1 renamed [old-flag -> flag-any]\ntested 1 fixtures, 0 failures\n",
+        .{s.rules_dir},
+    );
+    try std.testing.expectEqualStrings(expected, s.out.written());
+}
+
+test "harness: unknown expectation id reports missing" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: no-such\n" ++
+        "const ok: string = \"1\";\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.failures, outcome);
+    const expected = try std.fmt.allocPrint(
+        s.arena.allocator(),
+        "{s}/ts/tests/sample.ts:2 missing [no-such]\ntested 1 fixtures, 1 failures\n",
+        .{s.rules_dir},
+    );
+    try std.testing.expectEqualStrings(expected, s.out.written());
+}
+
 const kata_no_console_rule =
     \\rule no-console {
     \\  lang ts

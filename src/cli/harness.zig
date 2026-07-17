@@ -7,6 +7,7 @@ const sources = @import("../sources.zig");
 
 const Engine = lint.Engine;
 const language = lint.language;
+const lifecycle = sources.lifecycle;
 const loader = sources.loader;
 const expect_marker = "// kata-expect:";
 
@@ -38,6 +39,15 @@ pub fn run(
     };
     defer rule_set.deinit();
 
+    var rule_diag: lint.rule.Diagnostic = .{};
+    const table = lifecycle.build(arena, &rule_set, &rule_diag) catch |err| switch (err) {
+        error.LifecycleCollision => {
+            try rule_diag.write("kata test", stderr);
+            return .invalid;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+
     var engine = Engine.init(gpa, &rule_set, dsl.engine_compiler.ruleCompiler());
     defer engine.deinit();
     if (!try engine.prewarmOrReport("kata test", stderr)) return .invalid;
@@ -51,7 +61,7 @@ pub fn run(
 
     for (fixtures) |fixture| {
         totals.fixtures += 1;
-        totals.failures += try checkFixture(arena, &engine, fixture.lang, fixture.source, fixture.path, stdout);
+        totals.failures += try checkFixture(arena, &engine, &table, fixture.lang, fixture.source, fixture.path, stdout);
     }
 
     try stdout.print("tested {d} fixtures, {d} failures\n", .{ totals.fixtures, totals.failures });
@@ -63,6 +73,7 @@ pub fn run(
 fn checkFixture(
     arena: std.mem.Allocator,
     engine: *Engine,
+    table: *const lifecycle.Table,
     lang: language.Name,
     source: []const u8,
     path: []const u8,
@@ -70,7 +81,7 @@ fn checkFixture(
 ) !usize {
     var expectations: std.ArrayList(Expectation) = .empty;
     var annotation_lines: std.ArrayList(u32) = .empty;
-    var failures = try parseAnnotations(arena, source, path, stdout, &expectations, &annotation_lines);
+    var failures = try parseAnnotations(arena, table, lang, source, path, stdout, &expectations, &annotation_lines);
 
     const diagnostics = try engine.lint(arena, source, lang, path);
 
@@ -103,6 +114,8 @@ const Annotation = struct {
 
 fn parseAnnotations(
     arena: std.mem.Allocator,
+    table: *const lifecycle.Table,
+    lang: language.Name,
     source: []const u8,
     path: []const u8,
     stdout: *std.Io.Writer,
@@ -153,7 +166,17 @@ fn parseAnnotations(
         }
 
         for (annotation.ids) |id| {
-            try expectations.append(arena, .{ .line = target, .rule_id = id });
+            var rule_id = id;
+            switch (table.resolve(lang, id)) {
+                .renamed => |canonical| {
+                    try stdout.print("{s}:{d} renamed [{s} -> {s}]\n", .{ path, annotation.line + 1, id, canonical });
+
+                    rule_id = canonical;
+                },
+                .live, .unknown => {},
+            }
+
+            try expectations.append(arena, .{ .line = target, .rule_id = rule_id });
         }
     }
 
