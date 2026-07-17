@@ -170,6 +170,14 @@ Schema:
 - Listing the same rule twice for one scope is an error, including a
   `typescript` entry overlapping a `ts` or `tsx` entry for the same id.
 - Entries matching no available rule are ignored.
+- An entry naming a rule's former id (see `former-ids` below) activates the
+  renamed rule, applies the entry's `severity` and `exclude` to it, and prints
+  `kata: warning: rule id 'old' was renamed to 'new'; update rules.yaml`.
+- An entry naming a retired id follows the retired registry: a `replaced-by`
+  id redirects with the same rename warning; a removed id aborts startup with
+  the recorded reason.
+- Experimental rules (see `maturity` below) activate only with an explicit
+  `enabled: true`; a bare entry prints a warning and skips the rule.
 - `#` starts a comment to end of line. Blank lines are ignored.
 - Indentation is two spaces per level. Tabs are rejected.
 - Unknown top-level keys are rejected to prevent silent typos.
@@ -244,6 +252,27 @@ It creates the parent directory if needed, refuses to overwrite an existing
 file, and prints the path of the new `.kata` file ready for editing, plus a
 reminder to add the rule under `rules:`.
 
+### Retired ids
+
+Renames are resolved through `former-ids` while the rule still exists. When a
+rule is deleted outright, its id moves to a retired registry so configs that
+reference it fail loudly instead of going silently inert. kata ships an
+embedded registry and reads an optional `retired.yaml` next to each rules dir
+(`$XDG_CONFIG_HOME/kata/retired.yaml`, `.kata/retired.yaml`); later tiers
+override earlier ones per id. Ids are global across scopes:
+
+```yaml
+old-id:
+  replaced-by: new-id
+gone-id:
+  reason: "superseded by the no-any family"
+```
+
+`replaced-by` redirects a config entry to the new id with a rename warning.
+An entry with only `reason` turns any config reference into a startup error
+carrying that reason. Live ids and `former-ids` aliases resolve first; the
+registry is consulted last.
+
 ### Rule syntax
 
 Rules are written in the kata DSL as `.kata` files:
@@ -296,6 +325,33 @@ So `exclude paths "**/*_test.go", "vendor/"` skips the rule in every `_test.go`
 file and anywhere under a top-level `vendor/`. Path guards are a no-op when no
 filename is available (the `--lang` one-shot reading stdin without
 `--filename`).
+
+A rule declares its lifecycle with two optional clauses:
+
+```kata
+rule no-console-call {
+  maturity experimental
+  former-ids no-console-log, "old-no-console"
+
+  lang ts
+
+  match call_expression @match
+
+  emit @match { message "no console" }
+}
+```
+
+- `maturity experimental | stable | deprecated` defaults to `stable`.
+  Experimental rules need an explicit `enabled: true` in `rules.yaml` to
+  activate. Deprecated rules run normally and print a deprecation warning at
+  startup. Every diagnostic carries the rule's maturity in the JSON report and
+  daemon protocol (`"maturity":"stable"`), so downstream tooling can filter on
+  it.
+- `former-ids` lists ids the rule was previously published under. Config
+  entries and `kata-expect` fixture annotations naming a former id resolve to
+  the renamed rule, each with a warning naming the new id. A former id that
+  collides with a live rule id in the same scope, or is claimed by two rules,
+  fails startup.
 
 Matchers accept alternations, and a field block on an alternation is
 distributed into every branch:
