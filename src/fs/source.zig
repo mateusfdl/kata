@@ -2,6 +2,7 @@ const std = @import("std");
 
 const lint = @import("engine");
 const file = @import("file.zig");
+const gitignore = @import("gitignore.zig");
 const paths = @import("path");
 
 const language = lint.language;
@@ -9,7 +10,6 @@ const language = lint.language;
 pub const max_file_bytes: usize = 4 * 1024 * 1024;
 
 const max_gitignore_bytes: usize = 1024 * 1024;
-const git_dir = ".git";
 const gitignore_file = ".gitignore";
 
 pub fn walkFiles(
@@ -24,18 +24,40 @@ pub fn walkFiles(
 
     var scratch = std.heap.ArenaAllocator.init(gpa);
     defer scratch.deinit();
-    const ignored = try collectIgnoredDirs(io, scratch.allocator(), &dir);
+    const arena = scratch.allocator();
+
+    var stack = try gitignore.Stack.init(arena);
+    if (dir.readFileAlloc(io, gitignore_file, arena, .limited(max_gitignore_bytes))) |bytes| {
+        try stack.pushScope("", bytes);
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+
+        else => return err,
+    }
 
     var walker = try dir.walkSelectively(gpa);
     defer walker.deinit();
 
     var files: usize = 0;
     while (try walker.next(io)) |entry| {
+        stack.popTo(entry.path);
         if (entry.kind == .directory) {
-            if (!containsName(ignored, entry.basename)) try walker.enter(io, entry);
+            switch (stack.decide(entry.path, true)) {
+                .ignored => {
+                    if (stack.negationCouldMatchUnder(entry.path)) {
+                        try stack.pushExcluded(entry.path);
+                        try walker.enter(io, entry);
+                    }
+                },
+                .included, .unmatched => {
+                    try pushChildScope(io, &stack, arena, entry);
+                    try walker.enter(io, entry);
+                },
+            }
             continue;
         }
         if (entry.kind != .file) continue;
+        if (stack.decide(entry.path, false) == .ignored) continue;
         const lang = languageOf(entry.basename) orelse continue;
 
         const source = entry.dir.readFileAlloc(io, entry.basename, gpa, .limited(max_file_bytes)) catch continue;
@@ -78,44 +100,18 @@ pub fn languageOf(name: []const u8) ?language.Name {
     };
 }
 
-fn collectIgnoredDirs(io: std.Io, arena: std.mem.Allocator, dir: *std.Io.Dir) ![]const []const u8 {
-    var list: std.ArrayList([]const u8) = .empty;
-    try list.append(arena, git_dir);
-
-    if (dir.readFileAlloc(io, gitignore_file, arena, .limited(max_gitignore_bytes))) |bytes| {
-        try appendIgnoredDirs(arena, bytes, &list);
+fn pushChildScope(
+    io: std.Io,
+    stack: *gitignore.Stack,
+    arena: std.mem.Allocator,
+    entry: std.Io.Dir.Walker.Entry,
+) !void {
+    const sub_path = try std.fmt.allocPrint(arena, "{s}/{s}", .{ entry.basename, gitignore_file });
+    if (entry.dir.readFileAlloc(io, sub_path, arena, .limited(max_gitignore_bytes))) |bytes| {
+        try stack.pushScope(entry.path, bytes);
     } else |err| switch (err) {
         error.FileNotFound => {},
 
         else => return err,
     }
-
-    return list.toOwnedSlice(arena);
-}
-
-pub fn appendIgnoredDirs(
-    arena: std.mem.Allocator,
-    gitignore: []const u8,
-    out: *std.ArrayList([]const u8),
-) !void {
-    var lines = std.mem.splitScalar(u8, gitignore, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \t\r");
-        if (line.len == 0 or line[0] == '#' or line[0] == '!') continue;
-
-        if (std.mem.indexOfAny(u8, line, "*?[") != null) continue;
-
-        const name = std.mem.trimEnd(u8, std.mem.trimStart(u8, line, "/"), "/");
-        if (name.len == 0 or std.mem.indexOfScalar(u8, name, '/') != null) continue;
-
-        try out.append(arena, name);
-    }
-}
-
-fn containsName(names: []const []const u8, name: []const u8) bool {
-    for (names) |n| {
-        if (std.mem.eql(u8, n, name)) return true;
-    }
-
-    return false;
 }
