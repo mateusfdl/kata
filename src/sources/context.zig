@@ -4,6 +4,7 @@ const fs = @import("../fs.zig");
 const lint = @import("engine");
 const config = @import("config.zig");
 const dsl = @import("dsl");
+const lifecycle = @import("lifecycle.zig");
 const loader = @import("loader.zig");
 
 const Engine = lint.Engine;
@@ -18,6 +19,7 @@ pub const Context = struct {
     project_config: ?config.Config,
     resolved: config.Resolved,
     rule_set: loader.RuleSet,
+    lifecycle: lifecycle.Table,
     engine: Engine,
 
     pub fn deinit(self: *Context) void {
@@ -40,6 +42,7 @@ pub const Resolver = struct {
     user_rules_dir: ?[]const u8 = null,
     global_config: ?*const config.Config = null,
     diag: config.Diagnostic = .{},
+    rule_diag: lint.rule.Diagnostic = .{},
 
     pub fn resolve(self: *Resolver, anchor: ?[]const u8) !*Context {
         const ctx = try self.gpa.create(Context);
@@ -97,6 +100,9 @@ pub const Resolver = struct {
 
         errdefer rule_set.deinit();
 
+        self.rule_diag = .{};
+        const table = try lifecycle.build(arena, &rule_set, &self.rule_diag);
+
         const resolved = try config.resolve(arena, self.global_config, if (project_config) |*c| c else null);
         config.applySelection(&rule_set, resolved);
 
@@ -107,6 +113,7 @@ pub const Resolver = struct {
             .project_config = project_config,
             .resolved = resolved,
             .rule_set = rule_set,
+            .lifecycle = table,
             .engine = undefined,
         };
 

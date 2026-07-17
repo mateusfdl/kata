@@ -220,6 +220,10 @@ fn dispatchSubcommand(c: Command, subcommand: Subcommand) !u8 {
 
 fn resolveContext(c: Command, anchor: ?[]const u8) !?*context_mod.Context {
     const ctx = c.resolver.resolve(anchor) catch |err| {
+        if (err == error.LifecycleCollision) {
+            try c.resolver.rule_diag.write("kata", c.stderr);
+            return null;
+        }
         if (c.resolver.diag.line > 0) {
             try c.stderr.print("kata: .kata/rules.yaml: line {d}: {s}\n", .{ c.resolver.diag.line, config.errorMessage(err) });
             try c.stderr.flush();
