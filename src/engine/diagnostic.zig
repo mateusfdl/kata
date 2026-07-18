@@ -19,6 +19,13 @@ pub const Maturity = enum {
     deprecated,
 };
 
+pub const ContextKind = enum {
+    function,
+    method,
+    class,
+    namespace,
+};
+
 pub const Diagnostic = struct {
     rule_id: []const u8,
     language: []const u8,

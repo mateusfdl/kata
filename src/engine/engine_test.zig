@@ -1,7 +1,46 @@
 const std = @import("std");
 const diagnostic = @import("engine").diagnostic;
+const family = @import("engine").family;
 const language = @import("engine").language;
 const test_fixture = @import("../test_fixture.zig");
+
+test "engine: family adapters classify enclosing context kinds" {
+    const Case = struct {
+        family: family.Family,
+        kind_name: []const u8,
+        context_kind: diagnostic.ContextKind,
+    };
+    const cases = [_]Case{
+        .{ .family = .ts_family, .kind_name = "function_declaration", .context_kind = .function },
+        .{ .family = .ts_family, .kind_name = "function_expression", .context_kind = .function },
+        .{ .family = .ts_family, .kind_name = "generator_function_declaration", .context_kind = .function },
+        .{ .family = .ts_family, .kind_name = "generator_function", .context_kind = .function },
+        .{ .family = .ts_family, .kind_name = "arrow_function", .context_kind = .function },
+        .{ .family = .ts_family, .kind_name = "method_definition", .context_kind = .method },
+        .{ .family = .ts_family, .kind_name = "class_declaration", .context_kind = .class },
+        .{ .family = .ts_family, .kind_name = "abstract_class_declaration", .context_kind = .class },
+        .{ .family = .ts_family, .kind_name = "interface_declaration", .context_kind = .class },
+        .{ .family = .ts_family, .kind_name = "internal_module", .context_kind = .namespace },
+        .{ .family = .ts_family, .kind_name = "module", .context_kind = .namespace },
+        .{ .family = .go, .kind_name = "function_declaration", .context_kind = .function },
+        .{ .family = .go, .kind_name = "method_declaration", .context_kind = .method },
+        .{ .family = .go, .kind_name = "type_declaration", .context_kind = .class },
+    };
+
+    for (cases) |case| {
+        const adapter = family.of(case.family);
+        const kind_id = adapter.kindId(case.kind_name, true);
+
+        try std.testing.expectEqual(case.context_kind, adapter.contextKind(kind_id).?);
+    }
+
+    for ([_]family.Family{ .ts_family, .go }) |family_name| {
+        const adapter = family.of(family_name);
+        const kind_id = adapter.kindId("if_statement", true);
+
+        try std.testing.expectEqual(@as(?diagnostic.ContextKind, null), adapter.contextKind(kind_id));
+    }
+}
 
 const kata_no_as_any_rule =
     \\rule no-as-any {

@@ -3,6 +3,7 @@ const ts = @import("tree_sitter");
 
 const node_kinds = @import("node_kinds");
 
+const diagnostic = @import("../diagnostic.zig");
 const facts = @import("../facts.zig");
 const family = @import("family.zig");
 const metric = @import("../metric.zig");
@@ -23,6 +24,7 @@ pub const adapter: family.Adapter = .{
     .buildKindRemap = buildKindRemap,
     .buildFieldRemap = buildFieldRemap,
     .buildMetricTable = metric_table.build,
+    .contextKind = contextKind,
     .paramCount = paramCount,
     .fact_patterns = fact_patterns,
     .resolveContainers = resolveContainers,
@@ -164,6 +166,28 @@ fn innermostClassName(classes: []const facts.ClassDef, start: u32, end: u32) ?[]
     }
 
     return if (best) |i| classes[i].name else null;
+}
+
+fn contextKind(id: u16) ?diagnostic.ContextKind {
+    const kind = std.enums.fromInt(kinds.Kind, id) orelse return null;
+
+    return switch (kind) {
+        .function_declaration,
+        .function_expression,
+        .generator_function_declaration,
+        .generator_function,
+        .arrow_function,
+        => .function,
+        .method_definition => .method,
+        .class_declaration,
+        .abstract_class_declaration,
+        .interface_declaration,
+        => .class,
+        .internal_module,
+        .module,
+        => .namespace,
+        else => null,
+    };
 }
 
 fn classifyMetric(k: kinds.Kind) ?metric.MetricKind {

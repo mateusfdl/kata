@@ -3,6 +3,7 @@ const ts = @import("tree_sitter");
 
 const node_kinds = @import("node_kinds");
 
+const diagnostic = @import("../diagnostic.zig");
 const facts = @import("../facts.zig");
 const metric = @import("../metric.zig");
 const query = @import("../query.zig");
@@ -22,6 +23,7 @@ pub const Adapter = struct {
     buildKindRemap: *const fn (grammar: *const ts.Language, gpa: std.mem.Allocator) std.mem.Allocator.Error![]u16,
     buildFieldRemap: *const fn (grammar: *const ts.Language, gpa: std.mem.Allocator) std.mem.Allocator.Error![]u16,
     buildMetricTable: *const fn (gpa: std.mem.Allocator) std.mem.Allocator.Error![]?metric.MetricKind,
+    contextKind: *const fn (id: u16) ?diagnostic.ContextKind,
     paramCount: *const fn (params: Node) u32,
     fact_patterns: []const query.Pattern,
     resolveContainers: *const fn (classes: []const facts.ClassDef, methods: []facts.MethodDef, calls: []facts.Call) void,
