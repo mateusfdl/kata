@@ -58,6 +58,7 @@ const Report = struct {
         },
         severity: []const u8,
         maturity: []const u8,
+        fingerprint: []const u8,
     },
     clean: bool,
 };

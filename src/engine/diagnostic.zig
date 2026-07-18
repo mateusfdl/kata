@@ -26,6 +26,7 @@ pub const Diagnostic = struct {
     range: Range,
     severity: Severity = .@"error",
     maturity: Maturity = .stable,
+    fingerprint: []const u8 = "",
 };
 
 pub const Report = struct {

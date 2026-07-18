@@ -4,6 +4,7 @@ pub const expr = @import("expr.zig");
 pub const fact_rule = @import("fact_rule.zig");
 pub const family = @import("family/family.zig");
 pub const facts = @import("facts.zig");
+pub const fingerprint = @import("fingerprint.zig");
 pub const glob = @import("glob.zig");
 pub const language = @import("language.zig");
 pub const matcher = @import("matcher.zig");

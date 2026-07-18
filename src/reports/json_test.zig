@@ -16,7 +16,7 @@ fn diagnostic(severity: lint.diagnostic.Severity) lint.diagnostic.Diagnostic {
 const diagnostic_json =
     "{\"rule_id\":\"no-console\",\"language\":\"ts\",\"message\":\"console is not allowed\"," ++
     "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
-    "\"severity\":\"error\",\"maturity\":\"stable\"}";
+    "\"severity\":\"error\",\"maturity\":\"stable\",\"fingerprint\":\"\"}";
 
 test "json: clean run renders empty files and the summary" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);

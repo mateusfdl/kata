@@ -59,6 +59,7 @@ test "protocol: response round-trips with a populated report" {
             .end = .{ .line = 0, .column = 24 },
         },
         .maturity = .deprecated,
+        .fingerprint = "abc123",
     }};
 
     const resp: protocol.Response = .{
@@ -96,6 +97,7 @@ test "protocol: response round-trips with a populated report" {
     try std.testing.expectEqual(@as(u32, 0), d.range.end.line);
     try std.testing.expectEqual(@as(u32, 24), d.range.end.column);
     try std.testing.expectEqual(diagnostic.Maturity.deprecated, d.maturity);
+    try std.testing.expectEqualStrings("abc123", d.fingerprint);
 }
 
 test "protocol: readFrame returns the exact body" {
