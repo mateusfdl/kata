@@ -65,6 +65,7 @@ test "daemon: violation replies ok with a populated report" {
     try std.testing.expectEqual(@as(u32, 11), d.range.start.column);
     try std.testing.expectEqual(@as(u32, 0), d.range.end.line);
     try std.testing.expectEqual(@as(u32, 24), d.range.end.column);
+    try std.testing.expectEqualStrings("f8442f8df97b699227020f1ca99a3d34007e51a6f4a3934089158471a8f2963b", d.fingerprint);
 }
 
 test "daemon: a mismatched binary mtime replies stale without linting" {

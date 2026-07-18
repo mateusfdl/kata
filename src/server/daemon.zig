@@ -185,6 +185,9 @@ pub fn handle(
     const all = appendProjectDiagnostics(ctx, engine, arena, source, lang, req.filename, diagnostics) catch
         return reply(ctx, .fail, null, "project analysis failed");
 
+    lint.fingerprint.assign(arena, req.filename orelse "", source, all) catch
+        return reply(ctx, .fail, null, "fingerprint failed");
+
     return reply(ctx, .ok, .{
         .language = lang.toString(),
         .diagnostics = all,
@@ -244,8 +247,8 @@ fn appendProjectDiagnostics(
     source: []const u8,
     lang: language.Name,
     filename: ?[]const u8,
-    diagnostics: []const diagnostic.Diagnostic,
-) ![]const diagnostic.Diagnostic {
+    diagnostics: []diagnostic.Diagnostic,
+) ![]diagnostic.Diagnostic {
     const project = ctx.project orelse return diagnostics;
     const path = filename orelse return diagnostics;
 

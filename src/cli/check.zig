@@ -32,7 +32,7 @@ pub fn run(
         else => return error.UnsupportedTarget,
     };
 
-    if (index_ptr) |idx| counts.add(try reportProjectViolations(gpa, engine, project_rules, fact_rules, idx, reporter));
+    if (index_ptr) |idx| counts.add(try reportProjectViolations(io, gpa, engine, project_rules, fact_rules, idx, reporter));
 
     try reporter.finish(counts);
 
@@ -106,6 +106,7 @@ fn reportFile(
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const diagnostics = try engine.lint(arena.allocator(), source, lang, path);
+    try lint.fingerprint.assign(arena.allocator(), path, source, diagnostics);
 
     if (index) |idx| try idx.put(try engine.extractFacts(idx.allocator, source, lang, path));
 
@@ -119,6 +120,7 @@ fn reportFile(
 }
 
 fn reportProjectViolations(
+    io: std.Io,
     gpa: std.mem.Allocator,
     engine: *Engine,
     project_rules: []const lint.project_rule.ProjectRule,
@@ -133,6 +135,20 @@ fn reportProjectViolations(
     const violations = try std.mem.concat(arena.allocator(), lint.project_rule.Violation, &.{ yaml_violations, fact_violations });
 
     std.mem.sort(lint.project_rule.Violation, violations, {}, lint.project_rule.violationLessThan);
+
+    var start: usize = 0;
+    while (start < violations.len) {
+        var end = start + 1;
+        while (end < violations.len and std.mem.eql(u8, violations[start].path, violations[end].path)) : (end += 1) {}
+
+        const source = try fs.source.read(io, arena.allocator(), violations[start].path);
+        const diagnostics = try arena.allocator().alloc(lint.diagnostic.Diagnostic, end - start);
+        for (violations[start..end], diagnostics) |violation, *d| d.* = violation.diagnostic;
+        try lint.fingerprint.assign(arena.allocator(), violations[start].path, source, diagnostics);
+        for (violations[start..end], diagnostics) |*violation, d| violation.diagnostic.fingerprint = d.fingerprint;
+
+        start = end;
+    }
 
     try reporter.project(violations);
 

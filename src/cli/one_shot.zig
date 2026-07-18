@@ -43,6 +43,9 @@ pub fn run(
     const diagnostics = engine.lint(arena.allocator(), source, lang, parsed.filename) catch |err|
         return try output.internal(opts.stderr, "lint", err, exit.internal_error);
 
+    lint.fingerprint.assign(arena.allocator(), parsed.filename, source, diagnostics) catch |err|
+        return try output.internal(opts.stderr, "fingerprint", err, exit.internal_error);
+
     writeReport(opts.stdout, lang, diagnostics) catch |err|
         return try output.internal(opts.stderr, "encode report", err, exit.internal_error);
 

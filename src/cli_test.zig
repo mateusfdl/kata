@@ -102,6 +102,7 @@ test "cli: violation exits 2" {
     try std.testing.expectEqualStrings("as any is not allowed", parsed.value.diagnostics[0].message);
     try std.testing.expectEqualStrings("error", parsed.value.diagnostics[0].severity);
     try std.testing.expectEqualStrings("stable", parsed.value.diagnostics[0].maturity);
+    try std.testing.expectEqualStrings("f8442f8df97b699227020f1ca99a3d34007e51a6f4a3934089158471a8f2963b", parsed.value.diagnostics[0].fingerprint);
 }
 
 test "cli: --filename infers language" {

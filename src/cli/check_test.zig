@@ -158,6 +158,71 @@ test "check: project rules report cross-file violations" {
     try std.testing.expect(std.mem.indexOf(u8, written, "checked 2 files, 1 violations, 0 warnings") != null);
 }
 
+test "check: json diagnostics carry fingerprints for file and project rules" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const source = "import { Db } from \"./infra/db\";\nconst value = source as any;\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "app.ts", .data = source });
+    try tmp.dir.createDirPath(io, "infra");
+    try tmp.dir.writeFile(io, .{ .sub_path = "infra/db.ts", .data = "export const Db = 1;\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    const rules = [_]lint.project_rule.ProjectRule{.{
+        .id = "no-infra",
+        .kind = .{ .import_boundary = .{
+            .from = "**/app.ts",
+            .deny = "**/infra/**",
+        } },
+    }};
+    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &reporter);
+
+    try std.testing.expectEqual(check.Outcome.violations, outcome);
+
+    const JsonReport = struct {
+        files: []const struct {
+            path: []const u8,
+            diagnostics: []const struct {
+                rule_id: []const u8,
+                range: lint.diagnostic.Range,
+                fingerprint: []const u8,
+            },
+        },
+    };
+    const parsed = try std.json.parseFromSlice(JsonReport, gpa, out.written(), .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+
+    var diagnostic_count: usize = 0;
+    for (parsed.value.files) |file| {
+        for (file.diagnostics) |d| {
+            var expected = [_]lint.diagnostic.Diagnostic{.{
+                .rule_id = d.rule_id,
+                .language = "ts",
+                .message = "message",
+                .range = d.range,
+            }};
+            try lint.fingerprint.assign(gpa, file.path, source, &expected);
+            defer gpa.free(expected[0].fingerprint);
+
+            try std.testing.expectEqualStrings(expected[0].fingerprint, d.fingerprint);
+            diagnostic_count += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 2), diagnostic_count);
+}
+
 test "check: setting severity warn demotes project violations and exits clean" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
