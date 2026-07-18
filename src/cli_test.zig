@@ -3,6 +3,7 @@ const cli = @import("cli.zig");
 const reports = @import("reports.zig");
 const test_fixture = @import("test_fixture.zig");
 
+const diagnostic = @import("engine").diagnostic;
 const Engine = @import("engine").Engine;
 
 fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
@@ -59,6 +60,7 @@ const Report = struct {
         severity: []const u8,
         maturity: []const u8,
         fingerprint: []const u8,
+        context: []const diagnostic.Context,
     },
     clean: bool,
 };

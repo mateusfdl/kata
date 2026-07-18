@@ -26,6 +26,12 @@ pub const ContextKind = enum {
     namespace,
 };
 
+pub const Context = struct {
+    kind: ContextKind,
+    name: []const u8,
+    range: Range,
+};
+
 pub const Diagnostic = struct {
     rule_id: []const u8,
     language: []const u8,
@@ -34,6 +40,7 @@ pub const Diagnostic = struct {
     severity: Severity = .@"error",
     maturity: Maturity = .stable,
     fingerprint: []const u8 = "",
+    context: []const Context = &.{},
 };
 
 pub const Report = struct {

@@ -50,6 +50,14 @@ test "protocol: request round-trips with null optionals" {
 test "protocol: response round-trips with a populated report" {
     const gpa = std.testing.allocator;
 
+    const context = [_]diagnostic.Context{.{
+        .kind = .method,
+        .name = "render",
+        .range = .{
+            .start = .{ .line = 1, .column = 2 },
+            .end = .{ .line = 3, .column = 3 },
+        },
+    }};
     const diagnostics = [_]diagnostic.Diagnostic{.{
         .rule_id = "no-as-any",
         .language = "ts",
@@ -60,6 +68,7 @@ test "protocol: response round-trips with a populated report" {
         },
         .maturity = .deprecated,
         .fingerprint = "abc123",
+        .context = &context,
     }};
 
     const resp: protocol.Response = .{
@@ -98,6 +107,13 @@ test "protocol: response round-trips with a populated report" {
     try std.testing.expectEqual(@as(u32, 24), d.range.end.column);
     try std.testing.expectEqual(diagnostic.Maturity.deprecated, d.maturity);
     try std.testing.expectEqualStrings("abc123", d.fingerprint);
+    try std.testing.expectEqual(@as(usize, 1), d.context.len);
+    try std.testing.expectEqual(diagnostic.ContextKind.method, d.context[0].kind);
+    try std.testing.expectEqualStrings("render", d.context[0].name);
+    try std.testing.expectEqual(diagnostic.Range{
+        .start = .{ .line = 1, .column = 2 },
+        .end = .{ .line = 3, .column = 3 },
+    }, d.context[0].range);
 }
 
 test "protocol: readFrame returns the exact body" {

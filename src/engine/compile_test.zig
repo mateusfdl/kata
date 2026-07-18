@@ -393,8 +393,7 @@ test "compile: distributes field patterns over alternation branches" {
         "func bad(id string, ctx context.Context) error { return nil }\n\n" ++
         "func (s Svc) alsoBad(id string, ctx context.Context) error { return nil }\n\n" ++
         "func clean(ctx context.Context) (Result, context.Context, error) { return Result{}, ctx, nil }\n";
-    const diags = try runCompiled(gpa, &compiled, .go, src, null);
-    defer gpa.free(diags);
+    const diags = try runCompiled(arena.allocator(), &compiled, .go, src, null);
     try std.testing.expectEqual(@as(usize, 2), diags.len);
     try std.testing.expectEqualStrings("context must come first", diags[0].message);
     try std.testing.expectEqual(@as(u32, 4), diags[0].range.start.line);
@@ -926,8 +925,7 @@ test "compile: any group matches when either composition holds" {
         "\t}\n" ++
         "\tpanic(\"bare\")\n" ++
         "}\n";
-    const diags = try runCompiled(gpa, &compiled, .go, src, null);
-    defer gpa.free(diags);
+    const diags = try runCompiled(arena.allocator(), &compiled, .go, src, null);
     try std.testing.expectEqual(@as(usize, 2), diags.len);
     try std.testing.expectEqual(@as(u32, 4), diags[0].range.start.line);
     try std.testing.expectEqual(@as(u32, 7), diags[1].range.start.line);
@@ -967,8 +965,7 @@ test "compile: all groups nested in any evaluate as conjunctions" {
         "\tpanic(\"bare\")\n" ++
         "\trecover()\n" ++
         "}\n";
-    const diags = try runCompiled(gpa, &compiled, .go, src, null);
-    defer gpa.free(diags);
+    const diags = try runCompiled(arena.allocator(), &compiled, .go, src, null);
     try std.testing.expectEqual(@as(usize, 2), diags.len);
     try std.testing.expectEqual(@as(u32, 4), diags[0].range.start.line);
     try std.testing.expectEqual(@as(u32, 7), diags[1].range.start.line);

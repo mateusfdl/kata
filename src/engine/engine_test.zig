@@ -155,6 +155,151 @@ fn newFixture(allocator: std.mem.Allocator, langs: []const language.Name) !*Fixt
     return Fixture.init(allocator, langs, "no-as-any", kata_no_as_any_rule);
 }
 
+fn expectContextEntry(entry: diagnostic.Context, kind: diagnostic.ContextKind, name: []const u8) !void {
+    try std.testing.expectEqual(kind, entry.kind);
+    try std.testing.expectEqualStrings(name, entry.name);
+}
+
+test "engine: diagnostics carry class and method context" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa, &.{.ts});
+    defer f.deinit();
+
+    const source =
+        "class Editor {\n" ++
+        "  render() {\n" ++
+        "    return value as any;\n" ++
+        "  }\n" ++
+        "}\n";
+    const diagnostics = try f.engine.lint(arena.allocator(), source, .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 2), diagnostics[0].context.len);
+    try expectContextEntry(diagnostics[0].context[0], .class, "Editor");
+    try std.testing.expectEqual(diagnostic.Range{
+        .start = .{ .line = 0, .column = 0 },
+        .end = .{ .line = 4, .column = 1 },
+    }, diagnostics[0].context[0].range);
+    try expectContextEntry(diagnostics[0].context[1], .method, "render");
+    try std.testing.expectEqual(diagnostic.Range{
+        .start = .{ .line = 1, .column = 2 },
+        .end = .{ .line = 3, .column = 3 },
+    }, diagnostics[0].context[1].range);
+}
+
+test "engine: diagnostics name arrow contexts from declarators" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa, &.{.ts});
+    defer f.deinit();
+
+    const source = "const handler = () => value as any;\n";
+    const diagnostics = try f.engine.lint(arena.allocator(), source, .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 1), diagnostics[0].context.len);
+    try expectContextEntry(diagnostics[0].context[0], .function, "handler");
+}
+
+test "engine: diagnostics name anonymous function contexts" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa, &.{.ts});
+    defer f.deinit();
+
+    const source = "(() => value as any)();\n";
+    const diagnostics = try f.engine.lint(arena.allocator(), source, .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 1), diagnostics[0].context.len);
+    try expectContextEntry(diagnostics[0].context[0], .function, "<anonymous>");
+}
+
+test "engine: diagnostics keep the innermost four contexts" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa, &.{.ts});
+    defer f.deinit();
+
+    const source =
+        "const a = () => {\n" ++
+        "  const b = () => {\n" ++
+        "    const c = () => {\n" ++
+        "      const d = () => {\n" ++
+        "        const e = () => value as any;\n" ++
+        "      };\n" ++
+        "    };\n" ++
+        "  };\n" ++
+        "};\n";
+    const diagnostics = try f.engine.lint(arena.allocator(), source, .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 4), diagnostics[0].context.len);
+    try expectContextEntry(diagnostics[0].context[0], .function, "b");
+    try expectContextEntry(diagnostics[0].context[1], .function, "c");
+    try expectContextEntry(diagnostics[0].context[2], .function, "d");
+    try expectContextEntry(diagnostics[0].context[3], .function, "e");
+}
+
+test "engine: a matched function is not its own context" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rule =
+        \\rule function-finding {
+        \\  lang ts
+        \\  match function_declaration @match
+        \\  emit @match { message "function finding" }
+        \\}
+    ;
+    var f = try Fixture.init(gpa, &.{.ts}, "function-finding", rule);
+    defer f.deinit();
+
+    const diagnostics = try f.engine.lint(arena.allocator(), "function top() {}\n", .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 0), diagnostics[0].context.len);
+}
+
+test "engine: go diagnostics carry type and method contexts" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const field_rule =
+        \\rule field-finding {
+        \\  lang go
+        \\  match field_identifier @match
+        \\  emit @match { message "field finding" }
+        \\}
+    ;
+    var type_fixture = try Fixture.init(gpa, &.{.go}, "field-finding", field_rule);
+    defer type_fixture.deinit();
+
+    const type_diagnostics = try type_fixture.engine.lint(arena.allocator(), "package main\ntype T struct { value int }\n", .go, null);
+    try std.testing.expectEqual(@as(usize, 1), type_diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 1), type_diagnostics[0].context.len);
+    try expectContextEntry(type_diagnostics[0].context[0], .class, "T");
+
+    var method_fixture = try Fixture.init(gpa, &.{.go}, "no-swallowed-errors", blank_identifier_rule);
+    defer method_fixture.deinit();
+    const method_source =
+        "package main\n" ++
+        "type T struct{}\n" ++
+        "func (t T) m() {\n" ++
+        "  _, err := call()\n" ++
+        "}\n";
+    const method_diagnostics = try method_fixture.engine.lint(arena.allocator(), method_source, .go, null);
+    try std.testing.expectEqual(@as(usize, 1), method_diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 2), method_diagnostics[0].context.len);
+    try expectContextEntry(method_diagnostics[0].context[0], .class, "T");
+    try expectContextEntry(method_diagnostics[0].context[1], .method, "m");
+}
+
 test "engine: detects `as any`" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa, &.{.ts});
@@ -229,12 +374,13 @@ test "engine: language with zero rules lints clean and stays cached" {
 
 test "engine: tsx detects `as any`" {
     const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
     var f = try newFixture(gpa, &.{.tsx});
     defer f.deinit();
 
     const src = "const Comp = () => <div>{(props as any).label}</div>;";
-    const diags = try f.engine.lint(gpa, src, .tsx, null);
-    defer gpa.free(diags);
+    const diags = try f.engine.lint(arena.allocator(), src, .tsx, null);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
     try std.testing.expectEqualStrings("tsx", diags[0].language);
@@ -310,6 +456,8 @@ test "engine: weak assertions only match expect chains" {
 
 test "engine: go detects blank identifier short declaration" {
     const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
     var f = try Fixture.init(gpa, &.{.go}, "no-swallowed-errors", blank_identifier_rule);
     defer f.deinit();
 
@@ -319,8 +467,7 @@ test "engine: go detects blank identifier short declaration" {
         "    _, err := foo()\n" ++
         "    _ = err\n" ++
         "}\n";
-    const diags = try f.engine.lint(gpa, src, .go, null);
-    defer gpa.free(diags);
+    const diags = try f.engine.lint(arena.allocator(), src, .go, null);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
     try std.testing.expectEqualStrings("no-swallowed-errors", diags[0].rule_id);
@@ -416,6 +563,8 @@ test "engine: exclude-paths set directive is accepted" {
 
 test "engine: go detects console output" {
     const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
     var f = try Fixture.init(gpa, &.{.go}, "no-console", go_no_console_rule);
     defer f.deinit();
 
@@ -430,8 +579,7 @@ test "engine: go detects console output" {
         "    fmt.Println(2)\n" ++
         "    log.Printf(\"x\")\n" ++
         "}\n";
-    const diags = try f.engine.lint(gpa, src, .go, null);
-    defer gpa.free(diags);
+    const diags = try f.engine.lint(arena.allocator(), src, .go, null);
 
     try std.testing.expectEqual(@as(usize, 3), diags.len);
     for (diags) |d| {
@@ -603,6 +751,8 @@ test "engine: where nesting fires beyond the threshold" {
 
 test "engine: where composes length and complexity" {
     const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
     const rule =
         \\rule long-complex {
         \\  lang ts
@@ -631,8 +781,7 @@ test "engine: where composes length and complexity" {
         "  }\n" ++
         "  shortComplex(a) { return a ? 1 : 2; }\n" ++
         "}\n";
-    const diags = try f.engine.lint(gpa, src, .ts, null);
-    defer gpa.free(diags);
+    const diags = try f.engine.lint(arena.allocator(), src, .ts, null);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
     try std.testing.expectEqualStrings("long and complex", diags[0].message);
@@ -1212,6 +1361,8 @@ const kata_console_outside_logger =
 
 test "engine: not inside skips matches enclosed by the named class" {
     const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
     var f = try Fixture.init(gpa, &.{.ts}, "console-outside-logger", kata_console_outside_logger);
     defer f.deinit();
 
@@ -1219,8 +1370,7 @@ test "engine: not inside skips matches enclosed by the named class" {
         "console.log(1);\n" ++
         "class Logger { log() { console.log(2); } }\n" ++
         "class Other { log() { console.log(3); } }\n";
-    const diags = try f.engine.lint(gpa, src, .ts, null);
-    defer gpa.free(diags);
+    const diags = try f.engine.lint(arena.allocator(), src, .ts, null);
 
     try std.testing.expectEqual(@as(usize, 2), diags.len);
     try std.testing.expectEqualStrings("console is only allowed inside Logger", diags[0].message);
@@ -1777,6 +1927,8 @@ const kata_until_boundary =
 
 test "engine: until bounds inside at the boundary kind" {
     const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
     var f = try Fixture.init(gpa, &.{.go}, "until-boundary", kata_until_boundary);
     defer f.deinit();
 
@@ -1802,8 +1954,7 @@ test "engine: until bounds inside at the boundary kind" {
         "\t\tfn()\n" ++
         "\t}\n" ++
         "}\n";
-    const diags = try f.engine.lint(gpa, src, .go, null);
-    defer gpa.free(diags);
+    const diags = try f.engine.lint(arena.allocator(), src, .go, null);
 
     try std.testing.expectEqual(@as(usize, 2), diags.len);
     try std.testing.expectEqual(@as(u32, 3), diags[0].range.start.line);

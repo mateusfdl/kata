@@ -16,7 +16,7 @@ fn diagnostic(severity: lint.diagnostic.Severity) lint.diagnostic.Diagnostic {
 const diagnostic_json =
     "{\"rule_id\":\"no-console\",\"language\":\"ts\",\"message\":\"console is not allowed\"," ++
     "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
-    "\"severity\":\"error\",\"maturity\":\"stable\",\"fingerprint\":\"\"}";
+    "\"severity\":\"error\",\"maturity\":\"stable\",\"fingerprint\":\"\",\"context\":[]}";
 
 test "json: clean run renders empty files and the summary" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -63,6 +63,32 @@ test "json: project violations render as entries" {
         "{\"files\":[" ++
             "{\"path\":\"src/service.ts\",\"diagnostics\":[" ++ diagnostic_json ++ "]}" ++
             "],\"summary\":{\"files\":1,\"violations\":1,\"warnings\":0}}\n",
+        out.written(),
+    );
+}
+
+test "json: populated context renders its complete shape" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    var d = diagnostic(.@"error");
+    d.context = &.{.{
+        .kind = .method,
+        .name = "render",
+        .range = .{ .start = .{ .line = 1, .column = 2 }, .end = .{ .line = 3, .column = 3 } },
+    }};
+
+    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    try reporter.file("src/app.ts", "", &.{d});
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 });
+
+    try std.testing.expectEqualStrings(
+        "{\"files\":[{\"path\":\"src/app.ts\",\"diagnostics\":[" ++
+            "{\"rule_id\":\"no-console\",\"language\":\"ts\",\"message\":\"console is not allowed\"," ++
+            "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
+            "\"severity\":\"error\",\"maturity\":\"stable\",\"fingerprint\":\"\",\"context\":[" ++
+            "{\"kind\":\"method\",\"name\":\"render\",\"range\":{\"start\":{\"line\":1,\"column\":2}," ++
+            "\"end\":{\"line\":3,\"column\":3}}}]}]}],\"summary\":{\"files\":1,\"violations\":1,\"warnings\":0}}\n",
         out.written(),
     );
 }

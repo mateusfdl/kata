@@ -271,7 +271,7 @@ pub fn runRule(
                 .segments => |segments| try matcher.renderMessage(allocator, segments, match, eval_ctx),
             } else cp.meta.rule_id;
 
-            try emitDiagnostic(allocator, match_id, cp.meta, match, lang_str, message, severity, out);
+            try emitDiagnostic(allocator, match_id, cp.meta, match, eval_ctx.source, lang_str, message, severity, out);
         }
     }
 }
@@ -292,6 +292,7 @@ fn emitDiagnostic(
     match_id: query.CaptureId,
     meta: rule.PatternMeta,
     match: query.Match,
+    source: []const u8,
     lang_str: []const u8,
     message: []const u8,
     severity: diagnostic.Severity,
@@ -300,6 +301,7 @@ fn emitDiagnostic(
     const n = match.get(match_id) orelse return;
     const sp = n.startPoint();
     const ep = n.endPoint();
+    const context = try enclosingContext(allocator, n, source);
 
     try out.append(allocator, .{
         .rule_id = meta.rule_id,
@@ -311,5 +313,96 @@ fn emitDiagnostic(
         },
         .severity = severity,
         .maturity = meta.maturity,
+        .context = context,
     });
+}
+
+fn enclosingContext(allocator: std.mem.Allocator, node: Node, source: []const u8) ![]const diagnostic.Context {
+    var entries: [4]diagnostic.Context = undefined;
+    var count: usize = 0;
+    var current = node.parent();
+
+    while (current) |ancestor| : (current = ancestor.parent()) {
+        const kind = family_mod.of(ancestor.tree.family).contextKind(ancestor.kindId()) orelse continue;
+        entries[count] = .{
+            .kind = kind,
+            .name = try contextName(allocator, ancestor, source),
+            .range = nodeRange(ancestor),
+        };
+        count += 1;
+        if (count == entries.len) break;
+
+        if (kind == .method and ancestor.tree.family == .go) {
+            if (try goReceiverContext(allocator, ancestor, source)) |receiver| {
+                entries[count] = receiver;
+                count += 1;
+                if (count == entries.len) break;
+            }
+        }
+    }
+
+    if (count == 0) return &.{};
+
+    const context = try allocator.alloc(diagnostic.Context, count);
+    for (0..count) |index| context[index] = entries[count - index - 1];
+
+    return context;
+}
+
+fn goReceiverContext(allocator: std.mem.Allocator, method: Node, source: []const u8) !?diagnostic.Context {
+    const receiver = method.childByFieldName("receiver") orelse return null;
+    const parameter = receiver.namedChild(0) orelse return null;
+    const receiver_type = parameter.childByFieldName("type") orelse return null;
+    const name_node = findNamedKind(receiver_type, "type_identifier") orelse receiver_type;
+    const name = name_node.text(source) orelse return null;
+
+    return .{
+        .kind = .class,
+        .name = try allocator.dupe(u8, name),
+        .range = nodeRange(receiver_type),
+    };
+}
+
+fn findNamedKind(node: Node, kind: []const u8) ?Node {
+    if (std.mem.eql(u8, node.kind(), kind)) return node;
+
+    var index: u32 = 0;
+    while (index < node.namedChildCount()) : (index += 1) {
+        const child = node.namedChild(index).?;
+        if (findNamedKind(child, kind)) |match| return match;
+    }
+
+    return null;
+}
+
+fn contextName(allocator: std.mem.Allocator, node: Node, source: []const u8) ![]const u8 {
+    if (node.childByFieldName("name")) |name| {
+        if (name.text(source)) |text| return allocator.dupe(u8, text);
+    }
+
+    if (node.parent()) |parent| {
+        if (std.mem.eql(u8, parent.kind(), "variable_declarator")) {
+            if (parent.childByFieldName("name")) |name| {
+                if (name.text(source)) |text| return allocator.dupe(u8, text);
+            }
+        }
+    }
+
+    if (node.namedChild(0)) |first_child| {
+        if (first_child.childByFieldName("name")) |name| {
+            if (name.text(source)) |text| return allocator.dupe(u8, text);
+        }
+    }
+
+    return allocator.dupe(u8, "<anonymous>");
+}
+
+fn nodeRange(node: Node) diagnostic.Range {
+    const start = node.startPoint();
+    const end = node.endPoint();
+
+    return .{
+        .start = .{ .line = start.row, .column = start.column },
+        .end = .{ .line = end.row, .column = end.column },
+    };
 }
