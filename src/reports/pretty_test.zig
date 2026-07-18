@@ -218,6 +218,74 @@ test "pretty: gutter aligns double-digit line numbers" {
     );
 }
 
+test "pretty: location includes innermost enclosing contexts" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    const source = "console.log(1);\n";
+    var d = diag("no-console", "console is not allowed", .{
+        .start = .{ .line = 0, .column = 0 },
+        .end = .{ .line = 0, .column = 15 },
+    }, .@"error");
+    d.context = &.{
+        .{
+            .kind = .namespace,
+            .name = "App",
+            .range = .{ .start = .{ .line = 0, .column = 0 }, .end = .{ .line = 5, .column = 1 } },
+        },
+        .{
+            .kind = .class,
+            .name = "Editor",
+            .range = .{ .start = .{ .line = 0, .column = 0 }, .end = .{ .line = 4, .column = 1 } },
+        },
+        .{
+            .kind = .method,
+            .name = "render",
+            .range = .{ .start = .{ .line = 1, .column = 2 }, .end = .{ .line = 3, .column = 3 } },
+        },
+    };
+    try render(source, d, &out);
+
+    try std.testing.expectEqualStrings(
+        "src/app.ts:1:1 [no-console] in method render of class Editor\n" ++
+            "\n" ++
+            "  x console is not allowed\n" ++
+            "\n" ++
+            "> 1 | console.log(1);\n" ++
+            "    | ^^^^^^^^^^^^^^^\n" ++
+            "\n",
+        out.written(),
+    );
+}
+
+test "pretty: location includes one enclosing context" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    const source = "console.log(1);\n";
+    var d = diag("no-console", "console is not allowed", .{
+        .start = .{ .line = 0, .column = 0 },
+        .end = .{ .line = 0, .column = 15 },
+    }, .@"error");
+    d.context = &.{.{
+        .kind = .function,
+        .name = "handler",
+        .range = .{ .start = .{ .line = 0, .column = 0 }, .end = .{ .line = 0, .column = 15 } },
+    }};
+    try render(source, d, &out);
+
+    try std.testing.expectEqualStrings(
+        "src/app.ts:1:1 [no-console] in function handler\n" ++
+            "\n" ++
+            "  x console is not allowed\n" ++
+            "\n" ++
+            "> 1 | console.log(1);\n" ++
+            "    | ^^^^^^^^^^^^^^^\n" ++
+            "\n",
+        out.written(),
+    );
+}
+
 test "pretty: project violations fall back to the plain line" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
@@ -243,6 +311,35 @@ test "pretty: finish renders the summary" {
     try reporter.finish(.{ .files = 3, .violations = 2, .warnings = 1 });
 
     try std.testing.expectEqualStrings("checked 3 files, 2 violations, 1 warnings\n", out.written());
+}
+
+test "pretty: color dims enclosing context" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    const source = "console.log(1);\n";
+    var d = diag("no-console", "console is not allowed", .{
+        .start = .{ .line = 0, .column = 0 },
+        .end = .{ .line = 0, .column = 15 },
+    }, .@"error");
+    d.context = &.{.{
+        .kind = .function,
+        .name = "handler",
+        .range = .{ .start = .{ .line = 0, .column = 0 }, .end = .{ .line = 0, .column = 15 } },
+    }};
+    var reporter: reports.Reporter = .{ .pretty = .{ .writer = &out.writer, .color = true } };
+    try reporter.file("src/app.ts", source, &.{d});
+
+    try std.testing.expectEqualStrings(
+        "src/app.ts:1:1 [no-console]\x1b[2m in function handler\x1b[0m\n" ++
+            "\n" ++
+            "  \x1b[31mx console is not allowed\x1b[0m\n" ++
+            "\n" ++
+            "\x1b[31m>\x1b[0m 1 | console.log(1);\n" ++
+            "    | \x1b[31m^^^^^^^^^^^^^^^\x1b[0m\n" ++
+            "\n",
+        out.written(),
+    );
 }
 
 test "pretty: color renders severity and carets in ansi codes" {

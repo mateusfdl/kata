@@ -36,12 +36,14 @@ pub const Pretty = struct {
     }
 
     fn frame(self: *Pretty, path: []const u8, source: []const u8, d: lint.diagnostic.Diagnostic) std.Io.Writer.Error!void {
-        try self.writer.print("{s}:{d}:{d} [{s}]\n\n", .{
+        try self.writer.print("{s}:{d}:{d} [{s}]", .{
             path,
             d.range.start.line + 1,
             d.range.start.column + 1,
             d.rule_id,
         });
+        try self.enclosingContext(d.context);
+        try self.writer.writeAll("\n\n");
 
         const marker: u8 = switch (d.severity) {
             .@"error" => 'x',
@@ -93,6 +95,26 @@ pub const Pretty = struct {
         }
 
         try self.writer.writeAll("\n");
+    }
+
+    fn enclosingContext(self: *Pretty, context: []const lint.diagnostic.Context) std.Io.Writer.Error!void {
+        if (context.len == 0) return;
+
+        if (self.color) try self.writer.writeAll("\x1b[2m");
+
+        var index = context.len;
+        const first = context.len -| 2;
+        while (index > first) {
+            index -= 1;
+            const entry = context[index];
+            if (index == context.len - 1) {
+                try self.writer.print(" in {s} {s}", .{ @tagName(entry.kind), entry.name });
+            } else {
+                try self.writer.print(" of {s} {s}", .{ @tagName(entry.kind), entry.name });
+            }
+        }
+
+        if (self.color) try self.writer.writeAll(reset);
     }
 
     fn caretLine(self: *Pretty, line: []const u8, d: lint.diagnostic.Diagnostic, width: usize) std.Io.Writer.Error!void {
