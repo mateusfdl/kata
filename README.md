@@ -65,6 +65,31 @@ selected by flag (the last format flag wins):
   Only files with diagnostics appear under `files`; the diagnostic shape
   matches the one-shot report.
 
+Every JSON diagnostic and daemon diagnostic carries a lowercase 64-character
+`fingerprint`. Kata computes version 1 as:
+
+```
+kataFingerprint/v1 = hex(sha256(rule_id + "\0" + path + "\0"
+                                + normalized_span_text + "\0" + occurrence_index))
+```
+
+`path` is the path printed in the report, verbatim. Run `kata check` from the
+repository root for repository-relative CI identity. Daemon requests hash the
+provided filename, so absolute editor paths intentionally produce machine-local
+fingerprints.
+
+`normalized_span_text` is the diagnostic range with leading and trailing
+whitespace removed and every internal run of spaces, tabs, carriage returns, or
+newlines collapsed to one space. Other bytes are hashed unchanged.
+`occurrence_index` is the decimal source-order ordinal among diagnostics in the
+same file with the same rule id and normalized span. This distinguishes repeated
+identical findings without putting line numbers in the identity.
+
+The fingerprint survives edits elsewhere in the file and whitespace-only edits
+inside the diagnostic span. It changes when the rule id, reported path, or
+violating code changes. Any recipe change creates `kataFingerprint/v2`; v1 must
+continue emitting alongside it for one release so consumers can migrate.
+
 ```
 make daemon           # kata
 make stop             # kata stop
