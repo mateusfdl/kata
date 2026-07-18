@@ -90,6 +90,28 @@ inside the diagnostic span. It changes when the rule id, reported path, or
 violating code changes. Any recipe change creates `kataFingerprint/v2`; v1 must
 continue emitting alongside it for one release so consumers can migrate.
 
+Diagnostics also carry an always-present `context` array. Each entry has this
+shape:
+
+```
+{"kind":"method","name":"render","range":{"start":{"line":1,"column":2},"end":{"line":3,"column":3}}}
+```
+
+`kind` is one of `function`, `method`, `class`, or `namespace`. Entries are
+ordered outermost first. Kata keeps at most four, dropping outer entries before
+inner entries when nesting is deeper. Anonymous functions use the name
+`<anonymous>`; arrows and function expressions assigned directly to a variable
+use that variable's name.
+
+The default pretty report appends the innermost two entries to the location,
+for example `in method render of class Editor`, and dims the suffix when color
+is active. `--text` remains unchanged. Project-rule diagnostics have no syntax
+node and therefore carry `"context":[]`.
+
+Context is presentation data and never participates in `kataFingerprint/v1`.
+Renaming an enclosing function, method, class, or namespace does not change the
+finding identity.
+
 ```
 make daemon           # kata
 make stop             # kata stop
