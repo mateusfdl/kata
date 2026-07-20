@@ -97,6 +97,23 @@ pub fn run(
     return collector.matches.toOwnedSlice(arena);
 }
 
+/// run `pattern` anchored at `n` only, returning the matches rooted there in
+/// enumeration order. descendants of `n` are not offered as anchors.
+pub fn runAt(
+    arena: std.mem.Allocator,
+    pattern: *const Pattern,
+    capture_count: usize,
+    n: Node,
+) Error![]Match {
+    var collector: Collector = .{ .arena = arena };
+    const bindings = try arena.alloc(?Node, capture_count);
+    defer arena.free(bindings);
+    @memset(bindings, null);
+    const emit: Cont = .emit;
+    try matchNode(pattern, n, bindings, &emit, &collector);
+    return collector.matches.toOwnedSlice(arena);
+}
+
 /// run `pattern` like `run`, but hand each match to `sink.emit` as it is found
 /// instead of materializing a slice. the match handed to `emit` views the live
 /// binding scratch and is only valid during that call. the sink stops the

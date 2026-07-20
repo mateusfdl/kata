@@ -1229,6 +1229,60 @@ test "engine: multiple kata rules fire together" {
     try std.testing.expectEqualStrings("no-console", diags[1].rule_id);
 }
 
+const kata_aaa_const_rule =
+    \\rule aaa-const {
+    \\  lang ts
+    \\  match lexical_declaration @match
+    \\  emit @match { message "declaration" }
+    \\}
+;
+
+const kata_zzz_call_rule =
+    \\rule zzz-call {
+    \\  lang ts
+    \\  match call_expression @match
+    \\  emit @match { message "call" }
+    \\}
+;
+
+const kata_aaa_call_rule =
+    \\rule aaa-call {
+    \\  lang ts
+    \\  match call_expression @match
+    \\  emit @match { message "call" }
+    \\}
+;
+
+test "engine: diagnostics come out in source position order across rules" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "aaa-const", kata_aaa_const_rule);
+    defer f.deinit();
+    try f.add(.ts, "zzz-call", kata_zzz_call_rule);
+
+    const diags = try f.engine.lint(gpa, "foo();\nconst x = 1;\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqualStrings("zzz-call", diags[0].rule_id);
+    try std.testing.expectEqual(@as(u32, 0), diags[0].range.start.line);
+    try std.testing.expectEqualStrings("aaa-const", diags[1].rule_id);
+    try std.testing.expectEqual(@as(u32, 1), diags[1].range.start.line);
+}
+
+test "engine: rules on the same node emit in rule id order" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "zzz-call", kata_zzz_call_rule);
+    defer f.deinit();
+    try f.add(.ts, "aaa-call", kata_aaa_call_rule);
+
+    const diags = try f.engine.lint(gpa, "foo();\n", .ts, null);
+    defer gpa.free(diags);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqualStrings("aaa-call", diags[0].rule_id);
+    try std.testing.expectEqualStrings("zzz-call", diags[1].rule_id);
+}
+
 test "engine: kata measure rules use the metric context" {
     const gpa = std.testing.allocator;
     const measured =

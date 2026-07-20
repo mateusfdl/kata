@@ -25,7 +25,13 @@ fn compileDsl(
 ) !rule.CompiledRule {
     const file = try parseDsl(arena, source);
     var diag: rule.Diagnostic = .{};
-    return compile.compile(gpa, lang, file, &diag);
+    var compiled = try compile.compile(gpa, lang, file, &diag);
+    compiled.dispatch = try engine.dispatch.Table.build(
+        compiled.arena.allocator(),
+        compiled.patterns,
+        engine.family.of(lang.family()).kind_count,
+    );
+    return compiled;
 }
 
 fn predicateArgs(predicate: rule.Predicate) []const rule.PredicateOperand {

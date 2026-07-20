@@ -303,6 +303,15 @@ fn settingExcluded(
     return false;
 }
 
+const PatternRun = struct {
+    match_id: query.CaptureId,
+    severity: diagnostic.Severity,
+};
+
+/// walk the tree once, offering each node only to the patterns registered for
+/// its kind in the rule set's dispatch table. diagnostics come out in source
+/// position order (pre-order: enclosing node first), rule id order within a
+/// node. requires `r.dispatch` to be built.
 pub fn runRule(
     allocator: std.mem.Allocator,
     r: *const rule.CompiledRule,
@@ -320,14 +329,45 @@ pub fn runRule(
     var eval_ctx = ctx;
     eval_ctx.allocator = scratch.allocator();
 
-    for (r.patterns) |cp| {
-        const match_id = cp.match_capture_id orelse continue;
-        if (pathExcluded(cp.meta.exclude_paths, path)) continue;
-        if (settingExcluded(settings, lang, cp.meta.rule_id, path)) continue;
+    const runs = try scratch.allocator().alloc(?PatternRun, r.patterns.len);
+    for (r.patterns, runs) |cp, *run| {
+        run.* = patternRun(cp, lang, settings, path);
+    }
 
-        const severity = settingSeverity(settings, lang, cp.meta.rule_id) orelse cp.meta.severity;
+    try dispatchNode(allocator, r, runs, eval_ctx, lang_str, scratch.allocator(), out, eval_ctx.root);
+}
 
-        const matches = try query.run(scratch.allocator(), &cp.pattern, cp.capture_count, eval_ctx.root);
+fn patternRun(
+    cp: rule.CompiledPattern,
+    lang: language.Name,
+    settings: []const rule.RuleSetting,
+    path: ?[]const u8,
+) ?PatternRun {
+    const match_id = cp.match_capture_id orelse return null;
+    if (pathExcluded(cp.meta.exclude_paths, path)) return null;
+    if (settingExcluded(settings, lang, cp.meta.rule_id, path)) return null;
+
+    return .{
+        .match_id = match_id,
+        .severity = settingSeverity(settings, lang, cp.meta.rule_id) orelse cp.meta.severity,
+    };
+}
+
+fn dispatchNode(
+    allocator: std.mem.Allocator,
+    r: *const rule.CompiledRule,
+    runs: []const ?PatternRun,
+    eval_ctx: matcher.EvalContext,
+    lang_str: []const u8,
+    scratch: std.mem.Allocator,
+    out: *std.ArrayList(diagnostic.Diagnostic),
+    n: Node,
+) !void {
+    for (r.dispatch.slots[n.kindId()]) |pattern_index| {
+        const run = runs[pattern_index] orelse continue;
+        const cp = r.patterns[pattern_index];
+
+        const matches = try query.runAt(scratch, &cp.pattern, cp.capture_count, n);
         for (matches) |match| {
             if (!try matcher.evaluate(cp.meta.predicates, match, eval_ctx)) continue;
 
@@ -335,8 +375,13 @@ pub fn runRule(
             const fix = try renderFix(allocator, cp.meta, match, eval_ctx);
             const suggestions = try renderSuggestions(allocator, cp.meta, match, eval_ctx);
 
-            try emitDiagnostic(allocator, match_id, cp.meta, match, eval_ctx.source, lang_str, message, severity, fix, suggestions, out);
+            try emitDiagnostic(allocator, run.match_id, cp.meta, match, eval_ctx.source, lang_str, message, run.severity, fix, suggestions, out);
         }
+    }
+
+    var i: u32 = 0;
+    while (i < n.childCount()) : (i += 1) {
+        try dispatchNode(allocator, r, runs, eval_ctx, lang_str, scratch, out, n.child(i).?);
     }
 }
 
