@@ -1,6 +1,7 @@
 pub const ast = @import("ast.zig");
 pub const baseline = @import("baseline.zig");
 pub const diagnostic = @import("diagnostic.zig");
+pub const dispatch = @import("dispatch.zig");
 pub const edits = @import("edits.zig");
 pub const expr = @import("expr.zig");
 pub const fact_rule = @import("fact_rule.zig");
