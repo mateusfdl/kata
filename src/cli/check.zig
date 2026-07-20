@@ -19,6 +19,13 @@ pub const Baseline = struct {
     backdated: []const []const u8 = &.{},
 };
 
+pub const FixLevel = enum { off, safe, unsafe };
+
+pub const Fixing = struct {
+    level: FixLevel,
+    stderr: *std.Io.Writer,
+};
+
 pub fn run(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -26,6 +33,7 @@ pub fn run(
     target: []const u8,
     project_rules: []const lint.project_rule.ProjectRule,
     baseline: ?Baseline,
+    fixing: ?Fixing,
     reporter: *reports.Reporter,
 ) !Outcome {
     const stat = try fs.source.statTarget(io, target);
@@ -36,8 +44,8 @@ pub fn run(
     const index_ptr: ?*lint.ProjectIndex = if (project_rules.len > 0 or fact_rules.len > 0) &index else null;
 
     var counts = switch (stat.kind) {
-        .directory => try checkDir(io, gpa, engine, target, index_ptr, baseline, reporter),
-        .file => try checkFile(io, gpa, engine, target, index_ptr, baseline, reporter),
+        .directory => try checkDir(io, gpa, engine, target, index_ptr, baseline, fixing, reporter),
+        .file => try checkFile(io, gpa, engine, target, index_ptr, baseline, fixing, reporter),
         else => return error.UnsupportedTarget,
     };
 
@@ -55,6 +63,7 @@ fn checkFile(
     target: []const u8,
     index: ?*lint.ProjectIndex,
     baseline: ?Baseline,
+    fixing: ?Fixing,
     reporter: *reports.Reporter,
 ) !reports.Counts {
     const lang = fs.source.languageOf(target) orelse return error.UnsupportedTarget;
@@ -62,7 +71,7 @@ fn checkFile(
     const source = try fs.source.read(io, gpa, target);
     defer gpa.free(source);
 
-    return reportFile(io, gpa, engine, lang, source, target, index, baseline, reporter);
+    return reportFile(io, gpa, engine, lang, source, target, index, baseline, fixing, reporter);
 }
 
 const DirVisit = struct {
@@ -71,6 +80,7 @@ const DirVisit = struct {
     engine: *Engine,
     index: ?*lint.ProjectIndex,
     baseline: ?Baseline,
+    fixing: ?Fixing,
     reporter: *reports.Reporter,
     counts: *reports.Counts,
 };
@@ -82,6 +92,7 @@ fn checkDir(
     target: []const u8,
     index: ?*lint.ProjectIndex,
     baseline: ?Baseline,
+    fixing: ?Fixing,
     reporter: *reports.Reporter,
 ) !reports.Counts {
     var counts: reports.Counts = .{};
@@ -91,6 +102,7 @@ fn checkDir(
         .engine = engine,
         .index = index,
         .baseline = baseline,
+        .fixing = fixing,
         .reporter = reporter,
         .counts = &counts,
     };
@@ -101,7 +113,7 @@ fn checkDir(
 }
 
 fn visitFile(visit: DirVisit, lang: language.Name, source: []const u8, path: []const u8) anyerror!void {
-    visit.counts.add(try reportFile(visit.io, visit.gpa, visit.engine, lang, source, path, visit.index, visit.baseline, visit.reporter));
+    visit.counts.add(try reportFile(visit.io, visit.gpa, visit.engine, lang, source, path, visit.index, visit.baseline, visit.fixing, visit.reporter));
 }
 
 fn reportFile(
@@ -113,26 +125,106 @@ fn reportFile(
     path: []const u8,
     index: ?*lint.ProjectIndex,
     baseline: ?Baseline,
+    fixing: ?Fixing,
     reporter: *reports.Reporter,
 ) !reports.Counts {
     if (try fs.rules.isFixturePath(io, path)) return .{};
 
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    const diagnostics = try engine.lint(arena.allocator(), source, lang, path);
-    try lint.fingerprint.assign(arena.allocator(), path, source, diagnostics);
 
-    if (baseline) |b| try applyBaseline(io, arena.allocator(), engine, b, lang, source, path, diagnostics);
+    var current = source;
+    var diagnostics = try engine.lint(arena.allocator(), current, lang, path);
 
-    if (index) |idx| try idx.put(try engine.extractFacts(idx.allocator, source, lang, path));
+    if (fixing) |f| {
+        if (f.level != .off) {
+            const fixed = try applyFixes(io, arena.allocator(), engine, lang, current, path, &diagnostics, f);
+            if (fixed) |bytes| current = bytes;
+        }
+    }
 
-    try reporter.file(path, source, diagnostics);
+    try lint.fingerprint.assign(arena.allocator(), path, current, diagnostics);
+
+    if (baseline) |b| try applyBaseline(io, arena.allocator(), engine, b, lang, current, path, diagnostics);
+
+    if (index) |idx| try idx.put(try engine.extractFacts(idx.allocator, current, lang, path));
+
+    try reporter.file(path, current, diagnostics);
 
     var counts: reports.Counts = .{ .files = 1 };
 
     tally(&counts, diagnostics);
 
     return counts;
+}
+
+fn applyFixes(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    engine: *Engine,
+    lang: language.Name,
+    source: []const u8,
+    path: []const u8,
+    diagnostics: *[]lint.diagnostic.Diagnostic,
+    fixing: Fixing,
+) !?[]const u8 {
+    var current = source;
+    var pass: usize = 0;
+    while (pass < 8) : (pass += 1) {
+        const applicable = try applicableFixes(arena, engine, lang, diagnostics.*, fixing.level);
+        if (applicable.fixes.len == 0) break;
+
+        const list = try lint.edits.fromFixes(arena, current, applicable.fixes);
+        const applied = try lint.edits.apply(arena, current, list);
+        if (try engine.hasSyntaxError(applied.source, lang)) {
+            try fixing.stderr.print("kata check: fix for [{s}] introduces a syntax error in {s}\n", .{
+                try std.mem.join(arena, ", ", applicable.rule_ids),
+                path,
+            });
+            try fixing.stderr.flush();
+
+            break;
+        }
+
+        current = applied.source;
+        diagnostics.* = try engine.lint(arena, current, lang, path);
+    }
+
+    if (current.ptr == source.ptr) return null;
+
+    try fs.source.write(io, path, current);
+
+    return current;
+}
+
+const Applicable = struct {
+    fixes: []const lint.diagnostic.Fix,
+    rule_ids: []const []const u8,
+};
+
+fn applicableFixes(
+    arena: std.mem.Allocator,
+    engine: *Engine,
+    lang: language.Name,
+    diagnostics: []const lint.diagnostic.Diagnostic,
+    level: FixLevel,
+) !Applicable {
+    var fixes: std.ArrayList(lint.diagnostic.Fix) = .empty;
+    var rule_ids: std.ArrayList([]const u8) = .empty;
+    for (diagnostics) |d| {
+        const fix = d.fix orelse continue;
+        const override = engine.fixOverride(lang, d.rule_id);
+        if (override == .never) continue;
+        if (fix.safety == .unsafe and level != .unsafe and override != .unsafe_ok) continue;
+
+        try fixes.append(arena, fix);
+        if (!containsId(rule_ids.items, d.rule_id)) try rule_ids.append(arena, d.rule_id);
+    }
+
+    return .{
+        .fixes = try fixes.toOwnedSlice(arena),
+        .rule_ids = try rule_ids.toOwnedSlice(arena),
+    };
 }
 
 pub fn backdatedRules(

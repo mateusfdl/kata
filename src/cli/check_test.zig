@@ -71,7 +71,7 @@ test "check: baseline demotes committed errors and keeps new ones" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir }, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir }, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -100,7 +100,7 @@ test "check: baseline exits clean when every error is committed" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir }, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir }, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.clean, outcome);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "checked 1 files, 0 violations, 1 warnings") != null);
@@ -126,7 +126,7 @@ test "check: baseline keeps errors in files absent at the ref" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir }, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir }, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "checked 1 files, 1 violations, 0 warnings") != null);
@@ -161,7 +161,7 @@ test "check: baseline backdates a rule enabled after the ref" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir, .backdated = backdated }, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir, .backdated = backdated }, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.clean, outcome);
     const written = out.written();
@@ -205,7 +205,7 @@ test "check: baseline backdates a severity raise in rules.yaml" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir, .backdated = backdated }, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir, .backdated = backdated }, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.clean, outcome);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "checked 1 files, 0 violations, 1 warnings") != null);
@@ -241,7 +241,7 @@ test "check: baseline does not backdate an unchanged error rule" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir, .backdated = backdated }, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir, .backdated = backdated }, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "checked 1 files, 1 violations, 0 warnings") != null);
@@ -272,7 +272,7 @@ test "check: run skips .git and gitignored folders" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -306,7 +306,7 @@ test "check: rule fixtures are skipped while other tests dirs are linted" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -344,7 +344,7 @@ test "check: warn severity counts separately and exits clean" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.clean, outcome);
     const expected = try std.fmt.allocPrint(
@@ -392,7 +392,7 @@ test "check: project rules report cross-file violations" {
         } },
     }};
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, null, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, null, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -429,7 +429,7 @@ test "check: json diagnostics carry fingerprints for file and project rules" {
         } },
     }};
     var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, null, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, null, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
 
@@ -495,7 +495,7 @@ test "check: setting severity warn demotes project violations and exits clean" {
         } },
     }};
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, null, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, null, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.clean, outcome);
     const written = out.written();
@@ -532,7 +532,7 @@ test "check: import-boundary project rules report violations" {
         } },
     }};
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, null, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, null, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -580,7 +580,7 @@ test "check: project kata rules report at the yaml rule positions" {
 
     f.engine.compiled_fact = &fact_repository_isolation;
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -620,10 +620,174 @@ test "check: kata import rules report at the yaml rule positions" {
     }};
     f.engine.compiled_fact = &fact_rules;
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
     try std.testing.expect(std.mem.indexOf(u8, written, "domain/user.ts:1:21 [domain-no-infra] infra imports are denied from the domain layer") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "checked 2 files, 1 violations, 0 warnings") != null);
+}
+
+const parseint_fix_rule =
+    \\rule prefer-number-parseint {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: identifier @fn
+    \\  }
+    \\  where { text(@fn) == "parseInt" }
+    \\  emit @match {
+    \\    message "Prefer Number.parseInt"
+    \\    fix safe @fn "Number.parseInt"
+    \\  }
+    \\}
+;
+
+const parseint_unsafe_fix_rule =
+    \\rule prefer-number-parseint {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: identifier @fn
+    \\  }
+    \\  where { text(@fn) == "parseInt" }
+    \\  emit @match {
+    \\    message "Prefer Number.parseInt"
+    \\    fix unsafe @fn "Number.parseInt"
+    \\  }
+    \\}
+;
+
+const parseint_broken_fix_rule =
+    \\rule prefer-number-parseint {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: identifier @fn
+    \\  }
+    \\  where { text(@fn) == "parseInt" }
+    \\  emit @match {
+    \\    message "Prefer Number.parseInt"
+    \\    fix safe @fn ")("
+    \\  }
+    \\}
+;
+
+const FixRun = struct {
+    outcome: check.Outcome,
+    contents: []const u8,
+    report: []const u8,
+    errors: []const u8,
+
+    fn deinit(self: FixRun, gpa: std.mem.Allocator) void {
+        gpa.free(self.contents);
+        gpa.free(self.report);
+        gpa.free(self.errors);
+    }
+};
+
+fn runFix(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    rule_source: []const u8,
+    settings: []const lint.rule.RuleSetting,
+    level: check.FixLevel,
+) !FixRun {
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "prefer-number-parseint", rule_source);
+    defer f.deinit();
+    f.engine.settings = settings;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const n = parseInt(\"5\", 10);\n" });
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var err: std.Io.Writer.Allocating = .init(gpa);
+    defer err.deinit();
+
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, .{ .level = level, .stderr = &err.writer }, &reporter);
+
+    const contents = try tmp.dir.readFileAlloc(io, "a.ts", gpa, .limited(4096));
+    errdefer gpa.free(contents);
+
+    return .{
+        .outcome = outcome,
+        .contents = contents,
+        .report = try out.toOwnedSlice(),
+        .errors = try err.toOwnedSlice(),
+    };
+}
+
+test "check: --fix applies safe fixes and reports clean" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const r = try runFix(gpa, io, parseint_fix_rule, &.{}, .safe);
+    defer r.deinit(gpa);
+
+    try std.testing.expectEqual(check.Outcome.clean, r.outcome);
+    try std.testing.expectEqualStrings("const n = Number.parseInt(\"5\", 10);\n", r.contents);
+    try std.testing.expect(std.mem.indexOf(u8, r.report, "checked 1 files, 0 violations, 0 warnings") != null);
+    try std.testing.expectEqualStrings("", r.errors);
+}
+
+test "check: --fix leaves unsafe fixes and the file untouched" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const r = try runFix(gpa, io, parseint_unsafe_fix_rule, &.{}, .safe);
+    defer r.deinit(gpa);
+
+    try std.testing.expectEqual(check.Outcome.violations, r.outcome);
+    try std.testing.expectEqualStrings("const n = parseInt(\"5\", 10);\n", r.contents);
+}
+
+test "check: --fix-unsafe applies unsafe fixes" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const r = try runFix(gpa, io, parseint_unsafe_fix_rule, &.{}, .unsafe);
+    defer r.deinit(gpa);
+
+    try std.testing.expectEqual(check.Outcome.clean, r.outcome);
+    try std.testing.expectEqualStrings("const n = Number.parseInt(\"5\", 10);\n", r.contents);
+}
+
+test "check: fix never override blocks application" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const settings = [_]lint.rule.RuleSetting{.{ .lang = .ts, .id = "prefer-number-parseint", .fix = .never }};
+    const r = try runFix(gpa, io, parseint_fix_rule, &settings, .safe);
+    defer r.deinit(gpa);
+
+    try std.testing.expectEqual(check.Outcome.violations, r.outcome);
+    try std.testing.expectEqualStrings("const n = parseInt(\"5\", 10);\n", r.contents);
+}
+
+test "check: fix unsafe-ok override applies an unsafe fix under --fix" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const settings = [_]lint.rule.RuleSetting{.{ .lang = .ts, .id = "prefer-number-parseint", .fix = .unsafe_ok }};
+    const r = try runFix(gpa, io, parseint_unsafe_fix_rule, &settings, .safe);
+    defer r.deinit(gpa);
+
+    try std.testing.expectEqual(check.Outcome.clean, r.outcome);
+    try std.testing.expectEqualStrings("const n = Number.parseInt(\"5\", 10);\n", r.contents);
+}
+
+test "check: a fix that breaks parsing rolls back and reports the defect" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const r = try runFix(gpa, io, parseint_broken_fix_rule, &.{}, .safe);
+    defer r.deinit(gpa);
+
+    try std.testing.expectEqual(check.Outcome.violations, r.outcome);
+    try std.testing.expectEqualStrings("const n = parseInt(\"5\", 10);\n", r.contents);
+    try std.testing.expect(std.mem.indexOf(u8, r.errors, "fix for [prefer-number-parseint] introduces a syntax error") != null);
 }

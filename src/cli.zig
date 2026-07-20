@@ -48,6 +48,7 @@ pub const CheckOptions = struct {
     target: []const u8,
     format: reports.Format = .pretty,
     baseline: ?[]const u8 = null,
+    fix: check.FixLevel = .off,
 };
 
 pub const Subcommand = union(enum) {
@@ -98,6 +99,16 @@ fn parseCheckArgs(args: []const [:0]const u8) CheckOptions {
 
         if (formatFlag(a)) |f| {
             opts.format = f;
+            continue;
+        }
+
+        if (std.mem.eql(u8, a, "--fix")) {
+            opts.fix = .safe;
+            continue;
+        }
+
+        if (std.mem.eql(u8, a, "--fix-unsafe")) {
+            opts.fix = .unsafe;
             continue;
         }
 
@@ -377,8 +388,9 @@ fn runCheck(c: Command, opts: CheckOptions) !u8 {
     }
 
     var reporter = reports.reporter(c.gpa, opts.format, c.stdout, c.color);
+    const fixing: ?check.Fixing = if (opts.fix == .off) null else .{ .level = opts.fix, .stderr = c.stderr };
 
-    const outcome = check.run(c.io, c.gpa, &ctx.engine, opts.target, ctx.resolved.project_rules, baseline, &reporter) catch |err| switch (err) {
+    const outcome = check.run(c.io, c.gpa, &ctx.engine, opts.target, ctx.resolved.project_rules, baseline, fixing, &reporter) catch |err| switch (err) {
         error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{opts.target}, exit_usage),
         else => return internalError(c.stderr, "check", err),
     };

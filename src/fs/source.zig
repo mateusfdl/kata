@@ -93,6 +93,10 @@ pub fn statTarget(io: std.Io, path: []const u8) !std.Io.File.Stat {
     return file.stat(io, path);
 }
 
+pub fn write(io: std.Io, file_path: []const u8, contents: []const u8) !void {
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = file_path, .data = contents });
+}
+
 pub fn readOptional(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8) !?[]u8 {
     return file.readOptionalAlloc(io, allocator, file_path, max_file_bytes);
 }

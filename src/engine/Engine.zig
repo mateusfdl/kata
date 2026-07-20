@@ -210,6 +210,14 @@ pub const Engine = struct {
         return self.frontend.hasError(source, lang);
     }
 
+    pub fn fixOverride(self: *const Engine, lang: language.Name, rule_id: []const u8) ?rule.FixMode {
+        for (self.settings) |setting| {
+            if (setting.matches(lang, rule_id)) return setting.fix;
+        }
+
+        return null;
+    }
+
     pub fn rulesWithFixes(self: *Engine, arena: std.mem.Allocator) ![]const []const u8 {
         var out: std.ArrayList([]const u8) = .empty;
         var it = self.compiled.iterator();

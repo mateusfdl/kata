@@ -2,6 +2,7 @@ const std = @import("std");
 const cli = @import("cli.zig");
 const reports = @import("reports.zig");
 const test_fixture = @import("test_fixture.zig");
+const check = @import("cli/check.zig");
 
 const diagnostic = @import("engine").diagnostic;
 const Engine = @import("engine").Engine;
@@ -354,4 +355,19 @@ test "parseSubcommand: a flag dispatches to one-shot" {
 test "parseSubcommand: an unknown subcommand is captured, not run as daemon" {
     const sub = cli.parseSubcommand(&.{"typo-here"});
     try std.testing.expectEqualStrings("typo-here", sub.unknown);
+}
+
+test "parseSubcommand: 'check --fix' selects safe fix application" {
+    const sub = cli.parseSubcommand(&.{ "check", "--fix", "src/" });
+    try std.testing.expectEqual(check.FixLevel.safe, sub.check.fix);
+}
+
+test "parseSubcommand: 'check --fix-unsafe' selects unsafe fix application" {
+    const sub = cli.parseSubcommand(&.{ "check", "--fix-unsafe", "src/" });
+    try std.testing.expectEqual(check.FixLevel.unsafe, sub.check.fix);
+}
+
+test "parseSubcommand: check without fix flags applies nothing" {
+    const sub = cli.parseSubcommand(&.{ "check", "src/" });
+    try std.testing.expectEqual(check.FixLevel.off, sub.check.fix);
 }
