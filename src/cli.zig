@@ -375,7 +375,7 @@ fn runCheck(c: Command, opts: CheckOptions) !u8 {
         baseline = .{ .ref = ref, .prefix = prefix, .dir = dir, .backdated = backdated };
     }
 
-    var reporter = reports.reporter(opts.format, c.stdout, c.color);
+    var reporter = reports.reporter(c.gpa, opts.format, c.stdout, c.color);
 
     const outcome = check.run(c.io, c.gpa, &ctx.engine, opts.target, ctx.resolved.project_rules, baseline, &reporter) catch |err| switch (err) {
         error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{opts.target}, exit_usage),

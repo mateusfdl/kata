@@ -15,6 +15,7 @@ comptime {
     _ = @import("cli/check_test.zig");
     _ = @import("reports/text_test.zig");
     _ = @import("reports/json_test.zig");
+    _ = @import("reports/sarif_test.zig");
     _ = @import("reports/pretty_test.zig");
     _ = @import("cli/query_test.zig");
     _ = @import("cli_test.zig");
