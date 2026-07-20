@@ -17,6 +17,7 @@ const metric_table = family.MetricTable(kinds.Kind, kinds.kind_count, classifyMe
 
 pub const adapter: family.Adapter = .{
     .supertypes = &kinds.supertypes,
+    .kind_count = kinds.kind_count,
     .kindName = kinds.name,
     .kindId = kind_fns.id,
     .fieldId = fields.id,

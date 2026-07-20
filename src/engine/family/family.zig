@@ -16,6 +16,7 @@ pub const Family = enum {
 
 pub const Adapter = struct {
     supertypes: []const node_kinds.Supertype,
+    kind_count: u16,
     kindName: *const fn (id: u16) []const u8,
     kindId: *const fn (name: []const u8, named: bool) u16,
     fieldId: *const fn (name: []const u8) u16,

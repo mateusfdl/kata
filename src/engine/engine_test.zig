@@ -42,6 +42,21 @@ test "engine: family adapters classify enclosing context kinds" {
     }
 }
 
+test "engine: family adapters expose the dense kind count" {
+    const node_kinds = @import("node_kinds");
+
+    try std.testing.expectEqual(node_kinds.ts_family.kind_count, family.of(.ts_family).kind_count);
+    try std.testing.expectEqual(node_kinds.go.kind_count, family.of(.go).kind_count);
+    try std.testing.expectEqual(
+        family.of(.ts_family).kindId("call_expression", true) < family.of(.ts_family).kind_count,
+        true,
+    );
+    try std.testing.expectEqual(
+        family.of(.go).kindId("call_expression", true) < family.of(.go).kind_count,
+        true,
+    );
+}
+
 const kata_no_as_any_rule =
     \\rule no-as-any {
     \\  lang ts, tsx
