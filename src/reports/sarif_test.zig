@@ -127,3 +127,84 @@ test "sarif: empty fingerprint omits partialFingerprints" {
         "{\"id\":\"no-console\",\"defaultConfiguration\":{\"level\":\"error\"}}",
     ), out.written());
 }
+
+test "sarif: safe fixes render as fixes with deleted region and inserted content" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    var d = diagnostic(.@"error");
+    d.fix = .{
+        .range = .{ .start = .{ .line = 4, .column = 2 }, .end = .{ .line = 4, .column = 9 } },
+        .replacement = "Number.parseInt",
+        .safety = .safe,
+    };
+
+    var reporter = sarifReporter(&out);
+    try reporter.file("src/app.ts", "", &.{d});
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 });
+
+    try std.testing.expectEqualStrings(document(
+        "{\"ruleId\":\"no-console\",\"ruleIndex\":0,\"level\":\"error\"," ++
+            "\"message\":{\"text\":\"console is not allowed\"}," ++
+            "\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"src/app.ts\"}," ++
+            "\"region\":{\"startLine\":5,\"startColumn\":3,\"endLine\":5,\"endColumn\":10}}}]," ++
+            "\"partialFingerprints\":{\"kataFingerprint/v1\":\"aaaa1111\"}," ++
+            "\"fixes\":[{\"artifactChanges\":[{\"artifactLocation\":{\"uri\":\"src/app.ts\"}," ++
+            "\"replacements\":[{\"deletedRegion\":{\"startLine\":5,\"startColumn\":3,\"endLine\":5,\"endColumn\":10}," ++
+            "\"insertedContent\":{\"text\":\"Number.parseInt\"}}]}]}]}",
+        "{\"id\":\"no-console\",\"defaultConfiguration\":{\"level\":\"error\"}}",
+    ), out.written());
+}
+
+test "sarif: a deletion fix omits inserted content" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    var d = diagnostic(.@"error");
+    d.fix = .{
+        .range = .{ .start = .{ .line = 4, .column = 2 }, .end = .{ .line = 4, .column = 9 } },
+        .replacement = "",
+        .safety = .safe,
+    };
+
+    var reporter = sarifReporter(&out);
+    try reporter.file("src/app.ts", "", &.{d});
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 });
+
+    try std.testing.expectEqualStrings(document(
+        "{\"ruleId\":\"no-console\",\"ruleIndex\":0,\"level\":\"error\"," ++
+            "\"message\":{\"text\":\"console is not allowed\"}," ++
+            "\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"src/app.ts\"}," ++
+            "\"region\":{\"startLine\":5,\"startColumn\":3,\"endLine\":5,\"endColumn\":10}}}]," ++
+            "\"partialFingerprints\":{\"kataFingerprint/v1\":\"aaaa1111\"}," ++
+            "\"fixes\":[{\"artifactChanges\":[{\"artifactLocation\":{\"uri\":\"src/app.ts\"}," ++
+            "\"replacements\":[{\"deletedRegion\":{\"startLine\":5,\"startColumn\":3,\"endLine\":5,\"endColumn\":10}}]}]}]}",
+        "{\"id\":\"no-console\",\"defaultConfiguration\":{\"level\":\"error\"}}",
+    ), out.written());
+}
+
+test "sarif: unsafe fixes and suggestions render no fixes key" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    var d = diagnostic(.@"error");
+    d.fix = .{
+        .range = .{ .start = .{ .line = 4, .column = 2 }, .end = .{ .line = 4, .column = 9 } },
+        .replacement = "unknown",
+        .safety = .unsafe,
+    };
+    d.suggestions = &.{.{
+        .label = "use unknown",
+        .range = .{ .start = .{ .line = 4, .column = 2 }, .end = .{ .line = 4, .column = 9 } },
+        .replacement = "unknown",
+    }};
+
+    var reporter = sarifReporter(&out);
+    try reporter.file("src/app.ts", "", &.{d});
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 });
+
+    try std.testing.expectEqualStrings(document(
+        error_result,
+        "{\"id\":\"no-console\",\"defaultConfiguration\":{\"level\":\"error\"}}",
+    ), out.written());
+}

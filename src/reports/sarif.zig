@@ -88,7 +88,30 @@ pub const Sarif = struct {
             try self.writer.writeAll("}");
         }
 
+        try self.fixes(path, d);
         try self.writer.writeAll("}");
+    }
+
+    fn fixes(self: *Sarif, path: []const u8, d: lint.diagnostic.Diagnostic) reports.Error!void {
+        const fix = d.fix orelse return;
+        if (fix.safety != .safe) return;
+
+        try self.writer.writeAll(",\"fixes\":[{\"artifactChanges\":[{\"artifactLocation\":{\"uri\":");
+        try std.json.Stringify.value(path, .{}, self.writer);
+        try self.writer.print("}},\"replacements\":[{{\"deletedRegion\":{{\"startLine\":{d},\"startColumn\":{d},\"endLine\":{d},\"endColumn\":{d}}}", .{
+            fix.range.start.line + 1,
+            fix.range.start.column + 1,
+            fix.range.end.line + 1,
+            fix.range.end.column + 1,
+        });
+
+        if (fix.replacement.len > 0) {
+            try self.writer.writeAll(",\"insertedContent\":{\"text\":");
+            try std.json.Stringify.value(fix.replacement, .{}, self.writer);
+            try self.writer.writeAll("}");
+        }
+
+        try self.writer.writeAll("}]}]}]");
     }
 
     fn ruleIndex(self: *Sarif, d: lint.diagnostic.Diagnostic) std.mem.Allocator.Error!usize {
