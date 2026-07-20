@@ -366,3 +366,97 @@ test "harness: composition rule fixtures run through the same harness" {
     try std.testing.expectEqual(harness.Outcome.pass, outcome);
     try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
 }
+
+const parseint_fix_rule =
+    \\rule prefer-number-parseint {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: identifier @fn
+    \\  }
+    \\  where { text(@fn) == "parseInt" }
+    \\  emit @match {
+    \\    message "Prefer Number.parseInt"
+    \\    fix safe @fn "Number.parseInt"
+    \\  }
+    \\}
+;
+
+const delete_call_rule =
+    \\rule no-parseint {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: identifier @fn
+    \\  }
+    \\  where { text(@fn) == "parseInt" }
+    \\  emit @match {
+    \\    message "delete it"
+    \\    fix safe ""
+    \\  }
+    \\}
+;
+
+test "harness: matching kata-expect-fix passes" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "prefer-number-parseint.kata", parseint_fix_rule, "sample.ts", "// kata-expect: prefer-number-parseint\n" ++
+        "// kata-expect-fix: Number.parseInt\n" ++
+        "const n = parseInt(x);\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.pass, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+}
+
+test "harness: wrong fix replacement fails printing got and want" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "prefer-number-parseint.kata", parseint_fix_rule, "sample.ts", "// kata-expect: prefer-number-parseint\n" ++
+        "// kata-expect-fix: Number.parse\n" ++
+        "const n = parseInt(x);\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.failures, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:3 wrong fix \"Number.parseInt\" (expected \"Number.parse\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 1 failures") != null);
+}
+
+test "harness: kata-expect-fix without a fix reports missing fix" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
+        "// kata-expect-fix: unknown\n" ++
+        "const x = foo as any;\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.failures, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:3 missing fix") != null);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 1 failures") != null);
+}
+
+test "harness: empty kata-expect-fix matches a deletion fix" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "no-parseint.kata", delete_call_rule, "sample.ts", "// kata-expect: no-parseint\n" ++
+        "// kata-expect-fix:\n" ++
+        "const n = parseInt(x);\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.pass, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+}
+
+test "harness: dangling kata-expect-fix annotation fails" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "prefer-number-parseint.kata", parseint_fix_rule, "sample.ts", "const n = parseInt(y);\n" ++
+        "// kata-expect-fix: Number.parseInt\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.failures, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:2 dangling kata-expect-fix annotation") != null);
+}

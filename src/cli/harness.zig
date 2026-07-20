@@ -10,12 +10,19 @@ const language = lint.language;
 const lifecycle = sources.lifecycle;
 const loader = sources.loader;
 const expect_marker = "// kata-expect:";
+const expect_fix_marker = "// kata-expect-fix:";
 
 pub const Outcome = enum { pass, failures, invalid };
 
 const Expectation = struct {
     line: u32,
     rule_id: []const u8,
+    matched: bool = false,
+};
+
+const FixExpectation = struct {
+    line: u32,
+    replacement: []const u8,
     matched: bool = false,
 };
 
@@ -80,8 +87,9 @@ fn checkFixture(
     stdout: *std.Io.Writer,
 ) !usize {
     var expectations: std.ArrayList(Expectation) = .empty;
+    var fix_expectations: std.ArrayList(FixExpectation) = .empty;
     var annotation_lines: std.ArrayList(u32) = .empty;
-    var failures = try parseAnnotations(arena, table, lang, source, path, stdout, &expectations, &annotation_lines);
+    var failures = try parseAnnotations(arena, table, lang, source, path, stdout, &expectations, &fix_expectations, &annotation_lines);
 
     const diagnostics = try engine.lint(arena, source, lang, path);
 
@@ -104,12 +112,59 @@ fn checkFixture(
         failures += 1;
     }
 
+    failures += try checkFixExpectations(fix_expectations.items, diagnostics, path, stdout);
+
     return failures;
+}
+
+fn checkFixExpectations(
+    expectations: []FixExpectation,
+    diagnostics: []const lint.diagnostic.Diagnostic,
+    path: []const u8,
+    stdout: *std.Io.Writer,
+) !usize {
+    var failures: usize = 0;
+    for (diagnostics) |d| {
+        const fix = d.fix orelse continue;
+        const e = claimFixExpectation(expectations, d.range.start.line) orelse continue;
+        if (std.mem.eql(u8, e.replacement, fix.replacement)) continue;
+
+        try stdout.print("{s}:{d} wrong fix \"{s}\" (expected \"{s}\")\n", .{ path, e.line + 1, fix.replacement, e.replacement });
+
+        failures += 1;
+    }
+
+    for (expectations) |e| {
+        if (e.matched) continue;
+
+        try stdout.print("{s}:{d} missing fix\n", .{ path, e.line + 1 });
+
+        failures += 1;
+    }
+
+    return failures;
+}
+
+fn claimFixExpectation(expectations: []FixExpectation, line: u32) ?*FixExpectation {
+    for (expectations) |*e| {
+        if (e.matched or e.line != line) continue;
+
+        e.matched = true;
+
+        return e;
+    }
+
+    return null;
 }
 
 const Annotation = struct {
     line: u32,
     ids: []const []const u8,
+};
+
+const FixAnnotation = struct {
+    line: u32,
+    replacement: []const u8,
 };
 
 fn parseAnnotations(
@@ -120,14 +175,26 @@ fn parseAnnotations(
     path: []const u8,
     stdout: *std.Io.Writer,
     expectations: *std.ArrayList(Expectation),
+    fix_expectations: *std.ArrayList(FixExpectation),
     annotation_lines: *std.ArrayList(u32),
 ) !usize {
     var annotations: std.ArrayList(Annotation) = .empty;
+    var fix_annotations: std.ArrayList(FixAnnotation) = .empty;
     var line_no: u32 = 0;
 
     var lines = std.mem.splitScalar(u8, source, '\n');
     while (lines.next()) |raw_line| : (line_no += 1) {
         const line = std.mem.trim(u8, raw_line, " \t\r");
+
+        if (std.mem.startsWith(u8, line, expect_fix_marker)) {
+            try annotation_lines.append(arena, line_no);
+            try fix_annotations.append(arena, .{
+                .line = line_no,
+                .replacement = std.mem.trim(u8, line[expect_fix_marker.len..], " \t"),
+            });
+
+            continue;
+        }
 
         if (!std.mem.startsWith(u8, line, expect_marker)) continue;
 
@@ -178,6 +245,21 @@ fn parseAnnotations(
 
             try expectations.append(arena, .{ .line = target, .rule_id = rule_id });
         }
+    }
+
+    for (fix_annotations.items) |annotation| {
+        var target = annotation.line + 1;
+        while (containsLine(annotation_lines.items, target)) target += 1;
+
+        if (target >= total) {
+            try stdout.print("{s}:{d} dangling kata-expect-fix annotation\n", .{ path, annotation.line + 1 });
+
+            failures += 1;
+
+            continue;
+        }
+
+        try fix_expectations.append(arena, .{ .line = target, .replacement = annotation.replacement });
     }
 
     return failures;
