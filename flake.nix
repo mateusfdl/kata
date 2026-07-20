@@ -27,6 +27,7 @@
             rule:
             lib.optionalString (rule.enabled != null) "      enabled: ${lib.boolToString rule.enabled}\n"
             + lib.optionalString (rule.severity != null) "      severity: ${rule.severity}\n"
+            + lib.optionalString (rule.fix != null) "      fix: ${rule.fix}\n"
             + lib.optionalString (rule.exclude != [ ]) (
               "      exclude:\n" + lib.concatMapStrings (glob: "        - '${glob}'\n") rule.exclude
             );
@@ -90,6 +91,16 @@
                           );
                           default = null;
                           description = "Override the rule's severity.";
+                        };
+                        fix = lib.mkOption {
+                          type = lib.types.nullOr (
+                            lib.types.enum [
+                              "never"
+                              "unsafe-ok"
+                            ]
+                          );
+                          default = null;
+                          description = "Override fix application: never blocks it, unsafe-ok lets --fix apply this rule's unsafe fixes.";
                         };
                         exclude = lib.mkOption {
                           type = lib.types.listOf lib.types.str;
