@@ -209,7 +209,35 @@ pub const Engine = struct {
     pub fn hasSyntaxError(self: *Engine, source: []const u8, lang: language.Name) !bool {
         return self.frontend.hasError(source, lang);
     }
+
+    pub fn rulesWithFixes(self: *Engine, arena: std.mem.Allocator) ![]const []const u8 {
+        var out: std.ArrayList([]const u8) = .empty;
+        var it = self.compiled.iterator();
+        while (it.next()) |entry| {
+            switch (entry.value.*) {
+                .compiled => |*compiled| {
+                    for (compiled.patterns) |cp| {
+                        if (cp.meta.fix == null) continue;
+                        if (containsString(out.items, cp.meta.rule_id)) continue;
+
+                        try out.append(arena, cp.meta.rule_id);
+                    }
+                },
+                else => {},
+            }
+        }
+
+        return out.toOwnedSlice(arena);
+    }
 };
+
+fn containsString(items: []const []const u8, needle: []const u8) bool {
+    for (items) |item| {
+        if (std.mem.eql(u8, item, needle)) return true;
+    }
+
+    return false;
+}
 
 fn needsMeasures(compiled: ?*rule.CompiledRule) bool {
     if (compiled) |dsl| return dsl.needs_measures;

@@ -440,7 +440,7 @@ test "harness: empty kata-expect-fix matches a deletion fix" {
     const io = std.testing.io;
     var s = try Setup.init(io, "no-parseint.kata", delete_call_rule, "sample.ts", "// kata-expect: no-parseint\n" ++
         "// kata-expect-fix:\n" ++
-        "const n = parseInt(x);\n");
+        "parseInt(x);\n");
     defer s.deinit();
 
     const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
@@ -459,4 +459,73 @@ test "harness: dangling kata-expect-fix annotation fails" {
 
     try std.testing.expectEqual(harness.Outcome.failures, outcome);
     try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:2 dangling kata-expect-fix annotation") != null);
+}
+
+const broken_fix_rule =
+    \\rule prefer-number-parseint {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: identifier @fn
+    \\  }
+    \\  where { text(@fn) == "parseInt" }
+    \\  emit @match {
+    \\    message "Prefer Number.parseInt"
+    \\    fix safe @fn ")("
+    \\  }
+    \\}
+;
+
+const identity_fix_rule =
+    \\rule prefer-number-parseint {
+    \\  lang ts
+    \\  match call_expression @match {
+    \\    function: identifier @fn
+    \\  }
+    \\  where { text(@fn) == "parseInt" }
+    \\  emit @match {
+    \\    message "Prefer Number.parseInt"
+    \\    fix safe @fn "parseInt"
+    \\  }
+    \\}
+;
+
+test "harness: a fix that breaks parsing fails naming the rule" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "prefer-number-parseint.kata", broken_fix_rule, "sample.ts", "// kata-expect: prefer-number-parseint\n" ++
+        "// kata-expect-fix: )(\n" ++
+        "const n = parseInt(x);\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.failures, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts fix introduces a syntax error [prefer-number-parseint]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 1 failures") != null);
+}
+
+test "harness: a fix that never converges fails naming the rule" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "prefer-number-parseint.kata", identity_fix_rule, "sample.ts", "// kata-expect: prefer-number-parseint\n" ++
+        "// kata-expect-fix: parseInt\n" ++
+        "const n = parseInt(x);\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.failures, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts fixes do not converge [prefer-number-parseint]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 1 failures") != null);
+}
+
+test "harness: a fix rule without any kata-expect-fix warns without failing" {
+    const io = std.testing.io;
+    var s = try Setup.init(io, "prefer-number-parseint.kata", parseint_fix_rule, "sample.ts", "// kata-expect: prefer-number-parseint\n" ++
+        "const n = parseInt(x);\n");
+    defer s.deinit();
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.pass, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "warning: rule prefer-number-parseint declares a fix but no fixture asserts it") != null);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
 }

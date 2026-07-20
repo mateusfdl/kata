@@ -66,9 +66,16 @@ pub fn run(
         return .invalid;
     };
 
+    var covered: std.ArrayList([]const u8) = .empty;
     for (fixtures) |fixture| {
         totals.fixtures += 1;
-        totals.failures += try checkFixture(arena, &engine, &table, fixture.lang, fixture.source, fixture.path, stdout);
+        totals.failures += try checkFixture(arena, &engine, &table, fixture.lang, fixture.source, fixture.path, stdout, &covered);
+    }
+
+    for (try engine.rulesWithFixes(arena)) |id| {
+        if (containsString(covered.items, id)) continue;
+
+        try stdout.print("warning: rule {s} declares a fix but no fixture asserts it\n", .{id});
     }
 
     try stdout.print("tested {d} fixtures, {d} failures\n", .{ totals.fixtures, totals.failures });
@@ -85,6 +92,7 @@ fn checkFixture(
     source: []const u8,
     path: []const u8,
     stdout: *std.Io.Writer,
+    covered: *std.ArrayList([]const u8),
 ) !usize {
     var expectations: std.ArrayList(Expectation) = .empty;
     var fix_expectations: std.ArrayList(FixExpectation) = .empty;
@@ -112,21 +120,25 @@ fn checkFixture(
         failures += 1;
     }
 
-    failures += try checkFixExpectations(fix_expectations.items, diagnostics, path, stdout);
+    failures += try checkFixExpectations(arena, fix_expectations.items, diagnostics, path, stdout, covered);
+    failures += try checkFixInvariants(arena, engine, lang, source, path, diagnostics, stdout);
 
     return failures;
 }
 
 fn checkFixExpectations(
+    arena: std.mem.Allocator,
     expectations: []FixExpectation,
     diagnostics: []const lint.diagnostic.Diagnostic,
     path: []const u8,
     stdout: *std.Io.Writer,
+    covered: *std.ArrayList([]const u8),
 ) !usize {
     var failures: usize = 0;
     for (diagnostics) |d| {
         const fix = d.fix orelse continue;
         const e = claimFixExpectation(expectations, d.range.start.line) orelse continue;
+        if (!containsString(covered.items, d.rule_id)) try covered.append(arena, d.rule_id);
         if (std.mem.eql(u8, e.replacement, fix.replacement)) continue;
 
         try stdout.print("{s}:{d} wrong fix \"{s}\" (expected \"{s}\")\n", .{ path, e.line + 1, fix.replacement, e.replacement });
@@ -143,6 +155,70 @@ fn checkFixExpectations(
     }
 
     return failures;
+}
+
+fn checkFixInvariants(
+    arena: std.mem.Allocator,
+    engine: *Engine,
+    lang: language.Name,
+    source: []const u8,
+    path: []const u8,
+    diagnostics: []const lint.diagnostic.Diagnostic,
+    stdout: *std.Io.Writer,
+) !usize {
+    var current = source;
+    var diags = diagnostics;
+    var pass: usize = 0;
+    while (pass < 8) : (pass += 1) {
+        const fixes = try collectFixes(arena, diags);
+        if (fixes.len == 0) return 0;
+
+        const list = try lint.edits.fromFixes(arena, current, fixes);
+        const applied = try lint.edits.apply(arena, current, list);
+        if (try engine.hasSyntaxError(applied.source, lang)) {
+            try stdout.print("{s} fix introduces a syntax error [{s}]\n", .{ path, try fixRuleIds(arena, diags) });
+
+            return 1;
+        }
+
+        current = applied.source;
+        diags = try engine.lint(arena, current, lang, path);
+    }
+
+    if ((try collectFixes(arena, diags)).len == 0) return 0;
+
+    try stdout.print("{s} fixes do not converge [{s}]\n", .{ path, try fixRuleIds(arena, diags) });
+
+    return 1;
+}
+
+fn collectFixes(arena: std.mem.Allocator, diagnostics: []const lint.diagnostic.Diagnostic) ![]const lint.diagnostic.Fix {
+    var out: std.ArrayList(lint.diagnostic.Fix) = .empty;
+    for (diagnostics) |d| {
+        if (d.fix) |fix| try out.append(arena, fix);
+    }
+
+    return out.toOwnedSlice(arena);
+}
+
+fn fixRuleIds(arena: std.mem.Allocator, diagnostics: []const lint.diagnostic.Diagnostic) ![]const u8 {
+    var ids: std.ArrayList([]const u8) = .empty;
+    for (diagnostics) |d| {
+        if (d.fix == null) continue;
+        if (containsString(ids.items, d.rule_id)) continue;
+
+        try ids.append(arena, d.rule_id);
+    }
+
+    return std.mem.join(arena, ", ", ids.items);
+}
+
+fn containsString(items: []const []const u8, needle: []const u8) bool {
+    for (items) |item| {
+        if (std.mem.eql(u8, item, needle)) return true;
+    }
+
+    return false;
 }
 
 fn claimFixExpectation(expectations: []FixExpectation, line: u32) ?*FixExpectation {
