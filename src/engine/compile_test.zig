@@ -1715,3 +1715,169 @@ test "compile: dialect specific kind compiles for ts and matches nothing" {
     defer gpa.free(diags);
     try std.testing.expectEqual(@as(usize, 0), diags.len);
 }
+
+test "compile: builds a fix with the default target" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule prefer-number-parseint {
+        \\  lang ts
+        \\  match identifier @match
+        \\  emit @match {
+        \\    message "Prefer Number.parseInt"
+        \\    fix safe "Number.parseInt"
+        \\  }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const fix = compiled.patterns[0].meta.fix.?;
+    try std.testing.expectEqual(diagnostic.Safety.safe, fix.safety);
+    try std.testing.expectEqual(compiled.patterns[0].match_capture_id.?, fix.target_id);
+    try std.testing.expectEqualStrings("Number.parseInt", fix.template.plain);
+    try std.testing.expectEqual(@as(usize, 0), compiled.patterns[0].meta.suggestions.len);
+}
+
+test "compile: builds an unsafe fix targeting another capture with segments" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule wrap-call {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: identifier @fn
+        \\  }
+        \\  emit @match {
+        \\    message "wrap it"
+        \\    fix unsafe @fn "wrap({text(@fn)})"
+        \\  }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const fix = compiled.patterns[0].meta.fix.?;
+    try std.testing.expectEqual(diagnostic.Safety.unsafe, fix.safety);
+    try std.testing.expect(fix.target_id != compiled.patterns[0].match_capture_id.?);
+    const segments = fix.template.segments;
+    try std.testing.expectEqual(@as(usize, 3), segments.len);
+    try std.testing.expectEqualStrings("wrap(", segments[0].literal);
+    try std.testing.expectEqual(expr.Measure.text, segments[1].placeholder.measure);
+    try std.testing.expectEqualStrings(")", segments[2].literal);
+    try std.testing.expectEqual(true, compiled.needs_measures);
+}
+
+test "compile: builds suggestions in order" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule no-any {
+        \\  lang ts
+        \\  match identifier @match
+        \\  emit @match {
+        \\    message "no any"
+        \\    suggest "use unknown" "unknown"
+        \\    suggest "delete it" ""
+        \\  }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const suggestions = compiled.patterns[0].meta.suggestions;
+    try std.testing.expectEqual(@as(usize, 2), suggestions.len);
+    try std.testing.expectEqualStrings("use unknown", suggestions[0].label);
+    try std.testing.expectEqualStrings("unknown", suggestions[0].template.plain);
+    try std.testing.expectEqual(compiled.patterns[0].match_capture_id.?, suggestions[0].target_id);
+    try std.testing.expectEqualStrings("delete it", suggestions[1].label);
+    try std.testing.expectEqualStrings("", suggestions[1].template.plain);
+    try std.testing.expectEqual(false, compiled.patterns[0].meta.fix != null);
+}
+
+test "compile: rejects a fix target missing from an alternation branch" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang go
+        \\  match parameter_declaration @match {
+        \\    type: [type_identifier @t, pointer_type { child: type_identifier }]
+        \\  }
+        \\  emit @match {
+        \\    message "bad"
+        \\    fix safe @t "x"
+        \\  }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.FixCaptureMissingInBranch, compile.compile(gpa, .go, file, &diag));
+    try std.testing.expectEqualStrings("fix capture must be bound in every alternation branch", diag.detail);
+}
+
+test "compile: rejects a fix template capture missing from an alternation branch" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang go
+        \\  match parameter_declaration @match {
+        \\    type: [type_identifier @t, pointer_type { child: type_identifier }]
+        \\  }
+        \\  emit @match {
+        \\    message "bad"
+        \\    suggest "swap" "{text(@t)}"
+        \\  }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.FixCaptureMissingInBranch, compile.compile(gpa, .go, file, &diag));
+    try std.testing.expectEqualStrings("fix capture must be bound in every alternation branch", diag.detail);
+}
+
+test "compile: rejects an unknown fix target" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @match
+        \\  emit @match {
+        \\    message "bad"
+        \\    fix safe @ghost "x"
+        \\  }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.UnknownCapture, compile.compile(gpa, .ts, file, &diag));
+    try std.testing.expectEqualStrings("fix capture not found in match", diag.detail);
+}
+
+test "compile: needs measures when only the fix template interpolates" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule echo {
+        \\  lang ts
+        \\  match identifier @match
+        \\  emit @match {
+        \\    message "plain"
+        \\    fix safe "{text(@match)}"
+        \\  }
+        \\}
+    );
+    defer compiled.deinit();
+
+    try std.testing.expectEqual(true, compiled.needs_measures);
+}

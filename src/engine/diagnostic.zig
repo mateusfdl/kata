@@ -13,6 +13,11 @@ pub const Severity = enum {
     warn,
 };
 
+pub const Safety = enum {
+    safe,
+    unsafe,
+};
+
 pub const Maturity = enum {
     experimental,
     stable,

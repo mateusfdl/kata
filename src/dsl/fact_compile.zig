@@ -131,6 +131,12 @@ fn compileRule(ctx: *Compiler, r: ast.Rule) Error!fact_rule.CompiledFactRule {
         return error.UnsupportedClause;
     }
 
+    if (r.emit.fix != null or r.emit.suggestions.len != 0) {
+        ctx.fail("fix and suggest are not supported in project rules");
+
+        return error.UnsupportedClause;
+    }
+
     const subject = try factSubject(ctx, r);
 
     ctx.fact = subject.fact;

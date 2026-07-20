@@ -123,6 +123,18 @@ pub const Message = union(enum) {
     segments: []const MessageSegment,
 };
 
+pub const Fix = struct {
+    safety: diagnostic.Safety,
+    target_id: query.CaptureId,
+    template: Message,
+};
+
+pub const Suggestion = struct {
+    label: []const u8,
+    target_id: query.CaptureId,
+    template: Message,
+};
+
 pub const PatternMeta = struct {
     predicates: []Predicate,
     message: ?Message,
@@ -130,6 +142,8 @@ pub const PatternMeta = struct {
     exclude_paths: []const []const u8 = &.{},
     severity: diagnostic.Severity = .@"error",
     maturity: diagnostic.Maturity = .stable,
+    fix: ?Fix = null,
+    suggestions: []const Suggestion = &.{},
 };
 
 pub const CompiledPattern = struct {
@@ -184,8 +198,17 @@ pub fn needsMeasures(patterns: []const CompiledPattern) bool {
             if (predicateNeedsMeasures(pred)) return true;
         }
 
-        const message = cp.meta.message orelse continue;
-        if (message == .segments) return true;
+        if (cp.meta.message) |message| {
+            if (message == .segments) return true;
+        }
+
+        if (cp.meta.fix) |fix| {
+            if (fix.template == .segments) return true;
+        }
+
+        for (cp.meta.suggestions) |suggestion| {
+            if (suggestion.template == .segments) return true;
+        }
     }
 
     return false;

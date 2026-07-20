@@ -23,6 +23,7 @@ pub const Error = error{
     UnknownMeasure,
     EmitCaptureConflict,
     EmitCaptureMissingInBranch,
+    FixCaptureMissingInBranch,
     InvalidRegex,
     InvalidStringComparison,
     ReservedCapture,
@@ -281,6 +282,8 @@ fn compilePattern(ctx: *Compiler, r: ast.Rule) Error!rule.PatternMeta {
     return .{
         .predicates = try predicates.toOwnedSlice(ctx.arena),
         .message = try compileMessage(ctx, r.emit.message),
+        .fix = try compileFix(ctx, r),
+        .suggestions = try compileSuggestions(ctx, r),
         .rule_id = try ctx.arena.dupe(u8, r.id),
         .exclude_paths = try bytes.dupeAll(ctx.arena, r.exclude_paths),
         .severity = switch (r.severity) {
@@ -790,6 +793,69 @@ fn compileMessage(ctx: *Compiler, message: []const u8) Error!rule.Message {
     }
 
     return .{ .segments = segments };
+}
+
+fn compileFix(ctx: *Compiler, r: ast.Rule) Error!?rule.Fix {
+    const fix = r.emit.fix orelse return null;
+
+    return .{
+        .safety = switch (fix.safety) {
+            .safe => .safe,
+            .unsafe => .unsafe,
+        },
+        .target_id = try fixTargetId(ctx, r, fix.target),
+        .template = try compileFixTemplate(ctx, r, fix.template),
+    };
+}
+
+fn compileSuggestions(ctx: *Compiler, r: ast.Rule) Error![]const rule.Suggestion {
+    if (r.emit.suggestions.len == 0) return &.{};
+
+    const suggestions = try ctx.arena.alloc(rule.Suggestion, r.emit.suggestions.len);
+    for (r.emit.suggestions, suggestions) |s, *out| {
+        out.* = .{
+            .label = try ctx.arena.dupe(u8, s.label),
+            .target_id = try fixTargetId(ctx, r, s.target),
+            .template = try compileFixTemplate(ctx, r, s.template),
+        };
+    }
+
+    return suggestions;
+}
+
+fn fixTargetId(ctx: *Compiler, r: ast.Rule, target: ?ast.Capture) Error!query.CaptureId {
+    const name = if (target) |t| t.name else r.emit.capture.name;
+    const pattern = r.match.?.node;
+    if (!captureExists(pattern, name)) {
+        ctx.fail("fix capture not found in match");
+
+        return error.UnknownCapture;
+    }
+
+    if (!guaranteedCapture(pattern, name)) {
+        ctx.fail("fix capture must be bound in every alternation branch");
+
+        return error.FixCaptureMissingInBranch;
+    }
+
+    return resolveCapture(ctx, name);
+}
+
+fn compileFixTemplate(ctx: *Compiler, r: ast.Rule, template: []const u8) Error!rule.Message {
+    const message = try compileMessage(ctx, template);
+    if (message != .segments) return message;
+
+    const pattern = r.match.?.node;
+    for (message.segments) |segment| {
+        if (segment != .placeholder) continue;
+        const name = ctx.captures[segment.placeholder.capture_id];
+        if (guaranteedCapture(pattern, name)) continue;
+        ctx.fail("fix capture must be bound in every alternation branch");
+
+        return error.FixCaptureMissingInBranch;
+    }
+
+    return message;
 }
 
 fn parsePlaceholder(ctx: *Compiler, inner: []const u8) Error!rule.Placeholder {

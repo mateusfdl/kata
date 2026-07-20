@@ -355,3 +355,33 @@ test "fact compile: malformed placeholder fails" {
         \\}
     , error.UnsupportedPlaceholder, "message placeholder must be {field(@fact, name)} or a project helper");
 }
+
+test "fact compile: fix clause fails" {
+    try expectFactFail(
+        \\rule no-fix {
+        \\  kind project
+        \\
+        \\  match call @call
+        \\
+        \\  emit @call {
+        \\    message "bad"
+        \\    fix safe "x"
+        \\  }
+        \\}
+    , error.UnsupportedClause, "fix and suggest are not supported in project rules");
+}
+
+test "fact compile: suggest clause fails" {
+    try expectFactFail(
+        \\rule no-suggest {
+        \\  kind project
+        \\
+        \\  match call @call
+        \\
+        \\  emit @call {
+        \\    message "bad"
+        \\    suggest "alt" "x"
+        \\  }
+        \\}
+    , error.UnsupportedClause, "fix and suggest are not supported in project rules");
+}
