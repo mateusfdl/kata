@@ -47,6 +47,38 @@ test "fingerprint: normalize preserves non UTF-8 bytes" {
     try std.testing.expectEqualSlices(u8, &expected, normalized);
 }
 
+test "fingerprint: normalizedSpans returns one normalized span per diagnostic in input order" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const diagnostics = [_]diagnostic.Diagnostic{
+        finding("rule", 0, 0, 0, 9),
+        finding("rule", 1, 2, 1, 9),
+    };
+    const spans = try fingerprint.normalizedSpans(arena.allocator(), "one  \ttwo\nxxthree\n", &diagnostics);
+
+    try std.testing.expectEqual(@as(usize, 2), spans.len);
+    try std.testing.expectEqualStrings("one two", spans[0]);
+    try std.testing.expectEqualStrings("three", spans[1]);
+}
+
+test "fingerprint: normalizedSpans slices multi-line spans and clamps ranges" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const diagnostics = [_]diagnostic.Diagnostic{
+        finding("rule", 0, 2, 1, 5),
+        finding("rule", 20, 20, 30, 30),
+        finding("rule", 0, 5, 0, 2),
+    };
+    const spans = try fingerprint.normalizedSpans(arena.allocator(), "xxleft\nrightyy", &diagnostics);
+
+    try std.testing.expectEqual(@as(usize, 3), spans.len);
+    try std.testing.expectEqualStrings("left right", spans[0]);
+    try std.testing.expectEqualStrings("", spans[1]);
+    try std.testing.expectEqualStrings("", spans[2]);
+}
+
 test "fingerprint: assign distinguishes duplicate spans in source order" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

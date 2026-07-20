@@ -23,6 +23,18 @@ pub fn normalize(allocator: std.mem.Allocator, span: []const u8) ![]const u8 {
     return normalized.toOwnedSlice(allocator);
 }
 
+pub fn normalizedSpans(
+    arena: std.mem.Allocator,
+    source: []const u8,
+    diagnostics: []const diagnostic.Diagnostic,
+) ![][]const u8 {
+    const bounds = try spanBounds(arena, source, diagnostics);
+    const spans = try arena.alloc([]const u8, diagnostics.len);
+    for (bounds, spans) |b, *span| span.* = try normalize(arena, source[b.start..b.end]);
+
+    return spans;
+}
+
 pub fn assign(
     allocator: std.mem.Allocator,
     path: []const u8,
@@ -33,11 +45,8 @@ pub fn assign(
     defer scratch.deinit();
     const arena = scratch.allocator();
 
-    var line_offsets: std.ArrayList(usize) = .empty;
-    try line_offsets.append(arena, 0);
-    for (source, 0..) |byte, index| {
-        if (byte == '\n') try line_offsets.append(arena, index + 1);
-    }
+    const bounds = try spanBounds(arena, source, diagnostics);
+    const spans = try normalizedSpans(arena, source, diagnostics);
 
     const Finding = struct {
         rule_id: []const u8,
@@ -49,14 +58,11 @@ pub fn assign(
 
     const findings = try arena.alloc(Finding, diagnostics.len);
     for (diagnostics, 0..) |d, index| {
-        const start = byteOffset(source.len, line_offsets.items, d.range.start);
-        var end = byteOffset(source.len, line_offsets.items, d.range.end);
-        if (end < start) end = start;
         findings[index] = .{
             .rule_id = d.rule_id,
-            .normalized_span = try normalize(arena, source[start..end]),
-            .start = start,
-            .end = end,
+            .normalized_span = spans[index],
+            .start = bounds[index].start,
+            .end = bounds[index].end,
             .index = index,
         };
     }
@@ -85,6 +91,33 @@ pub fn assign(
         const hex = std.fmt.bytesToHex(digest, .lower);
         d.fingerprint = try allocator.dupe(u8, &hex);
     }
+}
+
+const Span = struct {
+    start: usize,
+    end: usize,
+};
+
+fn spanBounds(
+    arena: std.mem.Allocator,
+    source: []const u8,
+    diagnostics: []const diagnostic.Diagnostic,
+) ![]const Span {
+    var line_offsets: std.ArrayList(usize) = .empty;
+    try line_offsets.append(arena, 0);
+    for (source, 0..) |byte, index| {
+        if (byte == '\n') try line_offsets.append(arena, index + 1);
+    }
+
+    const bounds = try arena.alloc(Span, diagnostics.len);
+    for (diagnostics, bounds) |d, *b| {
+        const start = byteOffset(source.len, line_offsets.items, d.range.start);
+        var end = byteOffset(source.len, line_offsets.items, d.range.end);
+        if (end < start) end = start;
+        b.* = .{ .start = start, .end = end };
+    }
+
+    return bounds;
 }
 
 fn byteOffset(source_len: usize, line_offsets: []const usize, position: diagnostic.Position) usize {
