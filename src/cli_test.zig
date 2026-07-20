@@ -247,6 +247,22 @@ test "parseSubcommand: the last format flag wins" {
     try std.testing.expectEqual(reports.Format.text, sub.check.format);
 }
 
+test "parseSubcommand: 'check --sarif' selects the sarif format" {
+    const sub = cli.parseSubcommand(&.{ "check", "--sarif", "src/" });
+    try std.testing.expectEqual(reports.Format.sarif, sub.check.format);
+}
+
+test "parseSubcommand: sarif wins as the last format flag" {
+    const sub = cli.parseSubcommand(&.{ "check", "--json", "--sarif", "src/" });
+    try std.testing.expectEqual(reports.Format.sarif, sub.check.format);
+}
+
+test "parseSubcommand: 'query --sarif' selects the sarif format" {
+    const sub = cli.parseSubcommand(&.{ "query", "(comment) @match", "--sarif", "--lang=ts" });
+    try std.testing.expectEqual(reports.Format.sarif, sub.query.format);
+    try std.testing.expectEqual(@as(?[]const u8, null), sub.query.invalid_arg);
+}
+
 test "parseSubcommand: 'query --json' selects the json format" {
     const sub = cli.parseSubcommand(&.{ "query", "(comment) @match", "--json", "--lang=ts" });
     try std.testing.expectEqual(reports.Format.json, sub.query.format);

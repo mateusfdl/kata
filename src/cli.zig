@@ -119,6 +119,7 @@ pub fn baselineRef(flag: ?[]const u8, environ: *std.process.Environ.Map) ?[]cons
 fn formatFlag(arg: []const u8) ?reports.Format {
     if (std.mem.eql(u8, arg, "--json")) return .json;
     if (std.mem.eql(u8, arg, "--text")) return .text;
+    if (std.mem.eql(u8, arg, "--sarif")) return .sarif;
 
     return null;
 }
