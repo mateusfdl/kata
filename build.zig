@@ -1,8 +1,13 @@
 const std = @import("std");
+const manifest = @import("build.zig.zon");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", manifest.version);
+    const build_options_module = build_options.createModule();
 
     const tree_sitter_dep = b.dependency("tree_sitter", .{
         .target = target,
@@ -87,7 +92,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .strip = strip,
     });
-    wireKataModule(exe_module, engine_module, dsl_module, path_module, mvzr_module, embedded_rules_zig, node_kinds_module);
+    wireKataModule(exe_module, engine_module, dsl_module, path_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
     const exe = b.addExecutable(.{
         .name = "kata",
         .root_module = exe_module,
@@ -100,7 +105,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    wireKataModule(test_module, engine_module, dsl_module, path_module, mvzr_module, embedded_rules_zig, node_kinds_module);
+    wireKataModule(test_module, engine_module, dsl_module, path_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
     const unit_tests = b.addTest(.{
         .root_module = test_module,
     });
@@ -178,6 +183,7 @@ fn wireKataModule(
     mvzr_module: *std.Build.Module,
     embedded_rules_zig: std.Build.LazyPath,
     node_kinds_module: *std.Build.Module,
+    build_options_module: *std.Build.Module,
 ) void {
     module.addImport("engine", engine_module);
     module.addImport("dsl", dsl_module);
@@ -185,4 +191,5 @@ fn wireKataModule(
     module.addImport("mvzr", mvzr_module);
     module.addAnonymousImport("embedded_rules", .{ .root_source_file = embedded_rules_zig });
     module.addImport("node_kinds", node_kinds_module);
+    module.addImport("build_options", build_options_module);
 }
