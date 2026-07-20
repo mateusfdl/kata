@@ -11,5 +11,6 @@ rule prefer-number-parseint {
 
   emit @match {
     message "Prefer Number.parseInt over parseInt"
+    fix safe @fn "Number.parseInt"
   }
 }
