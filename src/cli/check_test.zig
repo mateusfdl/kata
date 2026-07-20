@@ -16,14 +16,19 @@ fn runGit(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, argv: []const []c
     try std.testing.expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
 
-fn commitBaseline(gpa: std.mem.Allocator, io: std.Io, tmp: *std.testing.TmpDir, rel: []const u8, data: ?[]const u8) !void {
-    if (data) |bytes| {
-        try tmp.dir.createDirPath(io, rel);
-        const mirror = try std.fmt.allocPrint(gpa, "{s}/a.ts", .{rel});
-        defer gpa.free(mirror);
-        try tmp.dir.writeFile(io, .{ .sub_path = mirror, .data = bytes });
-    } else {
-        try tmp.dir.writeFile(io, .{ .sub_path = "seed.md", .data = "seed\n" });
+const TreeFile = struct {
+    path: []const u8,
+    data: []const u8,
+};
+
+fn commitTree(gpa: std.mem.Allocator, io: std.Io, tmp: *std.testing.TmpDir, files: []const TreeFile) !void {
+    var mirrored = false;
+    for (files) |file| {
+        if (std.mem.lastIndexOfScalar(u8, file.path, '/')) |idx| {
+            try tmp.dir.createDirPath(io, file.path[0..idx]);
+            mirrored = true;
+        }
+        try tmp.dir.writeFile(io, .{ .sub_path = file.path, .data = file.data });
     }
     try runGit(gpa, io, tmp.dir, &.{ "git", "init", "-q" });
     try runGit(gpa, io, tmp.dir, &.{ "git", "add", "." });
@@ -33,7 +38,17 @@ fn commitBaseline(gpa: std.mem.Allocator, io: std.Io, tmp: *std.testing.TmpDir, 
         "commit.gpgsign=false", "commit",               "-q",
         "-m",                   "base",
     });
-    if (data != null) try tmp.dir.deleteTree(io, ".zig-cache");
+    if (mirrored) try tmp.dir.deleteTree(io, ".zig-cache");
+}
+
+fn commitBaseline(gpa: std.mem.Allocator, io: std.Io, tmp: *std.testing.TmpDir, rel: []const u8, data: ?[]const u8) !void {
+    if (data) |bytes| {
+        const mirror = try std.fmt.allocPrint(gpa, "{s}/a.ts", .{rel});
+        defer gpa.free(mirror);
+        try commitTree(gpa, io, tmp, &.{.{ .path = mirror, .data = bytes }});
+    } else {
+        try commitTree(gpa, io, tmp, &.{.{ .path = "seed.md", .data = "seed\n" }});
+    }
 }
 
 test "check: baseline demotes committed errors and keeps new ones" {
@@ -112,6 +127,121 @@ test "check: baseline keeps errors in files absent at the ref" {
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
     const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir }, &reporter);
+
+    try std.testing.expectEqual(check.Outcome.violations, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "checked 1 files, 1 violations, 0 warnings") != null);
+}
+
+test "check: baseline backdates a rule enabled after the ref" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+    f.rule_set.by_lang.getPtr(.ts).items[0].origin = .project;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    try commitBaseline(gpa, io, &tmp, rel, null);
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const x = foo as any;\n" });
+
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const base: check.Baseline = .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir };
+    const backdated = try check.backdatedRules(io, arena.allocator(), base, rel, &f.rule_set);
+
+    try std.testing.expectEqual(@as(usize, 1), backdated.len);
+    try std.testing.expectEqualStrings("no-as-any", backdated[0]);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir, .backdated = backdated }, &reporter);
+
+    try std.testing.expectEqual(check.Outcome.clean, outcome);
+    const written = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, written, "a.ts:1:11 warn [no-as-any]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "checked 1 files, 0 violations, 1 warnings") != null);
+}
+
+test "check: baseline backdates a severity raise in rules.yaml" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+    f.rule_set.by_lang.getPtr(.ts).items[0].origin = .project;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    const rule_path = try std.fmt.allocPrint(gpa, "{s}/.kata/rules/ts/no-as-any.kata", .{rel});
+    defer gpa.free(rule_path);
+    const yaml_path = try std.fmt.allocPrint(gpa, "{s}/.kata/rules.yaml", .{rel});
+    defer gpa.free(yaml_path);
+    try commitTree(gpa, io, &tmp, &.{
+        .{ .path = rule_path, .data = test_fixture.no_as_any_rule },
+        .{ .path = yaml_path, .data = "rules:\n  ts:\n    no-as-any:\n      severity: warn\n" },
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const x = foo as any;\n" });
+
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const base: check.Baseline = .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir };
+    const backdated = try check.backdatedRules(io, arena.allocator(), base, rel, &f.rule_set);
+
+    try std.testing.expectEqual(@as(usize, 1), backdated.len);
+    try std.testing.expectEqualStrings("no-as-any", backdated[0]);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir, .backdated = backdated }, &reporter);
+
+    try std.testing.expectEqual(check.Outcome.clean, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "checked 1 files, 0 violations, 1 warnings") != null);
+}
+
+test "check: baseline does not backdate an unchanged error rule" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+    f.rule_set.by_lang.getPtr(.ts).items[0].origin = .project;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    const rule_path = try std.fmt.allocPrint(gpa, "{s}/.kata/rules/ts/no-as-any.kata", .{rel});
+    defer gpa.free(rule_path);
+    try commitTree(gpa, io, &tmp, &.{.{ .path = rule_path, .data = test_fixture.no_as_any_rule }});
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const x = foo as any;\n" });
+
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const base: check.Baseline = .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir };
+    const backdated = try check.backdatedRules(io, arena.allocator(), base, rel, &f.rule_set);
+
+    try std.testing.expectEqual(@as(usize, 0), backdated.len);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir, .backdated = backdated }, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "checked 1 files, 1 violations, 0 warnings") != null);

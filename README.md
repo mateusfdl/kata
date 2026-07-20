@@ -25,6 +25,7 @@ make test             # unit tests
 | `kata` | Start the daemon (foreground). Socket path from `KATA_SOCKET` (see Daemon). |
 | `kata check <path>` | Lint a file or, recursively, a directory. `kata check .` for the whole tree. |
 | `kata check --text\|--json <path>` | Select the report format (see Reports). |
+| `kata check --baseline <git-ref> <path>` | Demote errors already present at the ref to warnings (see Baseline). |
 | `kata query '<kata rule>' [path] --lang=<lang>` | Evaluate an inline rule against a file or directory (default `.`). Ignores configured rules. |
 | `kata stop` | Tell a running daemon to shut down. |
 | `kata new-rule <lang> <id>` | Scaffold a `.kata` template under `$XDG_CONFIG_HOME/kata/rules/<lang>/<id>.kata`. Refuses to overwrite. |
@@ -111,6 +112,55 @@ node and therefore carry `"context":[]`.
 Context is presentation data and never participates in `kataFingerprint/v1`.
 Renaming an enclosing function, method, class, or namespace does not change the
 finding identity.
+
+Every diagnostic also carries `"demoted":false|true`. It is `true` only when a
+baseline demoted the diagnostic from error to warning (see Baseline); severity
+and demotion never participate in the fingerprint.
+
+## Baseline
+
+`kata check --baseline <git-ref> <path>` demotes pre-existing errors to
+warnings so CI can gate on new violations only. The ref is anything
+`git rev-parse` accepts: `HEAD`, `origin/main`, a tag, a sha. Without the flag,
+`KATA_BASELINE` supplies the ref; the flag wins. The command must run inside a
+git work tree; an unknown ref or a missing work tree exits `64`. Baseline
+composes with every report format.
+
+For each checked file with at least one error, kata reads the file's content at
+the ref via `git show`, lints it with the current rules and configuration, and
+matches current errors against the baseline findings in three tiers, each
+consuming only still-unmatched findings:
+
+1. fingerprint equality,
+2. same rule id and normalized span text, which catches reordered duplicates,
+3. same rule id and enclosing-block hash: the sha256 of the normalized text of
+   the innermost `context` entry's range, applied only when that hash is
+   unique among the unmatched findings on both sides.
+
+Each baseline finding matches at most one current error. A matched error is
+reported as a warning with `"demoted":true`; unmatched errors stand, and
+baseline findings without a current counterpart expire silently. Warnings are
+never demoted further. Exit codes reflect post-demotion severities, so a tree
+whose only errors are demoted exits `0`. Files absent at the ref are never
+demoted and no rename tracking is attempted. This is demotion, not
+suppression: every finding stays visible in the report.
+
+Configuration changes are backdated. A rule whose `.kata/rules/` file is
+absent at the ref, or one the ref's `.kata/rules.yaml` disabled or set to
+`warn`, has all its current errors demoted, so the commit that enables or
+raises a rule passes warning-first. One approximation: a rule file's own
+`severity` clause is read from the working tree, not the ref, so flipping it
+inside an existing rule file is not backdated; use an explicit `rules.yaml`
+severity entry when that matters.
+
+Parse and engine failures are never grandfathered: a baseline pass that fails
+to lint aborts the run loudly instead of silently keeping or dropping errors.
+Project-rule and fact-rule diagnostics are out of scope; only per-file lint
+diagnostics demote.
+
+The daemon's `ratchet: true` applies the same matching with the on-disk file
+content as the baseline, so the edit-time hook and CI agree on what counts as
+a new violation.
 
 ```
 make daemon           # kata

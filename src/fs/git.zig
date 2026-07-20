@@ -56,6 +56,29 @@ pub fn showFile(
     return result.stdout;
 }
 
+pub fn listFiles(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    dir: std.Io.Dir,
+    ref: []const u8,
+    repo_path: []const u8,
+) ![]const []const u8 {
+    const result = try run(io, gpa, dir, &.{ "git", "ls-tree", "-r", "--name-only", ref, "--", repo_path });
+    defer gpa.free(result.stdout);
+    gpa.free(result.stderr);
+
+    if ((exitCode(result.term) orelse 1) != 0) return &.{};
+
+    var files: std.ArrayList([]const u8) = .empty;
+    var lines = std.mem.splitScalar(u8, result.stdout, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        try files.append(gpa, try gpa.dupe(u8, line));
+    }
+
+    return files.toOwnedSlice(gpa);
+}
+
 fn run(
     io: std.Io,
     gpa: std.mem.Allocator,

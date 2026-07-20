@@ -366,7 +366,13 @@ fn runCheck(c: Command, opts: CheckOptions) !u8 {
             error.NotAWorkTree => return printAndExit(c.stderr, "kata check --baseline requires a git work tree\n", exit_usage),
             else => return internalError(c.stderr, "resolve repo prefix", err),
         };
-        baseline = .{ .ref = ref, .prefix = prefix, .dir = dir };
+        const backdated = check.backdatedRules(c.io, c.arena, .{
+            .ref = ref,
+            .prefix = prefix,
+            .dir = dir,
+        }, ctx.root, &ctx.rule_set) catch |err|
+            return internalError(c.stderr, "baseline config", err);
+        baseline = .{ .ref = ref, .prefix = prefix, .dir = dir, .backdated = backdated };
     }
 
     var reporter = reports.reporter(opts.format, c.stdout, c.color);
