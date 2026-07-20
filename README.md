@@ -24,7 +24,7 @@ make test             # unit tests
 | --- | --- |
 | `kata` | Start the daemon (foreground). Socket path from `KATA_SOCKET` (see Daemon). |
 | `kata check <path>` | Lint a file or, recursively, a directory. `kata check .` for the whole tree. |
-| `kata check --text\|--json <path>` | Select the report format (see Reports). |
+| `kata check --text\|--json\|--sarif <path>` | Select the report format (see Reports). |
 | `kata check --baseline <git-ref> <path>` | Demote errors already present at the ref to warnings (see Baseline). |
 | `kata query '<kata rule>' [path] --lang=<lang>` | Evaluate an inline rule against a file or directory (default `.`). Ignores configured rules. |
 | `kata stop` | Tell a running daemon to shut down. |
@@ -53,7 +53,7 @@ Exit codes: `0` clean, `2` violations, `64` usage, `70` internal error.
 
 ## Reports
 
-`kata check` and `kata query` render diagnostics in one of three formats,
+`kata check` and `kata query` render diagnostics in one of four formats,
 selected by flag (the last format flag wins):
 
 - default: code frames with the offending span underlined, two context lines
@@ -65,6 +65,30 @@ selected by flag (the last format flag wins):
   `{"files":[{"path":...,"diagnostics":[...]},...],"summary":{"files":N,"violations":N,"warnings":N}}`.
   Only files with diagnostics appear under `files`; the diagnostic shape
   matches the one-shot report.
+- `--sarif`: a SARIF 2.1.0 document. Each diagnostic becomes a `result` with
+  `ruleId`, `ruleIndex`, `level` (`error` or `warning`, post-demotion, so
+  `--baseline` composes: demoted findings report `warning`), `message.text`,
+  one physical location (the reported path verbatim; lines and columns are
+  1-based with an exclusive `endColumn`), and the fingerprint under
+  `partialFingerprints."kataFingerprint/v1"` (omitted when empty). Each rule
+  that produced a result gets a `tool.driver.rules[]` descriptor in first
+  appearance order whose `defaultConfiguration.level` is `error` if any of its
+  results was an error. `tool.driver.semanticVersion` is the kata version.
+  One-shot stdin mode keeps its own JSON report and has no SARIF variant.
+
+  Omitted SARIF properties: `helpUri` (rules have no docs URL), `fixes[]`
+  (kata emits no autofixes), and `columnKind` (kata columns are byte offsets,
+  which SARIF cannot declare; identical to code-point columns for ASCII).
+
+  For GitHub PR annotations:
+
+  ```yaml
+  - run: kata check --sarif . > kata.sarif
+    continue-on-error: true
+  - uses: github/codeql-action/upload-sarif@v3
+    with:
+      sarif_file: kata.sarif
+  ```
 
 Every JSON diagnostic and daemon diagnostic carries a lowercase 64-character
 `fingerprint`. Kata computes version 1 as:
