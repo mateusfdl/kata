@@ -190,6 +190,24 @@ pub const Negate = struct {
 pub const Emit = struct {
     capture: Capture,
     message: []const u8,
+    fix: ?Fix = null,
+    suggestions: []const Suggestion = &.{},
+    range: tokenizer.Range,
+};
+
+pub const FixSafety = enum { safe, unsafe };
+
+pub const Fix = struct {
+    safety: FixSafety,
+    target: ?Capture,
+    template: []const u8,
+    range: tokenizer.Range,
+};
+
+pub const Suggestion = struct {
+    label: []const u8,
+    target: ?Capture,
+    template: []const u8,
     range: tokenizer.Range,
 };
 

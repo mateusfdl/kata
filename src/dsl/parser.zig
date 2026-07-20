@@ -43,6 +43,8 @@ pub const Error = tokenizer.Error || error{
     ExpectedComposition,
     ExpectedComparison,
     NestedComposition,
+    ExpectedSafety,
+    DuplicateFix,
 };
 
 const Keyword = enum {
@@ -65,6 +67,10 @@ const Keyword = enum {
     where,
     emit,
     message,
+    fix,
+    suggest,
+    safe,
+    unsafe,
     inside,
     has,
     parent,
@@ -825,13 +831,79 @@ pub const Parser = struct {
         try self.expectKeyword(.message, error.ExpectedMessage);
 
         const message = try self.parseString();
+
+        var fix: ?ast.Fix = null;
+        var suggestions: std.ArrayList(ast.Suggestion) = .empty;
+        while (self.current.kind != .right_brace) {
+            const clause = try self.expectSymbol(error.ExpectedRightBrace);
+            if (isKeyword(clause, .fix)) {
+                if (fix != null) {
+                    self.failAt(clause);
+
+                    return error.DuplicateFix;
+                }
+
+                fix = try self.parseFix(clause);
+            } else if (isKeyword(clause, .suggest)) {
+                try suggestions.append(self.allocator, try self.parseSuggestion(clause));
+            } else {
+                self.failAt(clause);
+
+                return error.UnknownClause;
+            }
+        }
+
         const end = try self.expect(.right_brace, error.ExpectedRightBrace);
 
         return .{
             .capture = capture,
             .message = message,
+            .fix = fix,
+            .suggestions = try suggestions.toOwnedSlice(self.allocator),
             .range = .{ .start = start.range.start, .end = end.range.end },
         };
+    }
+
+    fn parseFix(self: *Parser, start: Token) Error!ast.Fix {
+        const safety_token = try self.expectSymbol(error.ExpectedSafety);
+        const safety: ast.FixSafety = if (isKeyword(safety_token, .safe))
+            .safe
+        else if (isKeyword(safety_token, .unsafe))
+            .unsafe
+        else {
+            self.failAt(safety_token);
+
+            return error.ExpectedSafety;
+        };
+
+        const target = try self.optionalCapture();
+        const template = try self.parseStringLiteral();
+
+        return .{
+            .safety = safety,
+            .target = target,
+            .template = template.value,
+            .range = .{ .start = start.range.start, .end = template.range.end },
+        };
+    }
+
+    fn parseSuggestion(self: *Parser, start: Token) Error!ast.Suggestion {
+        const label = try self.parseString();
+        const target = try self.optionalCapture();
+        const template = try self.parseStringLiteral();
+
+        return .{
+            .label = label,
+            .target = target,
+            .template = template.value,
+            .range = .{ .start = start.range.start, .end = template.range.end },
+        };
+    }
+
+    fn optionalCapture(self: *Parser) Error!?ast.Capture {
+        if (self.current.kind != .capture) return null;
+
+        return try self.expectCapture();
     }
 
     fn parseExpression(self: *Parser) Error!ast.Expression {

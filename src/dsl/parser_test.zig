@@ -1686,3 +1686,177 @@ test "parser: rejects fields after a nested where" {
         \\}
     , &diag));
 }
+
+test "parser: parses a fix clause with the default target" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule prefer-number-parseint {
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id {
+        \\    message "Prefer Number.parseInt"
+        \\    fix safe "Number.parseInt"
+        \\  }
+        \\}
+    , &diag);
+
+    const fix = file.rules[0].emit.fix.?;
+    try std.testing.expectEqual(ast.FixSafety.safe, fix.safety);
+    try std.testing.expectEqual(@as(?ast.Capture, null), fix.target);
+    try std.testing.expectEqualStrings("Number.parseInt", fix.template);
+    try std.testing.expectEqual(@as(usize, 0), file.rules[0].emit.suggestions.len);
+}
+
+test "parser: parses an unsafe fix targeting another capture" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule bad-cast {
+        \\  lang ts
+        \\  match as_expression @match {
+        \\    child: predefined_type @t
+        \\  }
+        \\  emit @match {
+        \\    message "bad cast"
+        \\    fix unsafe @t "unknown"
+        \\  }
+        \\}
+    , &diag);
+
+    const fix = file.rules[0].emit.fix.?;
+    try std.testing.expectEqual(ast.FixSafety.unsafe, fix.safety);
+    try std.testing.expectEqualStrings("t", fix.target.?.name);
+    try std.testing.expectEqualStrings("unknown", fix.template);
+}
+
+test "parser: parses repeated suggestions preserving order" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule no-any {
+        \\  lang ts
+        \\  match identifier @id {
+        \\    child: predefined_type @t
+        \\  }
+        \\  emit @id {
+        \\    message "no any"
+        \\    suggest "use unknown" @t "unknown"
+        \\    suggest "keep it" "{text(@id)}"
+        \\  }
+        \\}
+    , &diag);
+
+    const suggestions = file.rules[0].emit.suggestions;
+    try std.testing.expectEqual(@as(usize, 2), suggestions.len);
+    try std.testing.expectEqualStrings("use unknown", suggestions[0].label);
+    try std.testing.expectEqualStrings("t", suggestions[0].target.?.name);
+    try std.testing.expectEqualStrings("unknown", suggestions[0].template);
+    try std.testing.expectEqualStrings("keep it", suggestions[1].label);
+    try std.testing.expectEqual(@as(?ast.Capture, null), suggestions[1].target);
+    try std.testing.expectEqualStrings("{text(@id)}", suggestions[1].template);
+    try std.testing.expectEqual(@as(?ast.Fix, null), file.rules[0].emit.fix);
+}
+
+test "parser: parses an empty fix template as a deletion" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule no-thing {
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id {
+        \\    message "remove it"
+        \\    fix safe ""
+        \\  }
+        \\}
+    , &diag);
+
+    try std.testing.expectEqualStrings("", file.rules[0].emit.fix.?.template);
+}
+
+test "parser: rejects malformed fix and suggest clauses" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var safety_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedSafety, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id {
+        \\    message "bad"
+        \\    fix "Number.parseInt"
+        \\  }
+        \\}
+    , &safety_diag));
+
+    var duplicate_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.DuplicateFix, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id {
+        \\    message "bad"
+        \\    fix safe "a"
+        \\    fix safe "b"
+        \\  }
+        \\}
+    , &duplicate_diag));
+
+    var order_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedMessage, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id {
+        \\    fix safe "a"
+        \\    message "bad"
+        \\  }
+        \\}
+    , &order_diag));
+
+    var template_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedString, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id {
+        \\    message "bad"
+        \\    fix safe
+        \\  }
+        \\}
+    , &template_diag));
+
+    var label_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedString, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id {
+        \\    message "bad"
+        \\    suggest @id "unknown"
+        \\  }
+        \\}
+    , &label_diag));
+
+    var clause_diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.UnknownClause, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match identifier @id
+        \\  emit @id {
+        \\    message "bad"
+        \\    title "extra"
+        \\  }
+        \\}
+    , &clause_diag));
+}
