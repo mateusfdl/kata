@@ -71,6 +71,22 @@ test "protocol: response round-trips with a populated report" {
         .maturity = .deprecated,
         .fingerprint = "abc123",
         .context = &context,
+        .fix = .{
+            .range = .{
+                .start = .{ .line = 0, .column = 11 },
+                .end = .{ .line = 0, .column = 24 },
+            },
+            .replacement = "unknown",
+            .safety = .unsafe,
+        },
+        .suggestions = &.{.{
+            .label = "use unknown",
+            .range = .{
+                .start = .{ .line = 0, .column = 11 },
+                .end = .{ .line = 0, .column = 24 },
+            },
+            .replacement = "unknown",
+        }},
     }};
 
     const resp: protocol.Response = .{
@@ -111,6 +127,14 @@ test "protocol: response round-trips with a populated report" {
     try std.testing.expectEqual(true, d.demoted);
     try std.testing.expectEqual(diagnostic.Maturity.deprecated, d.maturity);
     try std.testing.expectEqualStrings("abc123", d.fingerprint);
+    const fix = d.fix.?;
+    try std.testing.expectEqualStrings("unknown", fix.replacement);
+    try std.testing.expectEqual(diagnostic.Safety.unsafe, fix.safety);
+    try std.testing.expectEqual(@as(u32, 11), fix.range.start.column);
+    try std.testing.expectEqual(@as(u32, 24), fix.range.end.column);
+    try std.testing.expectEqual(@as(usize, 1), d.suggestions.len);
+    try std.testing.expectEqualStrings("use unknown", d.suggestions[0].label);
+    try std.testing.expectEqualStrings("unknown", d.suggestions[0].replacement);
     try std.testing.expectEqual(@as(usize, 1), d.context.len);
     try std.testing.expectEqual(diagnostic.ContextKind.method, d.context[0].kind);
     try std.testing.expectEqualStrings("render", d.context[0].name);

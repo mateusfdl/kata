@@ -266,12 +266,11 @@ pub fn runRule(
         for (matches) |match| {
             if (!try matcher.evaluate(cp.meta.predicates, match, eval_ctx)) continue;
 
-            const message = if (cp.meta.message) |m| switch (m) {
-                .plain => |text| text,
-                .segments => |segments| try matcher.renderMessage(allocator, segments, match, eval_ctx),
-            } else cp.meta.rule_id;
+            const message = if (cp.meta.message) |m| try renderTemplate(allocator, m, match, eval_ctx) else cp.meta.rule_id;
+            const fix = try renderFix(allocator, cp.meta, match, eval_ctx);
+            const suggestions = try renderSuggestions(allocator, cp.meta, match, eval_ctx);
 
-            try emitDiagnostic(allocator, match_id, cp.meta, match, eval_ctx.source, lang_str, message, severity, out);
+            try emitDiagnostic(allocator, match_id, cp.meta, match, eval_ctx.source, lang_str, message, severity, fix, suggestions, out);
         }
     }
 }
@@ -287,6 +286,55 @@ fn pathExcluded(globs: []const []const u8, path: ?[]const u8) bool {
     return false;
 }
 
+fn renderTemplate(
+    allocator: std.mem.Allocator,
+    template: rule.Message,
+    match: query.Match,
+    ctx: matcher.EvalContext,
+) ![]const u8 {
+    return switch (template) {
+        .plain => |text| text,
+        .segments => |segments| try matcher.renderMessage(allocator, segments, match, ctx),
+    };
+}
+
+fn renderFix(
+    allocator: std.mem.Allocator,
+    meta: rule.PatternMeta,
+    match: query.Match,
+    ctx: matcher.EvalContext,
+) !?diagnostic.Fix {
+    const fix = meta.fix orelse return null;
+    const n = match.get(fix.target_id) orelse return null;
+
+    return .{
+        .range = nodeRange(n),
+        .replacement = try renderTemplate(allocator, fix.template, match, ctx),
+        .safety = fix.safety,
+    };
+}
+
+fn renderSuggestions(
+    allocator: std.mem.Allocator,
+    meta: rule.PatternMeta,
+    match: query.Match,
+    ctx: matcher.EvalContext,
+) ![]const diagnostic.Suggestion {
+    if (meta.suggestions.len == 0) return &.{};
+
+    var out: std.ArrayList(diagnostic.Suggestion) = .empty;
+    for (meta.suggestions) |suggestion| {
+        const n = match.get(suggestion.target_id) orelse continue;
+        try out.append(allocator, .{
+            .label = suggestion.label,
+            .range = nodeRange(n),
+            .replacement = try renderTemplate(allocator, suggestion.template, match, ctx),
+        });
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
 fn emitDiagnostic(
     allocator: std.mem.Allocator,
     match_id: query.CaptureId,
@@ -296,24 +344,23 @@ fn emitDiagnostic(
     lang_str: []const u8,
     message: []const u8,
     severity: diagnostic.Severity,
+    fix: ?diagnostic.Fix,
+    suggestions: []const diagnostic.Suggestion,
     out: *std.ArrayList(diagnostic.Diagnostic),
 ) !void {
     const n = match.get(match_id) orelse return;
-    const sp = n.startPoint();
-    const ep = n.endPoint();
     const context = try enclosingContext(allocator, n, source);
 
     try out.append(allocator, .{
         .rule_id = meta.rule_id,
         .language = lang_str,
         .message = message,
-        .range = .{
-            .start = .{ .line = sp.row, .column = sp.column },
-            .end = .{ .line = ep.row, .column = ep.column },
-        },
+        .range = nodeRange(n),
         .severity = severity,
         .maturity = meta.maturity,
         .context = context,
+        .fix = fix,
+        .suggestions = suggestions,
     });
 }
 

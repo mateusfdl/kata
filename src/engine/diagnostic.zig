@@ -37,6 +37,18 @@ pub const Context = struct {
     range: Range,
 };
 
+pub const Fix = struct {
+    range: Range,
+    replacement: []const u8,
+    safety: Safety,
+};
+
+pub const Suggestion = struct {
+    label: []const u8,
+    range: Range,
+    replacement: []const u8,
+};
+
 pub const Diagnostic = struct {
     rule_id: []const u8,
     language: []const u8,
@@ -47,6 +59,8 @@ pub const Diagnostic = struct {
     maturity: Maturity = .stable,
     fingerprint: []const u8 = "",
     context: []const Context = &.{},
+    fix: ?Fix = null,
+    suggestions: []const Suggestion = &.{},
 };
 
 pub const Report = struct {

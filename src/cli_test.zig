@@ -62,6 +62,22 @@ const Report = struct {
         maturity: []const u8,
         fingerprint: []const u8,
         context: []const diagnostic.Context,
+        fix: ?struct {
+            range: struct {
+                start: struct { line: u32, column: u32 },
+                end: struct { line: u32, column: u32 },
+            },
+            replacement: []const u8,
+            safety: []const u8,
+        },
+        suggestions: []const struct {
+            label: []const u8,
+            range: struct {
+                start: struct { line: u32, column: u32 },
+                end: struct { line: u32, column: u32 },
+            },
+            replacement: []const u8,
+        },
     },
     clean: bool,
 };

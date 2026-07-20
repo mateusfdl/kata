@@ -1960,3 +1960,101 @@ test "engine: until bounds inside at the boundary kind" {
     try std.testing.expectEqual(@as(u32, 3), diags[0].range.start.line);
     try std.testing.expectEqual(@as(u32, 9), diags[1].range.start.line);
 }
+
+test "engine: diagnostics carry a rendered fix with the target range" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rule =
+        \\rule prefer-number-parseint {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: identifier @fn
+        \\  }
+        \\  where { text(@fn) == "parseInt" }
+        \\  emit @match {
+        \\    message "Prefer Number.parseInt"
+        \\    fix safe @fn "Number.parseInt"
+        \\  }
+        \\}
+    ;
+    var f = try Fixture.init(gpa, &.{.ts}, "prefer-number-parseint", rule);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(arena.allocator(), "const n = parseInt(x);\n", .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    const fix = diags[0].fix.?;
+    try std.testing.expectEqualStrings("Number.parseInt", fix.replacement);
+    try std.testing.expectEqual(diagnostic.Safety.safe, fix.safety);
+    try std.testing.expectEqual(@as(u32, 0), fix.range.start.line);
+    try std.testing.expectEqual(@as(u32, 10), fix.range.start.column);
+    try std.testing.expectEqual(@as(u32, 0), fix.range.end.line);
+    try std.testing.expectEqual(@as(u32, 18), fix.range.end.column);
+    try std.testing.expectEqual(@as(usize, 0), diags[0].suggestions.len);
+}
+
+test "engine: fix templates interpolate capture text" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rule =
+        \\rule wrap-call {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: identifier @fn
+        \\  }
+        \\  emit @match {
+        \\    message "wrap it"
+        \\    fix unsafe "wrap({text(@fn)})"
+        \\  }
+        \\}
+    ;
+    var f = try Fixture.init(gpa, &.{.ts}, "wrap-call", rule);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(arena.allocator(), "const n = parseInt(x);\n", .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    const fix = diags[0].fix.?;
+    try std.testing.expectEqualStrings("wrap(parseInt)", fix.replacement);
+    try std.testing.expectEqual(diagnostic.Safety.unsafe, fix.safety);
+    try std.testing.expectEqual(@as(u32, 10), fix.range.start.column);
+    try std.testing.expectEqual(@as(u32, 21), fix.range.end.column);
+}
+
+test "engine: suggestions render in order with labels" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rule =
+        \\rule no-parseint {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: identifier @fn
+        \\  }
+        \\  emit @match {
+        \\    message "avoid it"
+        \\    suggest "qualify" @fn "Number.parseInt"
+        \\    suggest "delete the call" ""
+        \\  }
+        \\}
+    ;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-parseint", rule);
+    defer f.deinit();
+
+    const diags = try f.engine.lint(arena.allocator(), "const n = parseInt(x);\n", .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.len);
+    try std.testing.expectEqual(@as(?diagnostic.Fix, null), diags[0].fix);
+    const suggestions = diags[0].suggestions;
+    try std.testing.expectEqual(@as(usize, 2), suggestions.len);
+    try std.testing.expectEqualStrings("qualify", suggestions[0].label);
+    try std.testing.expectEqualStrings("Number.parseInt", suggestions[0].replacement);
+    try std.testing.expectEqual(@as(u32, 10), suggestions[0].range.start.column);
+    try std.testing.expectEqual(@as(u32, 18), suggestions[0].range.end.column);
+    try std.testing.expectEqualStrings("delete the call", suggestions[1].label);
+    try std.testing.expectEqualStrings("", suggestions[1].replacement);
+    try std.testing.expectEqual(@as(u32, 10), suggestions[1].range.start.column);
+    try std.testing.expectEqual(@as(u32, 21), suggestions[1].range.end.column);
+}
