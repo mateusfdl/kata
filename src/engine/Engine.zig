@@ -205,6 +205,10 @@ pub const Engine = struct {
 
         return out.toOwnedSlice(allocator);
     }
+
+    pub fn hasSyntaxError(self: *Engine, source: []const u8, lang: language.Name) !bool {
+        return self.frontend.hasError(source, lang);
+    }
 };
 
 fn needsMeasures(compiled: ?*rule.CompiledRule) bool {

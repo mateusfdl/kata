@@ -7,6 +7,7 @@ test {
 comptime {
     _ = @import("engine/engine_test.zig");
     _ = @import("engine/baseline_test.zig");
+    _ = @import("engine/edits_test.zig");
     _ = @import("engine/fingerprint_test.zig");
     _ = @import("engine/facts_test.zig");
     _ = @import("engine/project_rule_test.zig");

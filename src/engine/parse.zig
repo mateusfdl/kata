@@ -70,6 +70,14 @@ pub const Frontend = struct {
         return cloned;
     }
 
+    pub fn hasError(self: *Frontend, source: []const u8, lang: language.Name) !bool {
+        const parser = try self.ensureParser(lang);
+        const parsed = parser.parseString(source, null) orelse return error.ParseFailed;
+        defer parsed.destroy();
+
+        return parsed.rootNode().hasError();
+    }
+
     fn ensureParser(self: *Frontend, lang: language.Name) !*ts.Parser {
         if (self.parsers.get(lang)) |cached| return cached;
         const parser = ts.Parser.create();

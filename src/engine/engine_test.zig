@@ -2058,3 +2058,19 @@ test "engine: suggestions render in order with labels" {
     try std.testing.expectEqual(@as(u32, 10), suggestions[1].range.start.column);
     try std.testing.expectEqual(@as(u32, 21), suggestions[1].range.end.column);
 }
+
+test "engine: hasSyntaxError distinguishes broken from valid source" {
+    const gpa = std.testing.allocator;
+    const rule =
+        \\rule no-console {
+        \\  lang ts
+        \\  match identifier @match
+        \\  emit @match { message "m" }
+        \\}
+    ;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-console", rule);
+    defer f.deinit();
+
+    try std.testing.expectEqual(false, try f.engine.hasSyntaxError("const x = 1;\n", .ts));
+    try std.testing.expectEqual(true, try f.engine.hasSyntaxError("const x = ;\n", .ts));
+}
