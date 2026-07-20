@@ -2,6 +2,7 @@ const std = @import("std");
 const mvzr = @import("mvzr");
 
 const diagnostic = @import("diagnostic.zig");
+const dispatch = @import("dispatch.zig");
 const expr = @import("expr.zig");
 const language = @import("language.zig");
 const query = @import("query.zig");
@@ -158,6 +159,7 @@ pub const CompiledRule = struct {
     needs_measures: bool,
     arena: *std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
+    dispatch: dispatch.Table = .empty,
 
     pub fn deinit(self: *CompiledRule) void {
         self.arena.deinit();

@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const diagnostic = @import("diagnostic.zig");
+const dispatch = @import("dispatch.zig");
 const fact_rule = @import("fact_rule.zig");
 const facts = @import("facts.zig");
 const family_mod = @import("family/family.zig");
@@ -147,7 +148,31 @@ pub const Engine = struct {
         };
         slot.* = .{ .compiled = compiled };
 
+        const table = dispatch.Table.build(
+            slot.compiled.arena.allocator(),
+            slot.compiled.patterns,
+            family_mod.of(lang.family()).kind_count,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.EmptyRootKinds => {
+                self.compile_diag = .{
+                    .lang = lang,
+                    .rule_id = underivableRuleId(slot.compiled.arena.allocator(), slot.compiled.patterns),
+                    .detail = "cannot derive root kinds",
+                };
+                return error.CompileFailed;
+            },
+        };
+        slot.compiled.dispatch = table;
+
         return &slot.compiled;
+    }
+
+    fn underivableRuleId(arena: std.mem.Allocator, patterns: []const rule.CompiledPattern) []const u8 {
+        for (patterns) |cp| {
+            _ = dispatch.rootKinds(arena, &cp.pattern) catch return cp.meta.rule_id;
+        }
+        return "";
     }
 
     fn ensureMetricQuery(self: *Engine, fam: family_mod.Family) !*metric.Compiled {

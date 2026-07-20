@@ -1,8 +1,43 @@
 const std = @import("std");
 
 const query = @import("query.zig");
+const rule = @import("rule.zig");
 
 pub const Error = error{EmptyRootKinds} || std.mem.Allocator.Error;
+
+pub const Table = struct {
+    slots: []const []const u16,
+
+    pub const empty: Table = .{ .slots = &.{} };
+
+    pub fn build(arena: std.mem.Allocator, patterns: []const rule.CompiledPattern, kind_count: u16) Error!Table {
+        const lists = try arena.alloc(std.ArrayList(u16), kind_count);
+        @memset(lists, .empty);
+
+        for (patterns, 0..) |cp, index| {
+            const kinds = try rootKinds(arena, &cp.pattern);
+            for (kinds) |kind| {
+                try lists[kind].append(arena, @intCast(index));
+            }
+        }
+
+        const slots = try arena.alloc([]const u16, kind_count);
+        for (lists, slots) |*list, *slot| {
+            std.sort.pdq(u16, list.items, patterns, patternBefore);
+            slot.* = list.items;
+        }
+
+        return .{ .slots = slots };
+    }
+};
+
+fn patternBefore(patterns: []const rule.CompiledPattern, a: u16, b: u16) bool {
+    return switch (std.mem.order(u8, patterns[a].meta.rule_id, patterns[b].meta.rule_id)) {
+        .lt => true,
+        .gt => false,
+        .eq => a < b,
+    };
+}
 
 pub fn rootKinds(arena: std.mem.Allocator, pattern: *const query.Pattern) Error![]const u16 {
     var kinds: std.ArrayList(u16) = .empty;
