@@ -97,6 +97,15 @@ selected by flag (the last format flag wins):
       sarif_file: kata.sarif
   ```
 
+Diagnostics within a file are ordered by source position (an enclosing node
+before its descendants), then rule id for findings on the same node. The order
+is stable run to run and independent of rule registration order. Under the
+hood, rules are indexed by their feasible root kinds at load time and each
+file is walked exactly once, offering every node only to the rules registered
+for its kind, so lint cost stays flat as the active rule count grows. A rule
+whose root kinds cannot be derived fails loudly at load naming the rule; there
+is no silent fallback to full-tree scanning.
+
 Every JSON diagnostic and daemon diagnostic carries a lowercase 64-character
 `fingerprint`. Kata computes version 1 as:
 

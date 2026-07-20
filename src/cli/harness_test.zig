@@ -75,6 +75,37 @@ test "harness: fixture with satisfied expectations passes" {
     try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
 }
 
+test "harness: interleaved rules satisfy expectations regardless of order" {
+    const io = std.testing.io;
+    const aaa_const_rule =
+        \\rule aaa-const {
+        \\  lang ts
+        \\  match lexical_declaration @match
+        \\  emit @match { message "declaration" }
+        \\}
+    ;
+    const zzz_call_rule =
+        \\rule zzz-call {
+        \\  lang ts
+        \\  match call_expression @match
+        \\  emit @match { message "call" }
+        \\}
+    ;
+    var s = try Setup.init(io, "aaa-const.kata", aaa_const_rule, "sample.ts", "// kata-expect: zzz-call\n" ++
+        "foo();\n" ++
+        "// kata-expect: aaa-const\n" ++
+        "const x = 1;\n" ++
+        "// kata-expect: zzz-call\n" ++
+        "bar();\n");
+    defer s.deinit();
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "rules/ts/zzz-call.kata", .data = zzz_call_rule });
+
+    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+
+    try std.testing.expectEqual(harness.Outcome.pass, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+}
+
 test "harness: expected rule that never fires reports missing" {
     const io = std.testing.io;
     var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++

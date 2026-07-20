@@ -356,6 +356,53 @@ test "check: warn severity counts separately and exits clean" {
     try std.testing.expectEqualStrings(expected, out.written());
 }
 
+test "check: interleaved rules report in source position order" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const aaa_const_rule =
+        \\rule aaa-const {
+        \\  lang ts
+        \\  match lexical_declaration @match
+        \\  emit @match { message "declaration" }
+        \\}
+    ;
+    const zzz_call_rule =
+        \\rule zzz-call {
+        \\  lang ts
+        \\  match call_expression @match
+        \\  emit @match { message "call" }
+        \\}
+    ;
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "aaa-const", aaa_const_rule);
+    defer f.deinit();
+    try f.add(.ts, "zzz-call", zzz_call_rule);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "foo();\nconst x = 1;\nbar();\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, null, &reporter);
+
+    try std.testing.expectEqual(check.Outcome.violations, outcome);
+    const expected = try std.fmt.allocPrint(
+        gpa,
+        "{s}/a.ts:1:1 [zzz-call] call\n" ++
+            "{s}/a.ts:2:1 [aaa-const] declaration\n" ++
+            "{s}/a.ts:3:1 [zzz-call] call\n" ++
+            "checked 1 files, 3 violations, 0 warnings\n",
+        .{ rel, rel, rel },
+    );
+    defer gpa.free(expected);
+    try std.testing.expectEqualStrings(expected, out.written());
+}
+
 test "check: project rules report cross-file violations" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
