@@ -66,6 +66,8 @@ test "protocol: response round-trips with a populated report" {
             .start = .{ .line = 0, .column = 11 },
             .end = .{ .line = 0, .column = 24 },
         },
+        .severity = .warn,
+        .demoted = true,
         .maturity = .deprecated,
         .fingerprint = "abc123",
         .context = &context,
@@ -105,6 +107,8 @@ test "protocol: response round-trips with a populated report" {
     try std.testing.expectEqual(@as(u32, 11), d.range.start.column);
     try std.testing.expectEqual(@as(u32, 0), d.range.end.line);
     try std.testing.expectEqual(@as(u32, 24), d.range.end.column);
+    try std.testing.expectEqual(diagnostic.Severity.warn, d.severity);
+    try std.testing.expectEqual(true, d.demoted);
     try std.testing.expectEqual(diagnostic.Maturity.deprecated, d.maturity);
     try std.testing.expectEqualStrings("abc123", d.fingerprint);
     try std.testing.expectEqual(@as(usize, 1), d.context.len);

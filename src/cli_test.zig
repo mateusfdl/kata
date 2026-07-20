@@ -58,6 +58,7 @@ const Report = struct {
             end: struct { line: u32, column: u32 },
         },
         severity: []const u8,
+        demoted: bool,
         maturity: []const u8,
         fingerprint: []const u8,
         context: []const diagnostic.Context,
@@ -103,6 +104,7 @@ test "cli: violation exits 2" {
     try std.testing.expectEqualStrings("no-as-any", parsed.value.diagnostics[0].rule_id);
     try std.testing.expectEqualStrings("as any is not allowed", parsed.value.diagnostics[0].message);
     try std.testing.expectEqualStrings("error", parsed.value.diagnostics[0].severity);
+    try std.testing.expectEqual(false, parsed.value.diagnostics[0].demoted);
     try std.testing.expectEqualStrings("stable", parsed.value.diagnostics[0].maturity);
     try std.testing.expectEqualStrings("f8442f8df97b699227020f1ca99a3d34007e51a6f4a3934089158471a8f2963b", parsed.value.diagnostics[0].fingerprint);
 }

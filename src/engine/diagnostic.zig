@@ -38,6 +38,7 @@ pub const Diagnostic = struct {
     message: []const u8,
     range: Range,
     severity: Severity = .@"error",
+    demoted: bool = false,
     maturity: Maturity = .stable,
     fingerprint: []const u8 = "",
     context: []const Context = &.{},
