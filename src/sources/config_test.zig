@@ -1035,3 +1035,32 @@ test "rules: inline content after exclude key is rejected" {
 test "rules: odd indent is rejected" {
     try expectParseErr("rules:\n   go:\n", error.BadIndent, 2);
 }
+
+test "rules: fix never is parsed" {
+    var cfg = try expectParseOk("rules:\n  go:\n    no-panic:\n      fix: never\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(?lint.rule.FixMode, .never), cfg.settings[0].fix);
+}
+
+test "rules: fix unsafe-ok is parsed" {
+    var cfg = try expectParseOk("rules:\n  go:\n    no-panic:\n      fix: unsafe-ok\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(?lint.rule.FixMode, .unsafe_ok), cfg.settings[0].fix);
+}
+
+test "rules: fix defaults to null" {
+    var cfg = try expectParseOk("rules:\n  go:\n    no-panic:\n      severity: warn\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(?lint.rule.FixMode, null), cfg.settings[0].fix);
+}
+
+test "rules: fix is carried on project scope" {
+    var cfg = try expectParseOk("rules:\n  project:\n    repository-isolation:\n      fix: never\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(true, cfg.settings[0].project);
+    try std.testing.expectEqual(@as(?lint.rule.FixMode, .never), cfg.settings[0].fix);
+}
+
+test "rules: invalid fix value is rejected" {
+    try expectParseErr("rules:\n  go:\n    no-panic:\n      fix: always\n", error.InvalidFixValue, 4);
+}

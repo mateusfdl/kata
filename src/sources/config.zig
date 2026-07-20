@@ -112,6 +112,7 @@ pub const ParseError = error{
     UnknownRuleKey,
     InvalidEnabledValue,
     InvalidSeverityValue,
+    InvalidFixValue,
     DuplicateRule,
 } || std.mem.Allocator.Error;
 
@@ -138,9 +139,10 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.InvalidRatchetValue => "ratchet must be 'true' or 'false'",
         error.UnknownScope => "unknown scope (expected 'go', 'ts', 'tsx', 'typescript', or 'project')",
         error.MalformedRuleEntry => "rule must be '    <id>:' followed by indented '<key>: <value>' properties",
-        error.UnknownRuleKey => "unknown rule key (expected 'enabled', 'severity', or 'exclude')",
+        error.UnknownRuleKey => "unknown rule key (expected 'enabled', 'severity', 'fix', or 'exclude')",
         error.InvalidEnabledValue => "enabled must be 'true' or 'false'",
         error.InvalidSeverityValue => "severity must be 'error' or 'warn'",
+        error.InvalidFixValue => "fix must be 'never' or 'unsafe-ok'",
         error.DuplicateRule => "rule is already configured for this scope",
         else => @errorName(err),
     };
@@ -160,6 +162,7 @@ const PendingRule = struct {
     enabled: bool = true,
     enabled_explicit: bool = false,
     severity: ?diagnostic.Severity = null,
+    fix: ?rule.FixMode = null,
     exclude: std.ArrayList([]const u8) = .empty,
     in_exclude: bool = false,
 };
@@ -501,6 +504,11 @@ fn setRuleProperty(pending: *PendingRule, content: []const u8) ParseError!void {
         return;
     }
 
+    if (std.mem.eql(u8, key, "fix")) {
+        pending.fix = try parseFixValue(value);
+        return;
+    }
+
     if (std.mem.eql(u8, key, "exclude")) {
         if (value.len != 0) return error.ContentAfterKey;
         pending.in_exclude = true;
@@ -522,6 +530,13 @@ fn parseSeverityValue(value: []const u8) ParseError!diagnostic.Severity {
     if (std.mem.eql(u8, value, "warn")) return .warn;
 
     return error.InvalidSeverityValue;
+}
+
+fn parseFixValue(value: []const u8) ParseError!rule.FixMode {
+    if (std.mem.eql(u8, value, "never")) return .never;
+    if (std.mem.eql(u8, value, "unsafe-ok")) return .unsafe_ok;
+
+    return error.InvalidFixValue;
 }
 
 fn appendExcludeItem(
@@ -568,6 +583,7 @@ fn finalizePendingRule(
             .enabled = p.enabled,
             .enabled_explicit = p.enabled_explicit,
             .severity = p.severity,
+            .fix = p.fix,
             .exclude = exclude,
         }, p.line, diag);
         return;
@@ -580,6 +596,7 @@ fn finalizePendingRule(
             .enabled = p.enabled,
             .enabled_explicit = p.enabled_explicit,
             .severity = p.severity,
+            .fix = p.fix,
             .exclude = exclude,
         }, p.line, diag);
     }

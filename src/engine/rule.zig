@@ -240,6 +240,11 @@ fn nestedMatcherNeedsMeasures(nested: *const NestedMatcher) bool {
     return false;
 }
 
+pub const FixMode = enum {
+    never,
+    unsafe_ok,
+};
+
 pub const RuleSetting = struct {
     lang: ?language.Name,
     id: []const u8,
@@ -247,6 +252,7 @@ pub const RuleSetting = struct {
     enabled: bool = true,
     enabled_explicit: bool = false,
     severity: ?diagnostic.Severity = null,
+    fix: ?FixMode = null,
     exclude: []const []const u8 = &.{},
 
     pub fn matches(self: RuleSetting, lang: language.Name, id: []const u8) bool {
