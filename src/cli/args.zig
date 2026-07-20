@@ -1,5 +1,6 @@
 const std = @import("std");
 
+pub const env_baseline = "KATA_BASELINE";
 pub const env_socket = "KATA_SOCKET";
 pub const env_runtime_dir = "XDG_RUNTIME_DIR";
 pub const fallback_socket_path = "/tmp/kata.sock";
@@ -7,6 +8,7 @@ pub const fallback_socket_path = "/tmp/kata.sock";
 const flag_prefix = "--";
 
 pub const Flag = enum {
+    baseline,
     filename,
     lang,
     root,

@@ -11,12 +11,19 @@ pub const max_file_bytes = fs.source.max_file_bytes;
 
 pub const Outcome = enum { clean, violations };
 
+pub const Baseline = struct {
+    ref: []const u8,
+    prefix: []const u8,
+    dir: std.Io.Dir,
+};
+
 pub fn run(
     io: std.Io,
     gpa: std.mem.Allocator,
     engine: *Engine,
     target: []const u8,
     project_rules: []const lint.project_rule.ProjectRule,
+    baseline: ?Baseline,
     reporter: *reports.Reporter,
 ) !Outcome {
     const stat = try fs.source.statTarget(io, target);
@@ -27,8 +34,8 @@ pub fn run(
     const index_ptr: ?*lint.ProjectIndex = if (project_rules.len > 0 or fact_rules.len > 0) &index else null;
 
     var counts = switch (stat.kind) {
-        .directory => try checkDir(io, gpa, engine, target, index_ptr, reporter),
-        .file => try checkFile(io, gpa, engine, target, index_ptr, reporter),
+        .directory => try checkDir(io, gpa, engine, target, index_ptr, baseline, reporter),
+        .file => try checkFile(io, gpa, engine, target, index_ptr, baseline, reporter),
         else => return error.UnsupportedTarget,
     };
 
@@ -45,6 +52,7 @@ fn checkFile(
     engine: *Engine,
     target: []const u8,
     index: ?*lint.ProjectIndex,
+    baseline: ?Baseline,
     reporter: *reports.Reporter,
 ) !reports.Counts {
     const lang = fs.source.languageOf(target) orelse return error.UnsupportedTarget;
@@ -52,7 +60,7 @@ fn checkFile(
     const source = try fs.source.read(io, gpa, target);
     defer gpa.free(source);
 
-    return reportFile(io, gpa, engine, lang, source, target, index, reporter);
+    return reportFile(io, gpa, engine, lang, source, target, index, baseline, reporter);
 }
 
 const DirVisit = struct {
@@ -60,6 +68,7 @@ const DirVisit = struct {
     gpa: std.mem.Allocator,
     engine: *Engine,
     index: ?*lint.ProjectIndex,
+    baseline: ?Baseline,
     reporter: *reports.Reporter,
     counts: *reports.Counts,
 };
@@ -70,6 +79,7 @@ fn checkDir(
     engine: *Engine,
     target: []const u8,
     index: ?*lint.ProjectIndex,
+    baseline: ?Baseline,
     reporter: *reports.Reporter,
 ) !reports.Counts {
     var counts: reports.Counts = .{};
@@ -78,6 +88,7 @@ fn checkDir(
         .gpa = gpa,
         .engine = engine,
         .index = index,
+        .baseline = baseline,
         .reporter = reporter,
         .counts = &counts,
     };
@@ -88,7 +99,7 @@ fn checkDir(
 }
 
 fn visitFile(visit: DirVisit, lang: language.Name, source: []const u8, path: []const u8) anyerror!void {
-    visit.counts.add(try reportFile(visit.io, visit.gpa, visit.engine, lang, source, path, visit.index, visit.reporter));
+    visit.counts.add(try reportFile(visit.io, visit.gpa, visit.engine, lang, source, path, visit.index, visit.baseline, visit.reporter));
 }
 
 fn reportFile(
@@ -99,6 +110,7 @@ fn reportFile(
     source: []const u8,
     path: []const u8,
     index: ?*lint.ProjectIndex,
+    baseline: ?Baseline,
     reporter: *reports.Reporter,
 ) !reports.Counts {
     if (try fs.rules.isFixturePath(io, path)) return .{};
@@ -107,6 +119,8 @@ fn reportFile(
     defer arena.deinit();
     const diagnostics = try engine.lint(arena.allocator(), source, lang, path);
     try lint.fingerprint.assign(arena.allocator(), path, source, diagnostics);
+
+    if (baseline) |b| try applyBaseline(io, arena.allocator(), engine, b, lang, source, path, diagnostics);
 
     if (index) |idx| try idx.put(try engine.extractFacts(idx.allocator, source, lang, path));
 
@@ -117,6 +131,25 @@ fn reportFile(
     tally(&counts, diagnostics);
 
     return counts;
+}
+
+fn applyBaseline(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    engine: *Engine,
+    b: Baseline,
+    lang: language.Name,
+    source: []const u8,
+    path: []const u8,
+    diagnostics: []lint.diagnostic.Diagnostic,
+) !void {
+    if (!lint.diagnostic.hasErrors(diagnostics)) return;
+
+    const repo_path = try std.fmt.allocPrint(arena, "{s}{s}", .{ b.prefix, path });
+    const baseline_source = (try fs.git.showFile(io, arena, b.dir, b.ref, repo_path)) orelse return;
+    const before = try engine.lint(arena, baseline_source, lang, path);
+    try lint.fingerprint.assign(arena, path, baseline_source, before);
+    _ = try lint.baseline.demote(arena, source, diagnostics, baseline_source, before);
 }
 
 fn reportProjectViolations(

@@ -5,6 +5,118 @@ const reports = @import("../reports.zig");
 const lint = @import("engine");
 const test_fixture = @import("../test_fixture.zig");
 
+fn runGit(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, argv: []const []const u8) !void {
+    const result = std.process.run(gpa, io, .{ .argv = argv, .cwd = .{ .dir = dir } }) catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+
+        else => return err,
+    };
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    try std.testing.expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+}
+
+fn commitBaseline(gpa: std.mem.Allocator, io: std.Io, tmp: *std.testing.TmpDir, rel: []const u8, data: ?[]const u8) !void {
+    if (data) |bytes| {
+        try tmp.dir.createDirPath(io, rel);
+        const mirror = try std.fmt.allocPrint(gpa, "{s}/a.ts", .{rel});
+        defer gpa.free(mirror);
+        try tmp.dir.writeFile(io, .{ .sub_path = mirror, .data = bytes });
+    } else {
+        try tmp.dir.writeFile(io, .{ .sub_path = "seed.md", .data = "seed\n" });
+    }
+    try runGit(gpa, io, tmp.dir, &.{ "git", "init", "-q" });
+    try runGit(gpa, io, tmp.dir, &.{ "git", "add", "." });
+    try runGit(gpa, io, tmp.dir, &.{
+        "git",                  "-c",                   "user.name=kata",
+        "-c",                   "user.email=kata@test", "-c",
+        "commit.gpgsign=false", "commit",               "-q",
+        "-m",                   "base",
+    });
+    if (data != null) try tmp.dir.deleteTree(io, ".zig-cache");
+}
+
+test "check: baseline demotes committed errors and keeps new ones" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    try commitBaseline(gpa, io, &tmp, rel, "const x = foo as any;\n");
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const x = foo as any;\nconst y = bar as any;\n" });
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir }, &reporter);
+
+    try std.testing.expectEqual(check.Outcome.violations, outcome);
+    const written = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, written, "a.ts:1:11 warn [no-as-any]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "a.ts:2:11 [no-as-any]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "checked 1 files, 1 violations, 1 warnings") != null);
+}
+
+test "check: baseline exits clean when every error is committed" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    try commitBaseline(gpa, io, &tmp, rel, "const x = foo as any;\n");
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const x = foo as any;\n" });
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir }, &reporter);
+
+    try std.testing.expectEqual(check.Outcome.clean, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "checked 1 files, 0 violations, 1 warnings") != null);
+}
+
+test "check: baseline keeps errors in files absent at the ref" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    try commitBaseline(gpa, io, &tmp, rel, null);
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const x = foo as any;\n" });
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, .{ .ref = "HEAD", .prefix = "", .dir = tmp.dir }, &reporter);
+
+    try std.testing.expectEqual(check.Outcome.violations, outcome);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "checked 1 files, 1 violations, 0 warnings") != null);
+}
+
 test "check: run skips .git and gitignored folders" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
@@ -30,7 +142,7 @@ test "check: run skips .git and gitignored folders" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -64,7 +176,7 @@ test "check: rule fixtures are skipped while other tests dirs are linted" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -102,7 +214,7 @@ test "check: warn severity counts separately and exits clean" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.clean, outcome);
     const expected = try std.fmt.allocPrint(
@@ -150,7 +262,7 @@ test "check: project rules report cross-file violations" {
         } },
     }};
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -187,7 +299,7 @@ test "check: json diagnostics carry fingerprints for file and project rules" {
         } },
     }};
     var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
 
@@ -253,7 +365,7 @@ test "check: setting severity warn demotes project violations and exits clean" {
         } },
     }};
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.clean, outcome);
     const written = out.written();
@@ -290,7 +402,7 @@ test "check: import-boundary project rules report violations" {
         } },
     }};
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &rules, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -338,7 +450,7 @@ test "check: project kata rules report at the yaml rule positions" {
 
     f.engine.compiled_fact = &fact_repository_isolation;
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();
@@ -378,7 +490,7 @@ test "check: kata import rules report at the yaml rule positions" {
     }};
     f.engine.compiled_fact = &fact_rules;
     var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
-    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, &reporter);
+    const outcome = try check.run(io, gpa, &f.engine, rel, &.{}, null, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
     const written = out.written();

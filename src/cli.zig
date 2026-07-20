@@ -47,6 +47,7 @@ pub const Command = struct {
 pub const CheckOptions = struct {
     target: []const u8,
     format: reports.Format = .pretty,
+    baseline: ?[]const u8 = null,
 };
 
 pub const Subcommand = union(enum) {
@@ -71,10 +72,7 @@ pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
 
     return switch (args_mod.CommandName.parse(cmd) orelse return .{ .unknown = cmd }) {
         .daemon => .{ .daemon = rootFlag(args[1..]) },
-        .check => .{ .check = .{
-            .target = args_mod.firstPositional(args[1..]) orelse ".",
-            .format = formatOf(args[1..]),
-        } },
+        .check => .{ .check = parseCheckArgs(args[1..]) },
         .facts => .{ .facts = args_mod.firstPositional(args[1..]) orelse "" },
         .@"test" => .{ .rule_test = args_mod.firstPositional(args[1..]) orelse "" },
         .query => .{ .query = parseQueryArgs(args[1..]) },
@@ -83,13 +81,39 @@ pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
     };
 }
 
-fn formatOf(args: []const [:0]const u8) reports.Format {
-    var format: reports.Format = .pretty;
-    for (args) |a| {
-        if (formatFlag(a)) |f| format = f;
+fn parseCheckArgs(args: []const [:0]const u8) CheckOptions {
+    var opts: CheckOptions = .{ .target = "." };
+    var seen_target = false;
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        switch (args_mod.valueFor(args, &i, .baseline)) {
+            .found => |value| {
+                opts.baseline = value;
+                continue;
+            },
+            .missing => continue,
+            .absent => {},
+        }
+
+        if (formatFlag(a)) |f| {
+            opts.format = f;
+            continue;
+        }
+
+        if (args_mod.isFlag(a)) continue;
+
+        if (!seen_target) {
+            opts.target = a;
+            seen_target = true;
+        }
     }
 
-    return format;
+    return opts;
+}
+
+pub fn baselineRef(flag: ?[]const u8, environ: *std.process.Environ.Map) ?[]const u8 {
+    return flag orelse environ.get(args_mod.env_baseline);
 }
 
 fn formatFlag(arg: []const u8) ?reports.Format {
@@ -330,9 +354,24 @@ fn runCheck(c: Command, opts: CheckOptions) !u8 {
     defer ctx.deinit();
     if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
 
+    var baseline: ?check.Baseline = null;
+    if (baselineRef(opts.baseline, c.environ)) |ref| {
+        const dir = std.Io.Dir.cwd();
+        fs.git.verifyRef(c.io, c.gpa, dir, ref) catch |err| switch (err) {
+            error.UnknownRef => return printfAndExit(c.stderr, "unknown baseline ref \"{s}\"\n", .{ref}, exit_usage),
+            error.NotAWorkTree => return printAndExit(c.stderr, "kata check --baseline requires a git work tree\n", exit_usage),
+            else => return internalError(c.stderr, "verify baseline ref", err),
+        };
+        const prefix = fs.git.repoPrefix(c.io, c.arena, dir) catch |err| switch (err) {
+            error.NotAWorkTree => return printAndExit(c.stderr, "kata check --baseline requires a git work tree\n", exit_usage),
+            else => return internalError(c.stderr, "resolve repo prefix", err),
+        };
+        baseline = .{ .ref = ref, .prefix = prefix, .dir = dir };
+    }
+
     var reporter = reports.reporter(opts.format, c.stdout, c.color);
 
-    const outcome = check.run(c.io, c.gpa, &ctx.engine, opts.target, ctx.resolved.project_rules, &reporter) catch |err| switch (err) {
+    const outcome = check.run(c.io, c.gpa, &ctx.engine, opts.target, ctx.resolved.project_rules, baseline, &reporter) catch |err| switch (err) {
         error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{opts.target}, exit_usage),
         else => return internalError(c.stderr, "check", err),
     };

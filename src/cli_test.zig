@@ -188,6 +188,41 @@ test "parseSubcommand: 'check' with no target defaults to '.'" {
     const sub = cli.parseSubcommand(&.{"check"});
     try std.testing.expectEqualStrings(".", sub.check.target);
     try std.testing.expectEqual(reports.Format.pretty, sub.check.format);
+    try std.testing.expectEqual(@as(?[]const u8, null), sub.check.baseline);
+}
+
+test "parseSubcommand: 'check --baseline <ref>' captures the ref and target" {
+    const sub = cli.parseSubcommand(&.{ "check", "--baseline", "HEAD", "src/" });
+    try std.testing.expectEqualStrings("HEAD", sub.check.baseline.?);
+    try std.testing.expectEqualStrings("src/", sub.check.target);
+}
+
+test "parseSubcommand: 'check --baseline=<ref>' captures the ref" {
+    const sub = cli.parseSubcommand(&.{ "check", "--baseline=main", "src/" });
+    try std.testing.expectEqualStrings("main", sub.check.baseline.?);
+    try std.testing.expectEqualStrings("src/", sub.check.target);
+}
+
+test "parseSubcommand: 'check --baseline <ref>' without a target defaults to '.'" {
+    const sub = cli.parseSubcommand(&.{ "check", "--baseline", "HEAD" });
+    try std.testing.expectEqualStrings("HEAD", sub.check.baseline.?);
+    try std.testing.expectEqualStrings(".", sub.check.target);
+}
+
+test "baselineRef: flag wins over the environment" {
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("KATA_BASELINE", "env-ref");
+
+    try std.testing.expectEqualStrings("env-ref", cli.baselineRef(null, &env).?);
+    try std.testing.expectEqualStrings("flag-ref", cli.baselineRef("flag-ref", &env).?);
+}
+
+test "baselineRef: null without flag or environment" {
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    try std.testing.expectEqual(@as(?[]const u8, null), cli.baselineRef(null, &env));
 }
 
 test "parseSubcommand: 'check' with an explicit target" {
