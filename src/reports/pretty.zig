@@ -21,6 +21,7 @@ pub const Pretty = struct {
         diagnostics: []const lint.diagnostic.Diagnostic,
     ) std.Io.Writer.Error!void {
         for (diagnostics) |d| try self.frame(path, source, d);
+        if (diagnostics.len > 0) try self.writer.flush();
     }
 
     pub fn project(self: *Pretty, violations: []const lint.project_rule.Violation) std.Io.Writer.Error!void {

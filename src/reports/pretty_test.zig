@@ -3,6 +3,35 @@ const std = @import("std");
 const lint = @import("engine");
 const reports = @import("../reports.zig");
 
+const FlushSink = struct {
+    interface: std.Io.Writer = .{ .vtable = &vtable, .buffer = &.{} },
+    buffer: [4096]u8 = undefined,
+    output: [4096]u8 = undefined,
+    output_len: usize = 0,
+
+    const vtable: std.Io.Writer.VTable = .{ .drain = drain };
+
+    fn bind(self: *FlushSink) void {
+        self.interface.buffer = &self.buffer;
+    }
+
+    fn written(self: *const FlushSink) []const u8 {
+        return self.output[0..self.output_len];
+    }
+
+    fn drain(writer: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        const self: *FlushSink = @alignCast(@fieldParentPtr("interface", writer));
+        const buffered = writer.buffered();
+        if (self.output_len + buffered.len > self.output.len) return error.WriteFailed;
+
+        @memcpy(self.output[self.output_len..][0..buffered.len], buffered);
+        self.output_len += buffered.len;
+        writer.end = 0;
+
+        return std.Io.Writer.countSplat(data, splat);
+    }
+};
+
 fn diag(rule_id: []const u8, message: []const u8, range: lint.diagnostic.Range, severity: lint.diagnostic.Severity) lint.diagnostic.Diagnostic {
     return .{
         .rule_id = rule_id,
@@ -311,6 +340,30 @@ test "pretty: finish renders the summary" {
     try reporter.finish(.{ .files = 3, .violations = 2, .warnings = 1 });
 
     try std.testing.expectEqualStrings("checked 3 files, 2 violations, 1 warnings\n", out.written());
+}
+
+test "pretty: file flushes a complete report" {
+    var sink: FlushSink = .{};
+    sink.bind();
+
+    const source = "console.log(1);\n";
+    const d = diag("no-console", "console is not allowed", .{
+        .start = .{ .line = 0, .column = 0 },
+        .end = .{ .line = 0, .column = 15 },
+    }, .@"error");
+    var reporter: reports.Reporter = .{ .pretty = .{ .writer = &sink.interface } };
+    try reporter.file("src/app.ts", source, &.{d});
+
+    try std.testing.expectEqualStrings(
+        "src/app.ts:1:1 [no-console]\n" ++
+            "\n" ++
+            "  x console is not allowed\n" ++
+            "\n" ++
+            "> 1 | console.log(1);\n" ++
+            "    | ^^^^^^^^^^^^^^^\n" ++
+            "\n",
+        sink.written(),
+    );
 }
 
 test "pretty: color dims enclosing context" {
