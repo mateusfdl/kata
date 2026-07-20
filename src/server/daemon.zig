@@ -179,7 +179,10 @@ pub fn handle(
     const diagnostics = engine.lint(arena, source, lang, req.filename) catch
         return reply(ctx, .fail, null, "lint failed");
 
-    applyRatchet(ctx, engine, ratchet, arena, lang, req.filename, diagnostics) catch
+    lint.fingerprint.assign(arena, req.filename orelse "", source, diagnostics) catch
+        return reply(ctx, .fail, null, "fingerprint failed");
+
+    applyRatchet(ctx, engine, ratchet, arena, lang, req.filename, source, diagnostics) catch
         return reply(ctx, .fail, null, "ratchet baseline failed");
 
     const all = appendProjectDiagnostics(ctx, engine, arena, source, lang, req.filename, diagnostics) catch
@@ -202,6 +205,7 @@ fn applyRatchet(
     arena: std.mem.Allocator,
     lang: language.Name,
     filename: ?[]const u8,
+    source: []const u8,
     diagnostics: []diagnostic.Diagnostic,
 ) !void {
     if (!ratchet) return;
@@ -216,28 +220,9 @@ fn applyRatchet(
         else => return err,
     };
 
-    const baseline = try engine.lint(arena, baseline_source, lang, path);
-
-    var demote: std.ArrayList(usize) = .empty;
-    for (diagnostics, 0..) |d, i| {
-        if (d.severity != .@"error") continue;
-        const before = countErrors(baseline, d.rule_id);
-        const now = countErrors(diagnostics, d.rule_id);
-
-        if (now <= before) try demote.append(arena, i);
-    }
-
-    for (demote.items) |i| diagnostics[i].severity = .warn;
-}
-
-fn countErrors(diagnostics: []const diagnostic.Diagnostic, rule_id: []const u8) usize {
-    var n: usize = 0;
-
-    for (diagnostics) |d| {
-        if (d.severity == .@"error" and std.mem.eql(u8, d.rule_id, rule_id)) n += 1;
-    }
-
-    return n;
+    const before = try engine.lint(arena, baseline_source, lang, path);
+    try lint.fingerprint.assign(arena, path, baseline_source, before);
+    _ = try lint.baseline.demote(arena, source, diagnostics, baseline_source, before);
 }
 
 fn appendProjectDiagnostics(

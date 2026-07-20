@@ -442,14 +442,15 @@ test "daemon: warn-only diagnostics keep the report clean" {
 }
 
 const ratchet_disk_one_violation = "const a = x as any;\n";
-const ratchet_proposed_same_count = "const b = y as any;\n";
+const ratchet_proposed_moved = "const clean: string = \"ok\";\nconst a = x as any;\n";
+const ratchet_proposed_replacement = "const b = y as any;\n";
 const ratchet_proposed_growth = "const a = x as any;\nconst b = y as any;\n";
 
 fn ratchetContext(f: *test_fixture.Fixture, io: std.Io) daemon.Context {
     return .{ .engine = &f.engine, .binary_mtime = daemon_mtime, .io = io, .ratchet = true };
 }
 
-test "daemon: ratchet demotes unchanged violation count to warn" {
+test "daemon: ratchet demotes an unchanged violation to warn" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -468,7 +469,7 @@ test "daemon: ratchet demotes unchanged violation count to warn" {
     const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
         .binary_mtime = daemon_mtime,
         .filename = filename,
-        .source = ratchet_proposed_same_count,
+        .source = ratchet_proposed_moved,
     });
 
     try std.testing.expectEqual(protocol.Status.ok, resp.status);
@@ -476,6 +477,37 @@ test "daemon: ratchet demotes unchanged violation count to warn" {
     try std.testing.expect(report.clean);
     try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
     try std.testing.expectEqual(lint.diagnostic.Severity.warn, report.diagnostics[0].severity);
+    try std.testing.expectEqual(true, report.diagnostics[0].demoted);
+}
+
+test "daemon: ratchet keeps a replacement violation as error" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = ratchet_disk_one_violation });
+
+    var path_buf: [256]u8 = undefined;
+    const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
+
+    const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+        .binary_mtime = daemon_mtime,
+        .filename = filename,
+        .source = ratchet_proposed_replacement,
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expect(!report.clean);
+    try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+    try std.testing.expectEqual(lint.diagnostic.Severity.@"error", report.diagnostics[0].severity);
+    try std.testing.expectEqual(false, report.diagnostics[0].demoted);
 }
 
 test "daemon: ratchet keeps violation growth as error" {
@@ -504,8 +536,10 @@ test "daemon: ratchet keeps violation growth as error" {
     const report = resp.report.?;
     try std.testing.expect(!report.clean);
     try std.testing.expectEqual(@as(usize, 2), report.diagnostics.len);
-    try std.testing.expectEqual(lint.diagnostic.Severity.@"error", report.diagnostics[0].severity);
+    try std.testing.expectEqual(lint.diagnostic.Severity.warn, report.diagnostics[0].severity);
+    try std.testing.expectEqual(true, report.diagnostics[0].demoted);
     try std.testing.expectEqual(lint.diagnostic.Severity.@"error", report.diagnostics[1].severity);
+    try std.testing.expectEqual(false, report.diagnostics[1].demoted);
 }
 
 test "daemon: ratchet treats a missing file as zero baseline" {
@@ -555,7 +589,7 @@ test "daemon: ratchet baseline follows the current disk state" {
     const first = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
         .binary_mtime = daemon_mtime,
         .filename = filename,
-        .source = ratchet_proposed_same_count,
+        .source = ratchet_proposed_moved,
     });
     try std.testing.expect(first.report.?.clean);
 
@@ -564,7 +598,7 @@ test "daemon: ratchet baseline follows the current disk state" {
     const second = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
         .binary_mtime = daemon_mtime,
         .filename = filename,
-        .source = ratchet_proposed_same_count,
+        .source = ratchet_proposed_moved,
     });
     try std.testing.expect(!second.report.?.clean);
     try std.testing.expectEqual(lint.diagnostic.Severity.@"error", second.report.?.diagnostics[0].severity);
@@ -613,8 +647,10 @@ test "daemon: ratchet compares error counts so warn diagnostics never mask error
     const report = resp.report.?;
     try std.testing.expect(!report.clean);
     try std.testing.expectEqual(@as(usize, 2), report.diagnostics.len);
-    try std.testing.expectEqual(lint.diagnostic.Severity.@"error", report.diagnostics[0].severity);
+    try std.testing.expectEqual(lint.diagnostic.Severity.warn, report.diagnostics[0].severity);
+    try std.testing.expectEqual(true, report.diagnostics[0].demoted);
     try std.testing.expectEqual(lint.diagnostic.Severity.@"error", report.diagnostics[1].severity);
+    try std.testing.expectEqual(false, report.diagnostics[1].demoted);
 }
 
 test "daemon: ratchet without filename leaves severity untouched" {
@@ -702,7 +738,7 @@ test "daemon: file outside any project falls back to the daemon engine" {
     try std.testing.expectEqualStrings("as any is not allowed", report.diagnostics[0].message);
 }
 
-test "daemon: project ratchet demotes unchanged counts while the daemon default stays absolute" {
+test "daemon: project ratchet demotes unchanged violations while the daemon default stays absolute" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(gpa);
