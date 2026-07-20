@@ -365,3 +365,98 @@ test "pretty: color renders severity and carets in ansi codes" {
         out.written(),
     );
 }
+
+test "pretty: renders the fix line under the message" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    const source = "const n = parseInt(x);\n";
+    var d = diag("prefer-number-parseint", "Prefer Number.parseInt", .{
+        .start = .{ .line = 0, .column = 10 },
+        .end = .{ .line = 0, .column = 18 },
+    }, .@"error");
+    d.fix = .{
+        .range = .{ .start = .{ .line = 0, .column = 10 }, .end = .{ .line = 0, .column = 18 } },
+        .replacement = "Number.parseInt",
+        .safety = .safe,
+    };
+    try render(source, d, &out);
+
+    try std.testing.expectEqualStrings(
+        "src/app.ts:1:11 [prefer-number-parseint]\n" ++
+            "\n" ++
+            "  x Prefer Number.parseInt\n" ++
+            "  fix: Number.parseInt\n" ++
+            "\n" ++
+            "> 1 | const n = parseInt(x);\n" ++
+            "    |           ^^^^^^^^\n" ++
+            "\n",
+        out.written(),
+    );
+}
+
+test "pretty: marks unsafe fixes and renders deletions as remove" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    const source = "const n = parseInt(x);\n";
+    var d = diag("no-parseint", "no parseInt", .{
+        .start = .{ .line = 0, .column = 10 },
+        .end = .{ .line = 0, .column = 18 },
+    }, .@"error");
+    d.fix = .{
+        .range = .{ .start = .{ .line = 0, .column = 10 }, .end = .{ .line = 0, .column = 22 } },
+        .replacement = "",
+        .safety = .unsafe,
+    };
+    try render(source, d, &out);
+
+    try std.testing.expectEqualStrings(
+        "src/app.ts:1:11 [no-parseint]\n" ++
+            "\n" ++
+            "  x no parseInt\n" ++
+            "  fix: remove (unsafe)\n" ++
+            "\n" ++
+            "> 1 | const n = parseInt(x);\n" ++
+            "    |           ^^^^^^^^\n" ++
+            "\n",
+        out.written(),
+    );
+}
+
+test "pretty: renders suggestion lines with labels" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    const source = "const y = v as any;\n";
+    var d = diag("no-as-any", "as any is not allowed", .{
+        .start = .{ .line = 0, .column = 10 },
+        .end = .{ .line = 0, .column = 18 },
+    }, .@"error");
+    d.suggestions = &.{
+        .{
+            .label = "use unknown",
+            .range = .{ .start = .{ .line = 0, .column = 15 }, .end = .{ .line = 0, .column = 18 } },
+            .replacement = "unknown",
+        },
+        .{
+            .label = "drop the cast",
+            .range = .{ .start = .{ .line = 0, .column = 11 }, .end = .{ .line = 0, .column = 18 } },
+            .replacement = "",
+        },
+    };
+    try render(source, d, &out);
+
+    try std.testing.expectEqualStrings(
+        "src/app.ts:1:11 [no-as-any]\n" ++
+            "\n" ++
+            "  x as any is not allowed\n" ++
+            "  suggest use unknown: unknown\n" ++
+            "  suggest drop the cast: remove\n" ++
+            "\n" ++
+            "> 1 | const y = v as any;\n" ++
+            "    |           ^^^^^^^^\n" ++
+            "\n",
+        out.written(),
+    );
+}

@@ -54,7 +54,9 @@ pub const Pretty = struct {
         try self.paint(d.severity);
         try self.writer.print("{c} {s}", .{ marker, d.message });
         try self.unpaint();
-        try self.writer.writeAll("\n\n");
+        try self.writer.writeAll("\n");
+        try self.fixLines(d);
+        try self.writer.writeAll("\n");
 
         const target: usize = d.range.start.line;
         const first = target -| context_lines;
@@ -95,6 +97,23 @@ pub const Pretty = struct {
         }
 
         try self.writer.writeAll("\n");
+    }
+
+    fn fixLines(self: *Pretty, d: lint.diagnostic.Diagnostic) std.Io.Writer.Error!void {
+        if (d.fix) |fix| {
+            if (self.color) try self.writer.writeAll("\x1b[2m");
+            try self.writer.print("  fix: {s}", .{replacementText(fix.replacement)});
+            if (fix.safety == .unsafe) try self.writer.writeAll(" (unsafe)");
+            if (self.color) try self.writer.writeAll(reset);
+            try self.writer.writeAll("\n");
+        }
+
+        for (d.suggestions) |suggestion| {
+            if (self.color) try self.writer.writeAll("\x1b[2m");
+            try self.writer.print("  suggest {s}: {s}", .{ suggestion.label, replacementText(suggestion.replacement) });
+            if (self.color) try self.writer.writeAll(reset);
+            try self.writer.writeAll("\n");
+        }
     }
 
     fn enclosingContext(self: *Pretty, context: []const lint.diagnostic.Context) std.Io.Writer.Error!void {
@@ -177,6 +196,10 @@ pub const Pretty = struct {
         while (i < n) : (i += 1) try self.writer.writeByte(byte);
     }
 };
+
+fn replacementText(replacement: []const u8) []const u8 {
+    return if (replacement.len == 0) "remove" else replacement;
+}
 
 fn renderedWidth(prefix: []const u8) usize {
     var col: usize = 0;
