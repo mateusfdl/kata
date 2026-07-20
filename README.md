@@ -26,6 +26,7 @@ make test             # unit tests
 | `kata check <path>` | Lint a file or, recursively, a directory. `kata check .` for the whole tree. |
 | `kata check --text\|--json\|--sarif <path>` | Select the report format (see Reports). |
 | `kata check --baseline <git-ref> <path>` | Demote errors already present at the ref to warnings (see Baseline). |
+| `kata check --fix\|--fix-unsafe <path>` | Apply safe fixes (or safe and unsafe) in place, then report what remains (see Autofix). |
 | `kata query '<kata rule>' [path] --lang=<lang>` | Evaluate an inline rule against a file or directory (default `.`). Ignores configured rules. |
 | `kata stop` | Tell a running daemon to shut down. |
 | `kata new-rule <lang> <id>` | Scaffold a `.kata` template under `$XDG_CONFIG_HOME/kata/rules/<lang>/<id>.kata`. Refuses to overwrite. |
@@ -76,9 +77,15 @@ selected by flag (the last format flag wins):
   results was an error. `tool.driver.semanticVersion` is the kata version.
   One-shot stdin mode keeps its own JSON report and has no SARIF variant.
 
-  Omitted SARIF properties: `helpUri` (rules have no docs URL), `fixes[]`
-  (kata emits no autofixes), and `columnKind` (kata columns are byte offsets,
-  which SARIF cannot declare; identical to code-point columns for ASCII).
+  A diagnostic with a safe fix (see Autofix) also carries `fixes[]` with one
+  `artifactChanges` replacement (`deletedRegion` plus `insertedContent`,
+  omitted for deletions), so SARIF consumers can offer the edit. Unsafe fixes
+  and suggestions stay out of SARIF: it has no safety or alternatives concept,
+  and emitting only safe fixes keeps auto-appliers honest.
+
+  Omitted SARIF properties: `helpUri` (rules have no docs URL) and
+  `columnKind` (kata columns are byte offsets, which SARIF cannot declare;
+  identical to code-point columns for ASCII).
 
   For GitHub PR annotations:
 
@@ -141,6 +148,21 @@ Every diagnostic also carries `"demoted":false|true`. It is `true` only when a
 baseline demoted the diagnostic from error to warning (see Baseline); severity
 and demotion never participate in the fingerprint.
 
+Every diagnostic also carries `"fix"` and `"suggestions"` (see Autofix):
+
+```
+"fix":{"range":{...},"replacement":"Number.parseInt","safety":"safe"},
+"suggestions":[{"label":"use unknown","range":{...},"replacement":"unknown"}]
+```
+
+`fix` is `null` and `suggestions` is `[]` when the rule declares none. Ranges
+are the replaced span in the same shape as the diagnostic range; an empty
+`replacement` means delete the span. The pretty report renders a dimmed
+`fix: <replacement>` line (with ` (unsafe)` when applicable, `remove` for
+deletions) and one `suggest <label>: <replacement>` line each under the
+message. `--text` remains unchanged. Fix data never participates in
+`kataFingerprint/v1`.
+
 ## Baseline
 
 `kata check --baseline <git-ref> <path>` demotes pre-existing errors to
@@ -192,6 +214,61 @@ make stop             # kata stop
 kata check src/
 kata --filename=src/app.tsx < app.tsx
 ```
+
+## Autofix
+
+A rule may attach a mechanical remediation to its diagnostics with optional
+clauses after `message` in the emit block:
+
+```kata
+emit @match {
+  message "Prefer Number.parseInt over parseInt"
+  fix safe @fn "Number.parseInt"
+  suggest "use unknown" @t "unknown"
+}
+```
+
+- `fix safe|unsafe [@cap] "template"`: at most one per emit block, and the
+  safety keyword is mandatory. `safe` claims the replacement preserves
+  behavior for every match the rule can produce; `unsafe` claims it is the
+  right fix but may need review. The target capture defaults to the emitted
+  one; naming `@cap` replaces that capture's span instead. `fix safe ""`
+  deletes exactly the span.
+- `suggest "label" [@cap] "template"`: repeatable alternatives that are never
+  applied under any flag; the label says what each option trades.
+
+Templates reuse the message engine (`{text(@cap)}`, measure placeholders,
+`{{`/`}}` escapes) and render at diagnostic time. The target and every
+referenced capture must be bound in every alternation branch; the compiler
+rejects the rule otherwise. Project (`kind project`) rules do not take fix or
+suggest clauses.
+
+`kata check --fix` applies safe fixes in place; `--fix-unsafe` applies safe
+and unsafe ones. Suggestions are never applied. Per file, kata collects the
+applicable edits, sorts them by start byte, applies them greedily skipping any
+edit overlapping an already applied one, re-lints, and repeats up to 8 passes
+or until no applicable fixes remain; skipped edits resurface on the next pass.
+A pass whose result no longer parses is rolled back and reported on stderr as
+a rule defect naming the contributing rules. Changed files are rewritten in
+place with no backup: run `--fix` on a tree under version control. Remaining
+diagnostics report normally, so exit codes keep their meaning, and
+`--baseline` demotion runs on the fixed content. The daemon, one-shot mode,
+and `kata query` never write files.
+
+Per-rule application policy lives in `rules.yaml`: `fix: never` keeps a rule's
+fixes in reports but never applies them; `fix: unsafe-ok` applies that rule's
+unsafe fix under plain `--fix`.
+
+Fixture files assert rendered fixes with a `// kata-expect-fix:` line bound to
+the next source line like `kata-expect`; the text after the marker (trimmed,
+empty for deletions) must equal the rendered replacement. For every fixture
+that produces fixes, `kata test` also applies them (safe and unsafe), fails if
+the result stops parsing or does not re-lint to a fixpoint within 8 passes,
+and warns when a rule declares a fix that no fixture asserts.
+
+Not every remediation is expressible: templates splice capture text verbatim,
+so rewrites that transform the text itself (stripping a `.0` fraction,
+editing inside a string literal) stay message-only.
 
 ## Ad-hoc queries
 
@@ -288,6 +365,8 @@ Schema:
   directions.
 - `exclude:` takes a list of glob patterns; the rule skips matching paths on
   top of any `exclude paths` clause in the rule itself.
+- `fix: never | unsafe-ok` controls `--fix` application only (see Autofix);
+  reported fixes are unaffected.
 - Listing the same rule twice for one scope is an error, including a
   `typescript` entry overlapping a `ts` or `tsx` entry for the same id.
 - Entries matching no available rule are ignored.
@@ -417,7 +496,8 @@ rule no-console {
 Every rule block in a `.kata` file carries the id of the file name, and the
 `lang` clause must include the language directory the file sits in. A file may
 repeat the rule block to bundle pattern variants under one id. The node the
-`emit` clause names drives the diagnostic position.
+`emit` clause names drives the diagnostic position. The emit block may also
+carry `fix` and `suggest` clauses after `message` (see Autofix).
 
 A rule block may skip files by glob with an `exclude paths` clause:
 
