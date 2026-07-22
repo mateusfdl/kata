@@ -13,3 +13,8 @@ func handle() error {
 	_ = n
 	return err
 }
+
+func handleDiscardingValue() error {
+	_, err := send()
+	return err
+}

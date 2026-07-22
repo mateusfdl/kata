@@ -9,6 +9,7 @@ rule no-swallowed-errors {
 
   where {
     text(@blank) == "_"
+    position(@blank) == siblings(@blank)
   }
 
   emit @match {

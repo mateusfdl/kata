@@ -86,7 +86,10 @@ const blank_identifier_rule =
     \\      child: identifier @blank
     \\    }
     \\  }
-    \\  where { text(@blank) == "_" }
+    \\  where {
+    \\    text(@blank) == "_"
+    \\    position(@blank) == siblings(@blank)
+    \\  }
     \\  emit @match { message "blank identifier discarding function return - errors must be handled explicitly" }
     \\}
 ;
@@ -314,7 +317,8 @@ test "engine: go diagnostics carry type and method contexts" {
         "package main\n" ++
         "type T struct{}\n" ++
         "func (t T) m() {\n" ++
-        "  _, err := call()\n" ++
+        "  n, _ := call()\n" ++
+        "  _ = n\n" ++
         "}\n";
     const method_diagnostics = try method_fixture.engine.lint(arena.allocator(), method_source, .go, null);
     try std.testing.expectEqual(@as(usize, 1), method_diagnostics.len);
@@ -488,13 +492,16 @@ test "engine: go detects blank identifier short declaration" {
         "package main\n" ++
         "func f() {\n" ++
         "    _, err := foo()\n" ++
+        "    n, _ := foo()\n" ++
         "    _ = err\n" ++
+        "    _ = n\n" ++
         "}\n";
     const diags = try f.engine.lint(arena.allocator(), src, .go, null);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
     try std.testing.expectEqualStrings("no-swallowed-errors", diags[0].rule_id);
     try std.testing.expectEqualStrings("go", diags[0].language);
+    try std.testing.expectEqual(@as(u32, 3), diags[0].range.start.line);
     try std.testing.expectEqualStrings(
         "blank identifier discarding function return - errors must be handled explicitly",
         diags[0].message,
