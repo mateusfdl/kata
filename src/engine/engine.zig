@@ -1,4 +1,5 @@
 pub const baseline = @import("baseline.zig");
+pub const caps = @import("caps.zig");
 pub const diagnostic = @import("diagnostic.zig");
 pub const dispatch = @import("dispatch.zig");
 pub const edits = @import("edits.zig");

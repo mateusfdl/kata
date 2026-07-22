@@ -17,6 +17,7 @@ pub const Context = struct {
     ratchet: bool = false,
     cache: ?*sources.context.Cache = null,
     replay: ?*replay.ReplayCache = null,
+    max_matches: u32 = 25,
 };
 
 const IndexVisit = struct {
@@ -223,6 +224,7 @@ pub fn handle(
     var engine = ctx.engine;
     var ratchet = ctx.ratchet;
     var replay_cache = ctx.replay;
+    var max_matches = ctx.max_matches;
 
     if (ctx.cache) |cache| {
         const per_project = cache.acquire(arena, req.filename) catch
@@ -232,6 +234,7 @@ pub fn handle(
             engine = &p.engine;
             ratchet = p.resolved.ratchet;
             replay_cache = &p.replay;
+            max_matches = p.resolved.max_matches_per_file;
         }
     }
 
@@ -279,9 +282,12 @@ pub fn handle(
     lint.fingerprint.assign(arena, req.filename orelse "", source, all) catch
         return reply(.fail, null, "fingerprint failed");
 
+    const rendered = lint.caps.apply(arena, all, engine.settings, max_matches) catch
+        return reply(.fail, null, "caps failed");
+
     return reply(.ok, .{
         .language = lang.toString(),
-        .diagnostics = all,
+        .diagnostics = rendered,
         .clean = !diagnostic.hasErrors(all),
     }, null);
 }

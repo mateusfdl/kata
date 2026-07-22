@@ -362,6 +362,7 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
         .ratchet = ctx.resolved.ratchet,
         .cache = &cache,
         .replay = &ctx.replay,
+        .max_matches = ctx.resolved.max_matches_per_file,
     }, socket_path) catch |err| switch (err) {
         error.AlreadyRunning => return printAndExit(c.stderr, "kata daemon already running\n", exit_clean),
         else => return internalError(c.stderr, "serve", err),
@@ -400,7 +401,7 @@ fn runCheck(c: Command, opts: CheckOptions) !u8 {
     var reporter = reports.reporter(c.gpa, opts.format, c.stdout, c.color);
     const fixing: ?check.Fixing = if (opts.fix == .off) null else .{ .level = opts.fix, .stderr = c.stderr };
 
-    const outcome = check.run(c.io, c.gpa, &ctx.engine, opts.target, ctx.resolved.project_rules, baseline, fixing, &reporter) catch |err| switch (err) {
+    const outcome = check.run(c.io, c.gpa, &ctx.engine, opts.target, ctx.resolved.project_rules, ctx.resolved.max_matches_per_file, baseline, fixing, &reporter) catch |err| switch (err) {
         error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{opts.target}, exit_usage),
         else => return internalError(c.stderr, "check", err),
     };

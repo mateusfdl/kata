@@ -63,6 +63,7 @@ pub const Diagnostic = struct {
     context: []const Context = &.{},
     fix: ?Fix = null,
     suggestions: []const Suggestion = &.{},
+    capped: bool = false,
 };
 
 pub const Report = struct {

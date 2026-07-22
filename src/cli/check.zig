@@ -32,6 +32,7 @@ pub fn run(
     engine: *Engine,
     target: []const u8,
     project_rules: []const lint.project_rule.ProjectRule,
+    max_matches: u32,
     baseline: ?Baseline,
     fixing: ?Fixing,
     reporter: *reports.Reporter,
@@ -41,12 +42,12 @@ pub fn run(
     defer project.deinit();
 
     var counts = switch (stat.kind) {
-        .directory => try checkDir(io, gpa, engine, target, &project, baseline, fixing, reporter),
-        .file => try checkFile(io, gpa, engine, target, &project, baseline, fixing, reporter),
+        .directory => try checkDir(io, gpa, engine, target, &project, max_matches, baseline, fixing, reporter),
+        .file => try checkFile(io, gpa, engine, target, &project, max_matches, baseline, fixing, reporter),
         else => return error.UnsupportedTarget,
     };
 
-    counts.add(try reportProjectViolations(io, gpa, &project, reporter));
+    counts.add(try reportProjectViolations(io, gpa, &project, max_matches, reporter));
 
     try reporter.finish(counts);
 
@@ -59,6 +60,7 @@ fn checkFile(
     engine: *Engine,
     target: []const u8,
     project: *lint.Project,
+    max_matches: u32,
     baseline: ?Baseline,
     fixing: ?Fixing,
     reporter: *reports.Reporter,
@@ -68,7 +70,7 @@ fn checkFile(
     const source = try fs.source.read(io, gpa, target);
     defer gpa.free(source);
 
-    return reportFile(io, gpa, engine, lang, source, target, project, baseline, fixing, reporter);
+    return reportFile(io, gpa, engine, lang, source, target, project, max_matches, baseline, fixing, reporter);
 }
 
 const DirVisit = struct {
@@ -76,6 +78,7 @@ const DirVisit = struct {
     gpa: std.mem.Allocator,
     engine: *Engine,
     project: *lint.Project,
+    max_matches: u32,
     baseline: ?Baseline,
     fixing: ?Fixing,
     reporter: *reports.Reporter,
@@ -88,6 +91,7 @@ fn checkDir(
     engine: *Engine,
     target: []const u8,
     project: *lint.Project,
+    max_matches: u32,
     baseline: ?Baseline,
     fixing: ?Fixing,
     reporter: *reports.Reporter,
@@ -98,6 +102,7 @@ fn checkDir(
         .gpa = gpa,
         .engine = engine,
         .project = project,
+        .max_matches = max_matches,
         .baseline = baseline,
         .fixing = fixing,
         .reporter = reporter,
@@ -110,7 +115,7 @@ fn checkDir(
 }
 
 fn visitFile(visit: DirVisit, lang: language.Name, source: []const u8, path: []const u8) anyerror!void {
-    visit.counts.add(try reportFile(visit.io, visit.gpa, visit.engine, lang, source, path, visit.project, visit.baseline, visit.fixing, visit.reporter));
+    visit.counts.add(try reportFile(visit.io, visit.gpa, visit.engine, lang, source, path, visit.project, visit.max_matches, visit.baseline, visit.fixing, visit.reporter));
 }
 
 fn reportFile(
@@ -121,6 +126,7 @@ fn reportFile(
     source: []const u8,
     path: []const u8,
     project: *lint.Project,
+    max_matches: u32,
     baseline: ?Baseline,
     fixing: ?Fixing,
     reporter: *reports.Reporter,
@@ -164,7 +170,8 @@ fn reportFile(
 
     if (needs_index) try project.replace(current, lang, path);
 
-    try reporter.file(path, current, diagnostics);
+    const rendered = try lint.caps.apply(arena.allocator(), diagnostics, engine.settings, max_matches);
+    try reporter.file(path, current, rendered);
 
     var counts: reports.Counts = .{ .files = 1 };
 
@@ -288,12 +295,14 @@ fn reportProjectViolations(
     io: std.Io,
     gpa: std.mem.Allocator,
     project: *const lint.Project,
+    max_matches: u32,
     reporter: *reports.Reporter,
 ) !reports.Counts {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const violations = try project.diagnostics(arena.allocator(), null);
 
+    var rendered: std.ArrayList(lint.project_rule.Violation) = .empty;
     var start: usize = 0;
     while (start < violations.len) {
         var end = start + 1;
@@ -303,12 +312,13 @@ fn reportProjectViolations(
         const diagnostics = try arena.allocator().alloc(lint.diagnostic.Diagnostic, end - start);
         for (violations[start..end], diagnostics) |violation, *d| d.* = violation.diagnostic;
         try lint.fingerprint.assign(arena.allocator(), violations[start].path, source, diagnostics);
-        for (violations[start..end], diagnostics) |*violation, d| violation.diagnostic.fingerprint = d.fingerprint;
+        const capped = try lint.caps.apply(arena.allocator(), diagnostics, project.engine.settings, max_matches);
+        for (capped) |d| try rendered.append(arena.allocator(), .{ .path = violations[start].path, .diagnostic = d });
 
         start = end;
     }
 
-    try reporter.project(violations);
+    try reporter.project(rendered.items);
 
     var counts: reports.Counts = .{};
     for (violations) |v| tally(&counts, &.{v.diagnostic});

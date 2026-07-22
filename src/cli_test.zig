@@ -81,6 +81,7 @@ const Report = struct {
             },
             replacement: []const u8,
         },
+        capped: bool,
     },
     clean: bool,
 };

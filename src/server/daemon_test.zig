@@ -972,3 +972,34 @@ test "daemon: project violations appear on a replay hit" {
         try encodeResponse(arena.allocator(), second),
     );
 }
+
+test "daemon: a flooding rule is capped in the response but stays unclean" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var ctx = context(f);
+    ctx.max_matches = 1;
+
+    const resp = daemon.handle(ctx, arena.allocator(), .{
+        .language = "ts",
+        .source = "const a = v as any;\n" ++
+            "const b = v as any;\n" ++
+            "const c = v as any;\n" ++
+            "const d = v as any;\n" ++
+            "const e = v as any;\n",
+    });
+
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    const report = resp.report.?;
+    try std.testing.expect(!report.clean);
+    try std.testing.expectEqual(@as(usize, 4), report.diagnostics.len);
+    try std.testing.expectEqual(false, report.diagnostics[0].capped);
+    try std.testing.expectEqual(true, report.diagnostics[3].capped);
+    try std.testing.expectEqualStrings(
+        "rule no-as-any fired 5 times in this file; showing 3, suppressed 2; a flood usually means a broken pattern or wrong scope",
+        report.diagnostics[3].message,
+    );
+}

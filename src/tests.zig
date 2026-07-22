@@ -5,6 +5,7 @@ test {
 }
 
 comptime {
+    _ = @import("engine/caps_test.zig");
     _ = @import("engine/engine_test.zig");
     _ = @import("engine/dispatch_test.zig");
     _ = @import("engine/baseline_test.zig");

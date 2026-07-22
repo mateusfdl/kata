@@ -17,7 +17,7 @@ const diagnostic_json =
     "{\"rule_id\":\"no-console\",\"language\":\"ts\",\"message\":\"console is not allowed\"," ++
     "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
     "\"severity\":\"error\",\"demoted\":false,\"maturity\":\"stable\",\"fingerprint\":\"\",\"context\":[]," ++
-    "\"fix\":null,\"suggestions\":[]}";
+    "\"fix\":null,\"suggestions\":[],\"capped\":false}";
 
 test "json: clean run renders empty files and the summary" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -89,7 +89,8 @@ test "json: populated context renders its complete shape" {
             "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
             "\"severity\":\"error\",\"demoted\":false,\"maturity\":\"stable\",\"fingerprint\":\"\",\"context\":[" ++
             "{\"kind\":\"method\",\"name\":\"render\",\"range\":{\"start\":{\"line\":1,\"column\":2}," ++
-            "\"end\":{\"line\":3,\"column\":3}}}],\"fix\":null,\"suggestions\":[]}]}]," ++
+            "\"end\":{\"line\":3,\"column\":3}}}],\"fix\":null,\"suggestions\":[]," ++
+            "\"capped\":false}]}]," ++
             "\"summary\":{\"files\":1,\"violations\":1,\"warnings\":0}}\n",
         out.written(),
     );
@@ -149,7 +150,7 @@ test "json: populated fix and suggestions render their complete shape" {
             "\"replacement\":\"Number.parseInt\",\"safety\":\"safe\"}," ++
             "\"suggestions\":[{\"label\":\"use unknown\"," ++
             "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
-            "\"replacement\":\"unknown\"}]}]}]," ++
+            "\"replacement\":\"unknown\"}],\"capped\":false}]}]," ++
             "\"summary\":{\"files\":1,\"violations\":1,\"warnings\":0}}\n",
         out.written(),
     );
