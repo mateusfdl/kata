@@ -88,6 +88,8 @@ fn isStaleSocketName(name: []const u8, current: []const u8) bool {
     return std.mem.startsWith(u8, name, "kata-") and std.mem.endsWith(u8, name, ".sock");
 }
 
+const legacy_shutdown_body = "{\"binary_mtime\":0,\"shutdown\":true}";
+
 fn shutdownLiveSocket(gpa: std.mem.Allocator, path: []const u8) bool {
     const linux = std.os.linux;
 
@@ -105,7 +107,7 @@ fn shutdownLiveSocket(gpa: std.mem.Allocator, path: []const u8) bool {
 
     var frame: std.Io.Writer.Allocating = .init(gpa);
     defer frame.deinit();
-    protocol.encode(gpa, &frame.writer, protocol.Request{ .shutdown = true }) catch return true;
+    protocol.writeFrame(&frame.writer, legacy_shutdown_body) catch return true;
     _ = linux.write(fd, frame.written().ptr, frame.written().len);
 
     return true;

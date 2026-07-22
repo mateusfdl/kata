@@ -347,6 +347,14 @@ mtime from the executable), autostart the daemon if the socket is absent, and
 fall back to one-shot mode when neither is possible. No staleness handling is
 needed: after a rebuild the old socket simply no longer matches.
 
+The daemon replays lint results for unchanged content: per project context it
+keeps an in-memory cache of up to 2048 files keyed by path and content hash,
+storing the raw fingerprinted diagnostics. A hit skips parsing and matching
+entirely; ratchet demotion, project analysis, and match caps always re-run, so
+a replayed response is byte-identical to a fresh one. The cache dies with the
+daemon and is dropped whenever a project's `.kata` configuration changes; it
+never applies to `kata check`, `kata test`, or `kata query`.
+
 ## Configuration
 
 No rule runs by default. Activation is opt-in: declare rules under `rules:`
@@ -370,7 +378,7 @@ ratchet: true
 
 Schema:
 
-- Top-level keys: `rules`, `project-rules`, `ratchet`.
+- Top-level keys: `rules`, `project-rules`, `ratchet`, `max-matches-per-file`.
 - `rules:` nests scope keys, each scope nests rule ids: `go`, `ts`, `tsx`,
   `typescript` (both `ts` and `tsx`), and `project` (DSL project rules).
 - A listed rule is active. `enabled: false` deactivates it; `enabled: true`
@@ -382,6 +390,14 @@ Schema:
 - `fix: never | unsafe-ok` controls `--fix` application for language rules only
   (see Autofix); reported fixes are unaffected. Project rules reject `fix` because
   they do not produce edits.
+- `max-matches-per-file: N` (top-level, default 25) caps how many diagnostics a
+  single rule may report per file; `max-matches: N` on a rule overrides the
+  default, `0` disables the cap for that rule. A rule over its cap renders its
+  first 3 findings plus one summary diagnostic (`capped: true` in JSON) naming
+  the flood, because hundreds of hits from one rule usually mean a broken
+  pattern, and they drown the findings that matter for an agent hook consumer.
+  Capping bounds output only: suppressed error-severity findings still count
+  toward the exit code and the report summary.
 - Listing the same rule twice for one scope is an error, including a
   `typescript` entry overlapping a `ts` or `tsx` entry for the same id.
 - Entries matching no available rule are ignored.
@@ -400,7 +416,7 @@ Schema:
 Errors are reported with a line number and abort startup:
 
 ```
-kata: rules.yaml: line 1: unknown top-level key (expected 'rules', 'project-rules', or 'ratchet')
+kata: rules.yaml: line 1: unknown top-level key (expected 'rules', 'project-rules', 'ratchet', or 'max-matches-per-file')
 ```
 
 The daemon reads the global `rules.yaml` once at startup. Edit the file then
