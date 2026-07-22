@@ -17,12 +17,14 @@ pub const RuleSetting = rule.RuleSetting;
 pub const Presence = struct {
     project_rules: bool = false,
     ratchet: bool = false,
+    max_matches_per_file: bool = false,
 };
 
 pub const Config = struct {
     settings: []const RuleSetting,
     project_rules: []const project_rule.ProjectRule,
     ratchet: bool,
+    max_matches_per_file: u32,
     present: Presence,
     arena: *std.heap.ArenaAllocator,
 
@@ -37,6 +39,7 @@ pub const Resolved = struct {
     settings: []const RuleSetting = &.{},
     project_rules: []const project_rule.ProjectRule = &.{},
     ratchet: bool = false,
+    max_matches_per_file: u32 = 25,
 };
 
 pub fn resolve(
@@ -89,6 +92,7 @@ fn applyPresent(out: *Resolved, cfg_opt: ?*const Config) void {
 
     if (cfg.present.project_rules) out.project_rules = cfg.project_rules;
     if (cfg.present.ratchet) out.ratchet = cfg.ratchet;
+    if (cfg.present.max_matches_per_file) out.max_matches_per_file = cfg.max_matches_per_file;
 }
 
 pub const ParseError = error{
@@ -113,6 +117,7 @@ pub const ParseError = error{
     InvalidEnabledValue,
     InvalidSeverityValue,
     InvalidFixValue,
+    InvalidMaxMatchesValue,
     UnsupportedProjectFix,
     DuplicateRule,
 } || std.mem.Allocator.Error;
@@ -123,7 +128,7 @@ pub const Diagnostic = struct {
 
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
-        error.UnknownTopLevelKey => "unknown top-level key (expected 'rules', 'project-rules', or 'ratchet')",
+        error.UnknownTopLevelKey => "unknown top-level key (expected 'rules', 'project-rules', 'ratchet', or 'max-matches-per-file')",
         error.TabInIndent => "tabs are not allowed in indentation",
         error.BadIndent => "indent must be 0 or 2 spaces",
         error.MalformedListItem => "list item must be '  - <rule-id>'",
@@ -144,6 +149,7 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.InvalidEnabledValue => "enabled must be 'true' or 'false'",
         error.InvalidSeverityValue => "severity must be 'error' or 'warn'",
         error.InvalidFixValue => "fix must be 'never' or 'unsafe-ok'",
+        error.InvalidMaxMatchesValue => "max-matches must be a non-negative integer",
         error.UnsupportedProjectFix => "project rules do not support fixes",
         error.DuplicateRule => "rule is already configured for this scope",
         else => @errorName(err),
@@ -165,6 +171,7 @@ const PendingRule = struct {
     enabled_explicit: bool = false,
     severity: ?diagnostic.Severity = null,
     fix: ?rule.FixMode = null,
+    max_matches: ?u32 = null,
     exclude: std.ArrayList([]const u8) = .empty,
     in_exclude: bool = false,
 };
@@ -189,6 +196,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     var settings: std.ArrayList(RuleSetting) = .empty;
     var project_rules: std.ArrayList(project_rule.ProjectRule) = .empty;
     var ratchet = false;
+    var max_matches_per_file: u32 = 25;
     var present: Presence = .{};
     var pending: ?PendingProjectRule = null;
     var pending_rule: ?PendingRule = null;
@@ -220,6 +228,12 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
             if (std.mem.startsWith(u8, content, "ratchet:")) {
                 ratchet = try parseRatchetValue(content["ratchet:".len..]);
                 present.ratchet = true;
+                state = .top;
+                continue;
+            }
+            if (std.mem.startsWith(u8, content, "max-matches-per-file:")) {
+                max_matches_per_file = try parseMaxMatchesValue(content["max-matches-per-file:".len..]);
+                present.max_matches_per_file = true;
                 state = .top;
                 continue;
             }
@@ -296,6 +310,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
         .settings = try settings.toOwnedSlice(arena),
         .project_rules = try project_rules.toOwnedSlice(arena),
         .ratchet = ratchet,
+        .max_matches_per_file = max_matches_per_file,
         .present = present,
         .arena = arena_ptr,
     };
@@ -306,6 +321,12 @@ fn markPresent(present: *Presence, state: State) void {
         .top, .in_rules => {},
         .in_project_rules => present.project_rules = true,
     }
+}
+
+fn parseMaxMatchesValue(raw: []const u8) ParseError!u32 {
+    const value = std.mem.trim(u8, raw, " ");
+
+    return std.fmt.parseInt(u32, value, 10) catch error.InvalidMaxMatchesValue;
 }
 
 fn parseRatchetValue(raw: []const u8) ParseError!bool {
@@ -512,6 +533,11 @@ fn setRuleProperty(pending: *PendingRule, content: []const u8) ParseError!void {
         return;
     }
 
+    if (std.mem.eql(u8, key, "max-matches")) {
+        pending.max_matches = try parseMaxMatchesValue(value);
+        return;
+    }
+
     if (std.mem.eql(u8, key, "exclude")) {
         if (value.len != 0) return error.ContentAfterKey;
         pending.in_exclude = true;
@@ -587,6 +613,7 @@ fn finalizePendingRule(
             .enabled_explicit = p.enabled_explicit,
             .severity = p.severity,
             .fix = p.fix,
+            .max_matches = p.max_matches,
             .exclude = exclude,
         }, p.line, diag);
         return;
@@ -600,6 +627,7 @@ fn finalizePendingRule(
             .enabled_explicit = p.enabled_explicit,
             .severity = p.severity,
             .fix = p.fix,
+            .max_matches = p.max_matches,
             .exclude = exclude,
         }, p.line, diag);
     }

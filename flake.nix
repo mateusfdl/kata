@@ -28,6 +28,7 @@
             lib.optionalString (rule.enabled != null) "      enabled: ${lib.boolToString rule.enabled}\n"
             + lib.optionalString (rule.severity != null) "      severity: ${rule.severity}\n"
             + lib.optionalString (rule.fix != null) "      fix: ${rule.fix}\n"
+            + lib.optionalString (rule.maxMatches != null) "      max-matches: ${toString rule.maxMatches}\n"
             + lib.optionalString (rule.exclude != [ ]) (
               "      exclude:\n" + lib.concatMapStrings (glob: "        - '${glob}'\n") rule.exclude
             );
@@ -58,7 +59,10 @@
           rulesYaml =
             renderRules cfg.settings.rules
             + renderProjectRules cfg.settings.projectRules
-            + lib.optionalString cfg.settings.ratchet "ratchet: true\n";
+            + lib.optionalString cfg.settings.ratchet "ratchet: true\n"
+            + lib.optionalString (
+              cfg.settings.maxMatchesPerFile != null
+            ) "max-matches-per-file: ${toString cfg.settings.maxMatchesPerFile}\n";
         in
         {
           options.programs.kata = {
@@ -101,6 +105,11 @@
                           );
                           default = null;
                           description = "Override fix application for language rules: never blocks it, unsafe-ok lets --fix apply this rule's unsafe fixes.";
+                        };
+                        maxMatches = lib.mkOption {
+                          type = lib.types.nullOr lib.types.ints.unsigned;
+                          default = null;
+                          description = "Per-file diagnostic cap for this rule; 0 disables the cap.";
                         };
                         exclude = lib.mkOption {
                           type = lib.types.listOf lib.types.str;
@@ -161,6 +170,12 @@
                 type = lib.types.bool;
                 default = false;
                 description = "Block only violation growth per file in daemon mode.";
+              };
+
+              maxMatchesPerFile = lib.mkOption {
+                type = lib.types.nullOr lib.types.ints.unsigned;
+                default = null;
+                description = "Default per-rule-per-file diagnostic cap (kata defaults to 25 when unset).";
               };
             };
           };

@@ -524,7 +524,7 @@ test "errorMessage: returns descriptive text for known errors" {
         config.errorMessage(error.TabInIndent),
     );
     try std.testing.expectEqualStrings(
-        "unknown top-level key (expected 'rules', 'project-rules', or 'ratchet')",
+        "unknown top-level key (expected 'rules', 'project-rules', 'ratchet', or 'max-matches-per-file')",
         config.errorMessage(error.UnknownTopLevelKey),
     );
 }
@@ -1060,4 +1060,57 @@ test "rules: fix is rejected on project scope" {
 
 test "rules: invalid fix value is rejected" {
     try expectParseErr("rules:\n  go:\n    no-panic:\n      fix: always\n", error.InvalidFixValue, 4);
+}
+
+test "config: max-matches-per-file defaults to absent" {
+    var cfg = try expectParseOk("");
+    defer cfg.deinit();
+    try std.testing.expectEqual(false, cfg.present.max_matches_per_file);
+}
+
+test "config: parses top-level max-matches-per-file" {
+    var cfg = try expectParseOk("max-matches-per-file: 50\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(true, cfg.present.max_matches_per_file);
+    try std.testing.expectEqual(@as(u32, 50), cfg.max_matches_per_file);
+}
+
+test "config: rejects a non-numeric max-matches-per-file" {
+    try expectParseErr("max-matches-per-file: lots\n", error.InvalidMaxMatchesValue, 1);
+}
+
+test "rules: max-matches is carried on a language scope" {
+    var cfg = try expectParseOk("rules:\n  ts:\n    no-as-any:\n      max-matches: 10\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(?u32, 10), cfg.settings[0].max_matches);
+}
+
+test "rules: max-matches zero disables the cap for the rule" {
+    var cfg = try expectParseOk("rules:\n  project:\n    repository-isolation:\n      max-matches: 0\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(true, cfg.settings[0].project);
+    try std.testing.expectEqual(@as(?u32, 0), cfg.settings[0].max_matches);
+}
+
+test "rules: max-matches defaults to null" {
+    var cfg = try expectParseOk("rules:\n  ts:\n    no-as-any:\n      severity: warn\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(?u32, null), cfg.settings[0].max_matches);
+}
+
+test "rules: invalid max-matches value is rejected" {
+    try expectParseErr("rules:\n  ts:\n    no-as-any:\n      max-matches: -1\n", error.InvalidMaxMatchesValue, 4);
+}
+
+test "config: resolve carries max-matches-per-file with a default of 25" {
+    var global = try expectParseOk("max-matches-per-file: 50\n");
+    defer global.deinit();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const with_global = try config.resolve(arena.allocator(), &global, null);
+    try std.testing.expectEqual(@as(u32, 50), with_global.max_matches_per_file);
+
+    const without = try config.resolve(arena.allocator(), null, null);
+    try std.testing.expectEqual(@as(u32, 25), without.max_matches_per_file);
 }

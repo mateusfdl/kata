@@ -256,6 +256,7 @@ pub const RuleSetting = struct {
     enabled_explicit: bool = false,
     severity: ?diagnostic.Severity = null,
     fix: ?FixMode = null,
+    max_matches: ?u32 = null,
     exclude: []const []const u8 = &.{},
 
     pub fn matches(self: RuleSetting, lang: language.Name, id: []const u8) bool {
@@ -279,6 +280,7 @@ pub const Policy = struct {
     enabled: bool = true,
     severity: ?diagnostic.Severity = null,
     fix: ?FixMode = null,
+    max_matches: ?u32 = null,
     excluded: bool = false,
 };
 
@@ -299,6 +301,7 @@ pub fn resolvePolicy(
             .enabled = setting.enabled,
             .severity = setting.severity,
             .fix = setting.fix,
+            .max_matches = setting.max_matches,
             .excluded = pathExcluded(setting.exclude, path),
         };
     }
