@@ -37,19 +37,16 @@ pub fn run(
     reporter: *reports.Reporter,
 ) !Outcome {
     const stat = try fs.source.statTarget(io, target);
-    const fact_rules = try engine.ensureCompiledFact();
-
-    var index = lint.ProjectIndex.init(gpa);
-    defer index.deinit();
-    const index_ptr: ?*lint.ProjectIndex = if (project_rules.len > 0 or fact_rules.len > 0) &index else null;
+    var project = try lint.Project.init(gpa, engine, project_rules);
+    defer project.deinit();
 
     var counts = switch (stat.kind) {
-        .directory => try checkDir(io, gpa, engine, target, index_ptr, baseline, fixing, reporter),
-        .file => try checkFile(io, gpa, engine, target, index_ptr, baseline, fixing, reporter),
+        .directory => try checkDir(io, gpa, engine, target, &project, baseline, fixing, reporter),
+        .file => try checkFile(io, gpa, engine, target, &project, baseline, fixing, reporter),
         else => return error.UnsupportedTarget,
     };
 
-    if (index_ptr) |idx| counts.add(try reportProjectViolations(io, gpa, engine, project_rules, fact_rules, idx, reporter));
+    counts.add(try reportProjectViolations(io, gpa, &project, reporter));
 
     try reporter.finish(counts);
 
@@ -61,7 +58,7 @@ fn checkFile(
     gpa: std.mem.Allocator,
     engine: *Engine,
     target: []const u8,
-    index: ?*lint.ProjectIndex,
+    project: *lint.Project,
     baseline: ?Baseline,
     fixing: ?Fixing,
     reporter: *reports.Reporter,
@@ -71,14 +68,14 @@ fn checkFile(
     const source = try fs.source.read(io, gpa, target);
     defer gpa.free(source);
 
-    return reportFile(io, gpa, engine, lang, source, target, index, baseline, fixing, reporter);
+    return reportFile(io, gpa, engine, lang, source, target, project, baseline, fixing, reporter);
 }
 
 const DirVisit = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
     engine: *Engine,
-    index: ?*lint.ProjectIndex,
+    project: *lint.Project,
     baseline: ?Baseline,
     fixing: ?Fixing,
     reporter: *reports.Reporter,
@@ -90,7 +87,7 @@ fn checkDir(
     gpa: std.mem.Allocator,
     engine: *Engine,
     target: []const u8,
-    index: ?*lint.ProjectIndex,
+    project: *lint.Project,
     baseline: ?Baseline,
     fixing: ?Fixing,
     reporter: *reports.Reporter,
@@ -100,7 +97,7 @@ fn checkDir(
         .io = io,
         .gpa = gpa,
         .engine = engine,
-        .index = index,
+        .project = project,
         .baseline = baseline,
         .fixing = fixing,
         .reporter = reporter,
@@ -113,7 +110,7 @@ fn checkDir(
 }
 
 fn visitFile(visit: DirVisit, lang: language.Name, source: []const u8, path: []const u8) anyerror!void {
-    visit.counts.add(try reportFile(visit.io, visit.gpa, visit.engine, lang, source, path, visit.index, visit.baseline, visit.fixing, visit.reporter));
+    visit.counts.add(try reportFile(visit.io, visit.gpa, visit.engine, lang, source, path, visit.project, visit.baseline, visit.fixing, visit.reporter));
 }
 
 fn reportFile(
@@ -123,7 +120,7 @@ fn reportFile(
     lang: language.Name,
     source: []const u8,
     path: []const u8,
-    index: ?*lint.ProjectIndex,
+    project: *lint.Project,
     baseline: ?Baseline,
     fixing: ?Fixing,
     reporter: *reports.Reporter,
@@ -134,20 +131,38 @@ fn reportFile(
     defer arena.deinit();
 
     var current = source;
-    var diagnostics = try engine.lint(arena.allocator(), current, lang, path);
+    var needs_index = false;
+    const diagnostics = if (fixing) |f| fix: {
+        if (f.level == .off) break :fix try project.lint(arena.allocator(), current, lang, path);
+        needs_index = true;
 
-    if (fixing) |f| {
-        if (f.level != .off) {
-            const fixed = try applyFixes(io, arena.allocator(), engine, lang, current, path, &diagnostics, f);
-            if (fixed) |bytes| current = bytes;
+        const result = try engine.fix(
+            &arena,
+            current,
+            lang,
+            path,
+            if (f.level == .safe) .safe else .unsafe,
+        );
+        if (result.status == .syntax_error) {
+            try f.stderr.print("kata check: fix for [{s}] introduces a syntax error in {s}\n", .{
+                try std.mem.join(arena.allocator(), ", ", result.rule_ids),
+                path,
+            });
+            try f.stderr.flush();
         }
-    }
+        if (result.changed) {
+            try fs.source.write(io, path, result.source);
+            current = result.source;
+        }
+
+        break :fix result.diagnostics;
+    } else try project.lint(arena.allocator(), current, lang, path);
 
     try lint.fingerprint.assign(arena.allocator(), path, current, diagnostics);
 
     if (baseline) |b| try applyBaseline(io, arena.allocator(), engine, b, lang, current, path, diagnostics);
 
-    if (index) |idx| try idx.put(try engine.extractFacts(idx.allocator, current, lang, path));
+    if (needs_index) try project.replace(current, lang, path);
 
     try reporter.file(path, current, diagnostics);
 
@@ -156,75 +171,6 @@ fn reportFile(
     tally(&counts, diagnostics);
 
     return counts;
-}
-
-fn applyFixes(
-    io: std.Io,
-    arena: std.mem.Allocator,
-    engine: *Engine,
-    lang: language.Name,
-    source: []const u8,
-    path: []const u8,
-    diagnostics: *[]lint.diagnostic.Diagnostic,
-    fixing: Fixing,
-) !?[]const u8 {
-    var current = source;
-    var pass: usize = 0;
-    while (pass < 8) : (pass += 1) {
-        const applicable = try applicableFixes(arena, engine, lang, diagnostics.*, fixing.level);
-        if (applicable.fixes.len == 0) break;
-
-        const list = try lint.edits.fromFixes(arena, current, applicable.fixes);
-        const applied = try lint.edits.apply(arena, current, list);
-        if (try engine.hasSyntaxError(applied.source, lang)) {
-            try fixing.stderr.print("kata check: fix for [{s}] introduces a syntax error in {s}\n", .{
-                try std.mem.join(arena, ", ", applicable.rule_ids),
-                path,
-            });
-            try fixing.stderr.flush();
-
-            break;
-        }
-
-        current = applied.source;
-        diagnostics.* = try engine.lint(arena, current, lang, path);
-    }
-
-    if (current.ptr == source.ptr) return null;
-
-    try fs.source.write(io, path, current);
-
-    return current;
-}
-
-const Applicable = struct {
-    fixes: []const lint.diagnostic.Fix,
-    rule_ids: []const []const u8,
-};
-
-fn applicableFixes(
-    arena: std.mem.Allocator,
-    engine: *Engine,
-    lang: language.Name,
-    diagnostics: []const lint.diagnostic.Diagnostic,
-    level: FixLevel,
-) !Applicable {
-    var fixes: std.ArrayList(lint.diagnostic.Fix) = .empty;
-    var rule_ids: std.ArrayList([]const u8) = .empty;
-    for (diagnostics) |d| {
-        const fix = d.fix orelse continue;
-        const override = engine.fixOverride(lang, d.rule_id);
-        if (override == .never) continue;
-        if (fix.safety == .unsafe and level != .unsafe and override != .unsafe_ok) continue;
-
-        try fixes.append(arena, fix);
-        if (!containsId(rule_ids.items, d.rule_id)) try rule_ids.append(arena, d.rule_id);
-    }
-
-    return .{
-        .fixes = try fixes.toOwnedSlice(arena),
-        .rule_ids = try rule_ids.toOwnedSlice(arena),
-    };
 }
 
 pub fn backdatedRules(
@@ -341,19 +287,12 @@ fn applyBaseline(
 fn reportProjectViolations(
     io: std.Io,
     gpa: std.mem.Allocator,
-    engine: *Engine,
-    project_rules: []const lint.project_rule.ProjectRule,
-    fact_rules: []const lint.fact_rule.CompiledFactRule,
-    index: *const lint.ProjectIndex,
+    project: *const lint.Project,
     reporter: *reports.Reporter,
 ) !reports.Counts {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    const yaml_violations = try lint.project_rule.evaluate(arena.allocator(), project_rules, engine.settings, index, null);
-    const fact_violations = try lint.fact_rule.evaluate(arena.allocator(), fact_rules, engine.settings, index, null);
-    const violations = try std.mem.concat(arena.allocator(), lint.project_rule.Violation, &.{ yaml_violations, fact_violations });
-
-    std.mem.sort(lint.project_rule.Violation, violations, {}, lint.project_rule.violationLessThan);
+    const violations = try project.diagnostics(arena.allocator(), null);
 
     var start: usize = 0;
     while (start < violations.len) {

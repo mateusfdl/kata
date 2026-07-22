@@ -136,8 +136,7 @@ pub const Resolver = struct {
             .engine = undefined,
         };
 
-        ctx.engine = Engine.init(self.gpa, &ctx.rule_set, dsl.engine_compiler.ruleCompiler());
-        ctx.engine.settings = resolved.settings;
+        ctx.engine = Engine.init(self.gpa, &ctx.rule_set, dsl.engine_compiler.ruleCompiler(), resolved.settings);
 
         return ctx;
     }

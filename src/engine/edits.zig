@@ -11,7 +11,6 @@ pub const Edit = struct {
 
 pub const Applied = struct {
     source: []u8,
-    applied: usize,
 };
 
 pub fn fromFixes(
@@ -36,7 +35,6 @@ pub fn apply(arena: std.mem.Allocator, source: []const u8, list: []Edit) !Applie
 
     var out: std.ArrayList(u8) = .empty;
     var cursor: usize = 0;
-    var applied: usize = 0;
     var last_start: ?usize = null;
     for (list) |edit| {
         if (edit.start < cursor) continue;
@@ -47,12 +45,11 @@ pub fn apply(arena: std.mem.Allocator, source: []const u8, list: []Edit) !Applie
 
         cursor = edit.end;
         last_start = edit.start;
-        applied += 1;
     }
 
     try out.appendSlice(arena, source[cursor..]);
 
-    return .{ .source = try out.toOwnedSlice(arena), .applied = applied };
+    return .{ .source = try out.toOwnedSlice(arena) };
 }
 
 fn lessThan(context: void, a: Edit, b: Edit) bool {

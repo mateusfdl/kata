@@ -10,21 +10,31 @@ pub const Table = struct {
 
     pub const empty: Table = .{ .slots = &.{} };
 
-    pub fn build(arena: std.mem.Allocator, patterns: []const rule.CompiledPattern, kind_count: u16) Error!Table {
-        const lists = try arena.alloc(std.ArrayList(u16), kind_count);
+    pub fn build(
+        arena: std.mem.Allocator,
+        allocator: std.mem.Allocator,
+        patterns: []const rule.CompiledPattern,
+        kind_count: u16,
+    ) Error!Table {
+        var scratch = std.heap.ArenaAllocator.init(allocator);
+        defer scratch.deinit();
+        const temporary = scratch.allocator();
+
+        const lists = try temporary.alloc(std.ArrayList(u16), kind_count);
         @memset(lists, .empty);
 
         for (patterns, 0..) |cp, index| {
-            const kinds = try rootKinds(arena, &cp.pattern);
+            const kinds = try rootKinds(temporary, &cp.pattern);
             for (kinds) |kind| {
-                try lists[kind].append(arena, @intCast(index));
+                try lists[kind].append(temporary, @intCast(index));
             }
         }
 
         const slots = try arena.alloc([]const u16, kind_count);
         for (lists, slots) |*list, *slot| {
-            std.sort.pdq(u16, list.items, patterns, patternBefore);
-            slot.* = list.items;
+            const entries = try arena.dupe(u16, list.items);
+            std.sort.pdq(u16, entries, patterns, patternBefore);
+            slot.* = entries;
         }
 
         return .{ .slots = slots };

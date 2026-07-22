@@ -100,7 +100,7 @@
                             ]
                           );
                           default = null;
-                          description = "Override fix application: never blocks it, unsafe-ok lets --fix apply this rule's unsafe fixes.";
+                          description = "Override fix application for language rules: never blocks it, unsafe-ok lets --fix apply this rule's unsafe fixes.";
                         };
                         exclude = lib.mkOption {
                           type = lib.types.listOf lib.types.str;
@@ -166,6 +166,14 @@
           };
 
           config = lib.mkIf cfg.enable {
+            assertions = [
+              {
+                assertion =
+                  !(cfg.settings.rules ? project)
+                  || lib.all (rule: rule.fix == null) (lib.attrValues cfg.settings.rules.project);
+                message = "programs.kata.settings.rules.project does not support fix overrides";
+              }
+            ];
             home.packages = [ cfg.package ];
             xdg.configFile."kata/rules.yaml" = lib.mkIf (rulesYaml != "") { text = rulesYaml; };
           };

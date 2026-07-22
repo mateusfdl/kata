@@ -516,9 +516,14 @@ test "check: setting severity warn demotes project violations and exits clean" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
-    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    var f = try test_fixture.Fixture.initWithSettings(
+        gpa,
+        &.{.ts},
+        "no-as-any",
+        test_fixture.no_as_any_rule,
+        &.{.{ .lang = null, .id = "domain-no-infra", .project = true, .severity = .warn }},
+    );
     defer f.deinit();
-    f.engine.settings = &.{.{ .lang = null, .id = "domain-no-infra", .project = true, .severity = .warn }};
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -737,9 +742,8 @@ fn runFix(
     settings: []const lint.rule.RuleSetting,
     level: check.FixLevel,
 ) !FixRun {
-    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "prefer-number-parseint", rule_source);
+    var f = try test_fixture.Fixture.initWithSettings(gpa, &.{.ts}, "prefer-number-parseint", rule_source, settings);
     defer f.deinit();
-    f.engine.settings = settings;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

@@ -170,6 +170,14 @@ fn newFixture(allocator: std.mem.Allocator, langs: []const language.Name) !*Fixt
     return Fixture.init(allocator, langs, "no-as-any", kata_no_as_any_rule);
 }
 
+fn newFixtureWithSettings(
+    allocator: std.mem.Allocator,
+    langs: []const language.Name,
+    settings: []const @import("engine").rule.RuleSetting,
+) !*Fixture {
+    return Fixture.initWithSettings(allocator, langs, "no-as-any", kata_no_as_any_rule, settings);
+}
+
 fn expectContextEntry(entry: diagnostic.Context, kind: diagnostic.ContextKind, name: []const u8) !void {
     try std.testing.expectEqual(kind, entry.kind);
     try std.testing.expectEqualStrings(name, entry.name);
@@ -879,9 +887,8 @@ test "engine: set severity error keeps error" {
 
 test "engine: setting severity warn demotes matching rule" {
     const gpa = std.testing.allocator;
-    var f = try newFixture(gpa, &.{.ts});
+    var f = try newFixtureWithSettings(gpa, &.{.ts}, &.{.{ .lang = .ts, .id = "no-as-any", .severity = .warn }});
     defer f.deinit();
-    f.engine.settings = &.{.{ .lang = .ts, .id = "no-as-any", .severity = .warn }};
 
     const diags = try f.engine.lint(gpa, "const x = (foo[0] as any).bar;", .ts, null);
     defer gpa.free(diags);
@@ -892,9 +899,8 @@ test "engine: setting severity warn demotes matching rule" {
 
 test "engine: setting exclude glob suppresses diagnostics for matching paths" {
     const gpa = std.testing.allocator;
-    var f = try newFixture(gpa, &.{.ts});
+    var f = try newFixtureWithSettings(gpa, &.{.ts}, &.{.{ .lang = .ts, .id = "no-as-any", .exclude = &.{"src/gen/**"} }});
     defer f.deinit();
-    f.engine.settings = &.{.{ .lang = .ts, .id = "no-as-any", .exclude = &.{"src/gen/**"} }};
 
     const excluded = try f.engine.lint(gpa, "const x = (foo[0] as any).bar;", .ts, "src/gen/a.ts");
     defer gpa.free(excluded);
@@ -907,9 +913,8 @@ test "engine: setting exclude glob suppresses diagnostics for matching paths" {
 
 test "engine: setting scoped to another language keeps error" {
     const gpa = std.testing.allocator;
-    var f = try newFixture(gpa, &.{.ts});
+    var f = try newFixtureWithSettings(gpa, &.{.ts}, &.{.{ .lang = .go, .id = "no-as-any", .severity = .warn }});
     defer f.deinit();
-    f.engine.settings = &.{.{ .lang = .go, .id = "no-as-any", .severity = .warn }};
 
     const diags = try f.engine.lint(gpa, "const x = (foo[0] as any).bar;", .ts, null);
     defer gpa.free(diags);
@@ -1253,6 +1258,24 @@ const kata_aaa_call_rule =
     \\}
 ;
 
+const kata_zzz_parent_anchor_rule =
+    \\rule zzz-parent-anchor {
+    \\  lang ts
+    \\  match function_declaration {
+    \\    name: identifier @match
+    \\  }
+    \\  emit @match { message "parent anchor" }
+    \\}
+;
+
+const kata_aaa_child_anchor_rule =
+    \\rule aaa-child-anchor {
+    \\  lang ts
+    \\  match identifier @match
+    \\  emit @match { message "child anchor" }
+    \\}
+;
+
 test "engine: diagnostics come out in source position order across rules" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.ts}, "aaa-const", kata_aaa_const_rule);
@@ -1281,6 +1304,21 @@ test "engine: rules on the same node emit in rule id order" {
     try std.testing.expectEqual(@as(usize, 2), diags.len);
     try std.testing.expectEqualStrings("aaa-call", diags[0].rule_id);
     try std.testing.expectEqualStrings("zzz-call", diags[1].rule_id);
+}
+
+test "engine: emitted ranges sort independently of pattern anchors" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try Fixture.init(gpa, &.{.ts}, "zzz-parent-anchor", kata_zzz_parent_anchor_rule);
+    defer f.deinit();
+    try f.add(.ts, "aaa-child-anchor", kata_aaa_child_anchor_rule);
+
+    const diags = try f.engine.lint(arena.allocator(), "function run() {}\n", .ts, null);
+
+    try std.testing.expectEqual(@as(usize, 2), diags.len);
+    try std.testing.expectEqualStrings("aaa-child-anchor", diags[0].rule_id);
+    try std.testing.expectEqualStrings("zzz-parent-anchor", diags[1].rule_id);
 }
 
 test "engine: kata measure rules use the metric context" {
@@ -2063,6 +2101,59 @@ test "engine: diagnostics carry a rendered fix with the target range" {
     try std.testing.expectEqual(@as(usize, 0), diags[0].suggestions.len);
 }
 
+test "engine: fix applies rules until diagnostics converge" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rule =
+        \\rule prefer-number-parseint {
+        \\  lang ts
+        \\  match call_expression @match {
+        \\    function: identifier @fn
+        \\  }
+        \\  where { text(@fn) == "parseInt" }
+        \\  emit @match {
+        \\    message "Prefer Number.parseInt"
+        \\    fix safe @fn "Number.parseInt"
+        \\  }
+        \\}
+    ;
+    var f = try Fixture.init(gpa, &.{.ts}, "prefer-number-parseint", rule);
+    defer f.deinit();
+
+    const result = try f.engine.fix(&arena, "const n = parseInt(x);\n", .ts, null, .safe);
+
+    try std.testing.expectEqualStrings("const n = Number.parseInt(x);\n", result.source);
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    try std.testing.expectEqual(@import("engine").Engine.FixStatus.converged, result.status);
+    try std.testing.expectEqual(true, result.changed);
+}
+
+test "engine: identity fixes reach the pass limit without changing source" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rule =
+        \\rule identity-fix {
+        \\  lang ts
+        \\  match identifier @match
+        \\  emit @match {
+        \\    message "identity"
+        \\    fix safe "{text(@match)}"
+        \\  }
+        \\}
+    ;
+    var f = try Fixture.init(gpa, &.{.ts}, "identity-fix", rule);
+    defer f.deinit();
+    const source = "const value = 1;\n";
+
+    const result = try f.engine.fix(&arena, source, .ts, null, .safe);
+
+    try std.testing.expectEqualStrings(source, result.source);
+    try std.testing.expectEqual(@import("engine").Engine.FixStatus.pass_limit, result.status);
+    try std.testing.expectEqual(false, result.changed);
+}
+
 test "engine: fix templates interpolate capture text" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -2126,20 +2217,4 @@ test "engine: suggestions render in order with labels" {
     try std.testing.expectEqualStrings("", suggestions[1].replacement);
     try std.testing.expectEqual(@as(u32, 10), suggestions[1].range.start.column);
     try std.testing.expectEqual(@as(u32, 21), suggestions[1].range.end.column);
-}
-
-test "engine: hasSyntaxError distinguishes broken from valid source" {
-    const gpa = std.testing.allocator;
-    const rule =
-        \\rule no-console {
-        \\  lang ts
-        \\  match identifier @match
-        \\  emit @match { message "m" }
-        \\}
-    ;
-    var f = try Fixture.init(gpa, &.{.ts}, "no-console", rule);
-    defer f.deinit();
-
-    try std.testing.expectEqual(false, try f.engine.hasSyntaxError("const x = 1;\n", .ts));
-    try std.testing.expectEqual(true, try f.engine.hasSyntaxError("const x = ;\n", .ts));
 }

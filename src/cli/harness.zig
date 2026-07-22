@@ -55,7 +55,7 @@ pub fn run(
         error.OutOfMemory => return error.OutOfMemory,
     };
 
-    var engine = Engine.init(gpa, &rule_set, dsl.engine_compiler.ruleCompiler());
+    var engine = Engine.init(gpa, &rule_set, dsl.engine_compiler.ruleCompiler(), &.{});
     defer engine.deinit();
     if (!try engine.prewarmOrReport("kata test", stderr)) return .invalid;
 
@@ -121,7 +121,7 @@ fn checkFixture(
     }
 
     failures += try checkFixExpectations(arena, fix_expectations.items, diagnostics, path, stdout, covered);
-    failures += try checkFixInvariants(arena, engine, lang, source, path, diagnostics, stdout);
+    failures += try checkFixInvariants(arena, engine, lang, source, path, stdout);
 
     return failures;
 }
@@ -163,54 +163,24 @@ fn checkFixInvariants(
     lang: language.Name,
     source: []const u8,
     path: []const u8,
-    diagnostics: []const lint.diagnostic.Diagnostic,
     stdout: *std.Io.Writer,
 ) !usize {
-    var current = source;
-    var diags = diagnostics;
-    var pass: usize = 0;
-    while (pass < 8) : (pass += 1) {
-        const fixes = try collectFixes(arena, diags);
-        if (fixes.len == 0) return 0;
-
-        const list = try lint.edits.fromFixes(arena, current, fixes);
-        const applied = try lint.edits.apply(arena, current, list);
-        if (try engine.hasSyntaxError(applied.source, lang)) {
-            try stdout.print("{s} fix introduces a syntax error [{s}]\n", .{ path, try fixRuleIds(arena, diags) });
-
-            return 1;
-        }
-
-        current = applied.source;
-        diags = try engine.lint(arena, current, lang, path);
+    var fix_arena = std.heap.ArenaAllocator.init(arena);
+    defer fix_arena.deinit();
+    const result = try engine.fix(&fix_arena, source, lang, path, .declared);
+    switch (result.status) {
+        .converged => return 0,
+        .syntax_error => try stdout.print("{s} fix introduces a syntax error [{s}]\n", .{
+            path,
+            try std.mem.join(arena, ", ", result.rule_ids),
+        }),
+        .pass_limit => try stdout.print("{s} fixes do not converge [{s}]\n", .{
+            path,
+            try std.mem.join(arena, ", ", result.rule_ids),
+        }),
     }
-
-    if ((try collectFixes(arena, diags)).len == 0) return 0;
-
-    try stdout.print("{s} fixes do not converge [{s}]\n", .{ path, try fixRuleIds(arena, diags) });
 
     return 1;
-}
-
-fn collectFixes(arena: std.mem.Allocator, diagnostics: []const lint.diagnostic.Diagnostic) ![]const lint.diagnostic.Fix {
-    var out: std.ArrayList(lint.diagnostic.Fix) = .empty;
-    for (diagnostics) |d| {
-        if (d.fix) |fix| try out.append(arena, fix);
-    }
-
-    return out.toOwnedSlice(arena);
-}
-
-fn fixRuleIds(arena: std.mem.Allocator, diagnostics: []const lint.diagnostic.Diagnostic) ![]const u8 {
-    var ids: std.ArrayList([]const u8) = .empty;
-    for (diagnostics) |d| {
-        if (d.fix == null) continue;
-        if (containsString(ids.items, d.rule_id)) continue;
-
-        try ids.append(arena, d.rule_id);
-    }
-
-    return std.mem.join(arena, ", ", ids.items);
 }
 
 fn containsString(items: []const []const u8, needle: []const u8) bool {

@@ -220,7 +220,6 @@ test "facts: project index replaces entries by path" {
     try index.put(try f.engine.extractFacts(gpa, "class B {}", .ts, "src/a.ts"));
     try index.put(try f.engine.extractFacts(gpa, "class C {}", .ts, "src/c.ts"));
 
-    try std.testing.expectEqual(@as(usize, 2), index.count());
     const a = index.get("src/a.ts").?;
     try std.testing.expectEqual(@as(usize, 1), a.classes.len);
     try std.testing.expectEqualStrings("B", a.classes[0].name);

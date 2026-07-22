@@ -6,6 +6,7 @@ const project_rule = @import("engine").project_rule;
 const test_fixture = @import("../test_fixture.zig");
 
 const ProjectIndex = @import("engine").ProjectIndex;
+const Project = @import("engine").Project;
 
 const Fixture = test_fixture.Fixture;
 
@@ -81,6 +82,29 @@ test "project rule: restricted-callers flags non-repository callers only" {
     );
     try std.testing.expectEqual(@as(u32, 4), v.diagnostic.range.start.line);
     try std.testing.expectEqual(@as(u32, 4), v.diagnostic.range.start.column);
+}
+
+test "project analysis disables native rules through project settings" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.initWithSettings(
+        gpa,
+        &.{.ts},
+        "no-comments",
+        comment_rule,
+        &.{.{ .lang = null, .id = "repository-isolation", .project = true, .enabled = false }},
+    );
+    defer f.deinit();
+
+    var project = try Project.init(gpa, &f.engine, &.{repository_isolation});
+    defer project.deinit();
+    try project.replace(user_repository_ts, .ts, "src/user-repository.ts");
+    try project.replace(order_service_ts, .ts, "src/order-service.ts");
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const violations = try project.diagnostics(arena_state.allocator(), null);
+
+    try std.testing.expectEqual(@as(usize, 0), violations.len);
 }
 
 test "project rule: path filter keeps cross-file context but reports one file" {

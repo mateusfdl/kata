@@ -46,7 +46,7 @@ pub fn assign(
     const arena = scratch.allocator();
 
     const bounds = try spanBounds(arena, source, diagnostics);
-    const spans = try normalizedSpans(arena, source, diagnostics);
+    const spans = try normalizeBounds(arena, source, bounds);
 
     const Finding = struct {
         rule_id: []const u8,
@@ -54,6 +54,7 @@ pub fn assign(
         start: usize,
         end: usize,
         index: usize,
+        occurrence_index: usize = 0,
     };
 
     const findings = try arena.alloc(Finding, diagnostics.len);
@@ -67,13 +68,24 @@ pub fn assign(
         };
     }
 
-    for (findings, diagnostics) |finding, *d| {
-        var occurrence_index: usize = 0;
-        for (findings) |candidate| {
-            if (!std.mem.eql(u8, candidate.rule_id, finding.rule_id)) continue;
-            if (!std.mem.eql(u8, candidate.normalized_span, finding.normalized_span)) continue;
-            if (comesBefore(candidate, finding)) occurrence_index += 1;
+    std.mem.sort(Finding, findings, {}, struct {
+        fn lessThan(_: void, a: Finding, b: Finding) bool {
+            const rule_order = std.mem.order(u8, a.rule_id, b.rule_id);
+            if (rule_order != .eq) return rule_order == .lt;
+            const span_order = std.mem.order(u8, a.normalized_span, b.normalized_span);
+            if (span_order != .eq) return span_order == .lt;
+            return comesBefore(a, b);
         }
+    }.lessThan);
+
+    var occurrence_index: usize = 0;
+    for (findings, 0..) |*finding, index| {
+        if (index == 0 or !sameGroup(findings[index - 1], finding.*)) occurrence_index = 0 else occurrence_index += 1;
+        finding.occurrence_index = occurrence_index;
+    }
+
+    for (findings) |finding| {
+        const d = &diagnostics[finding.index];
 
         var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
         var hasher = std.crypto.hash.sha2.Sha256.init(.{});
@@ -84,7 +96,7 @@ pub fn assign(
         hasher.update(finding.normalized_span);
         hasher.update("\x00");
         var occurrence_buffer: [20]u8 = undefined;
-        const occurrence = try std.fmt.bufPrint(&occurrence_buffer, "{d}", .{occurrence_index});
+        const occurrence = try std.fmt.bufPrint(&occurrence_buffer, "{d}", .{finding.occurrence_index});
         hasher.update(occurrence);
         hasher.final(&digest);
 
@@ -131,6 +143,16 @@ fn spanBounds(
     return byteSpans(arena, source, ranges);
 }
 
+fn normalizeBounds(
+    arena: std.mem.Allocator,
+    source: []const u8,
+    bounds: []const Span,
+) ![][]const u8 {
+    const spans = try arena.alloc([]const u8, bounds.len);
+    for (bounds, spans) |bound, *span| span.* = try normalize(arena, source[bound.start..bound.end]);
+    return spans;
+}
+
 fn byteOffset(source_len: usize, line_offsets: []const usize, position: diagnostic.Position) usize {
     if (position.line >= line_offsets.len) return source_len;
 
@@ -141,6 +163,10 @@ fn comesBefore(a: anytype, b: @TypeOf(a)) bool {
     if (a.start != b.start) return a.start < b.start;
     if (a.end != b.end) return a.end < b.end;
     return a.index < b.index;
+}
+
+fn sameGroup(a: anytype, b: @TypeOf(a)) bool {
+    return std.mem.eql(u8, a.rule_id, b.rule_id) and std.mem.eql(u8, a.normalized_span, b.normalized_span);
 }
 
 fn isWhitespace(byte: u8) bool {

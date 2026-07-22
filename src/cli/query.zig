@@ -53,7 +53,7 @@ pub fn run(
         try rule_set.append(lang, .{ .id = rule_id, .source = opts.text });
     }
 
-    var engine = Engine.init(gpa, &rule_set, dsl.engine_compiler.ruleCompiler());
+    var engine = Engine.init(gpa, &rule_set, dsl.engine_compiler.ruleCompiler(), &.{});
     defer engine.deinit();
 
     if (!try engine.prewarmOrReport("kata", stderr)) return .usage;

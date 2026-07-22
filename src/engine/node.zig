@@ -1,9 +1,41 @@
 const std = @import("std");
 
 const ast = @import("ast.zig");
+const diagnostic = @import("diagnostic.zig");
 const family = @import("family/family.zig");
 
 pub const Point = ast.Point;
+
+pub const PreorderIterator = struct {
+    tree: *const ast.Ast,
+    next_index: ast.NodeIndex,
+    end: ast.NodeIndex,
+
+    pub fn next(self: *PreorderIterator) ?Node {
+        if (self.next_index >= self.end) return null;
+
+        const current = self.next_index;
+        self.next_index += 1;
+        return Node.fromKata(self.tree, current);
+    }
+};
+
+pub const ChildIterator = struct {
+    tree: *const ast.Ast,
+    next_index: ast.NodeIndex,
+    end: ast.NodeIndex,
+    named_only: bool,
+
+    pub fn next(self: *ChildIterator) ?Node {
+        while (self.next_index < self.end) {
+            const current = self.next_index;
+            self.next_index = self.tree.nodes[current].subtree_end;
+            if (!self.named_only or self.tree.nodes[current].flags.named) return Node.fromKata(self.tree, current);
+        }
+
+        return null;
+    }
+};
 
 /// A handle over a single node in kata's flat `Ast`. Every consumer (matcher,
 /// metrics, facts) talks to this surface rather than the store directly, so the
@@ -44,9 +76,35 @@ pub const Node = struct {
         return self.tree.pointAt(self.stored().end_byte);
     }
 
+    pub fn range(self: Node) diagnostic.Range {
+        const start = self.startPoint();
+        const end = self.endPoint();
+
+        return .{
+            .start = .{ .line = start.row, .column = start.column },
+            .end = .{ .line = end.row, .column = end.column },
+        };
+    }
+
     pub fn parent(self: Node) ?Node {
         const p = self.stored().parent;
         return if (p == ast.no_parent) null else fromKata(self.tree, p);
+    }
+
+    pub fn preorder(self: Node) PreorderIterator {
+        return .{
+            .tree = self.tree,
+            .next_index = self.index,
+            .end = self.stored().subtree_end,
+        };
+    }
+
+    pub fn children(self: Node) ChildIterator {
+        return self.childIterator(false);
+    }
+
+    pub fn namedChildren(self: Node) ChildIterator {
+        return self.childIterator(true);
     }
 
     pub fn child(self: Node, index: u32) ?Node {
@@ -105,12 +163,12 @@ pub const Node = struct {
         return if (prev) |pi| fromKata(self.tree, pi) else null;
     }
 
-    pub fn isNamed(self: Node) bool {
-        return self.stored().flags.named;
-    }
-
     pub fn isExtra(self: Node) bool {
         return self.stored().flags.extra;
+    }
+
+    pub fn fieldName(self: Node) ?[]const u8 {
+        return family.of(self.tree.family).fieldName(self.stored().field_id);
     }
 
     pub fn eql(self: Node, other: Node) bool {
@@ -138,6 +196,15 @@ pub const Node = struct {
         }
 
         return count;
+    }
+
+    fn childIterator(self: Node, named_only: bool) ChildIterator {
+        return .{
+            .tree = self.tree,
+            .next_index = self.index + 1,
+            .end = self.stored().subtree_end,
+            .named_only = named_only,
+        };
     }
 
     fn childAt(self: Node, index: u32, named_only: bool) ?Node {

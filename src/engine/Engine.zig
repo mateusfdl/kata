@@ -2,6 +2,7 @@ const std = @import("std");
 
 const diagnostic = @import("diagnostic.zig");
 const dispatch = @import("dispatch.zig");
+const edits = @import("edits.zig");
 const fact_rule = @import("fact_rule.zig");
 const facts = @import("facts.zig");
 const family_mod = @import("family/family.zig");
@@ -18,8 +19,6 @@ const Node = @import("node.zig").Node;
 
 const RuleSet = @import("RuleSet.zig").RuleSet;
 
-const initial_diagnostic_capacity: usize = 16;
-
 /// caches the outcome of rule compilation per language. `none` (no kata-format
 /// rules exist) must be remembered too, leaving the slot empty would re-scan
 /// the raw rules on every lint call
@@ -27,6 +26,10 @@ const RuleSlot = union(enum) {
     not_compiled,
     none,
     compiled: rule.CompiledRule,
+    failed: struct {
+        compiled: ?rule.CompiledRule = null,
+        diagnostic: rule.Diagnostic,
+    },
 };
 
 pub const Engine = struct {
@@ -41,16 +44,29 @@ pub const Engine = struct {
     settings: []const rule.RuleSetting = &.{},
     compile_diag: rule.Diagnostic = .{},
 
+    pub const FixPolicy = enum { safe, unsafe, declared };
+    pub const FixStatus = enum { converged, syntax_error, pass_limit };
+
+    pub const FixResult = struct {
+        source: []const u8,
+        diagnostics: []diagnostic.Diagnostic,
+        rule_ids: []const []const u8,
+        status: FixStatus,
+        changed: bool,
+    };
+
     pub fn init(
         allocator: std.mem.Allocator,
         rules: *RuleSet,
         compiler: rule_compiler.RuleCompiler,
+        settings: []const rule.RuleSetting,
     ) Engine {
         return .{
             .allocator = allocator,
             .rules = rules,
             .compiler = compiler,
             .frontend = parse.Frontend.init(allocator),
+            .settings = settings,
         };
     }
 
@@ -59,6 +75,7 @@ pub const Engine = struct {
         while (dit.next()) |entry| {
             switch (entry.value.*) {
                 .compiled => |*compiled| compiled.deinit(),
+                .failed => |*failed| if (failed.compiled) |*compiled| compiled.deinit(),
                 .not_compiled, .none => {},
             }
         }
@@ -138,39 +155,61 @@ pub const Engine = struct {
         const slot = self.compiled.getPtr(lang);
         switch (slot.*) {
             .compiled => |*cached| return cached,
+            .failed => |failed| {
+                self.compile_diag = failed.diagnostic;
+                return error.CompileFailed;
+            },
             .none => return null,
             .not_compiled => {},
         }
 
-        const compiled = (try self.compiler.compileLang(self.allocator, lang, self.rules.get(lang), &self.compile_diag)) orelse {
+        const compiled_result = self.compiler.compileLang(self.allocator, lang, self.rules.get(lang), &self.compile_diag) catch |err| {
+            if (err == error.CompileFailed and self.compile_diag.detail.len > 0) {
+                slot.* = .{ .failed = .{ .diagnostic = self.compile_diag } };
+            }
+            return err;
+        };
+        var compiled = compiled_result orelse {
             slot.* = .none;
             return null;
         };
-        slot.* = .{ .compiled = compiled };
 
         const table = dispatch.Table.build(
-            slot.compiled.arena.allocator(),
-            slot.compiled.patterns,
+            compiled.arena.allocator(),
+            self.allocator,
+            compiled.patterns,
             family_mod.of(lang.family()).kind_count,
         ) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
+            error.OutOfMemory => {
+                compiled.deinit();
+                return error.OutOfMemory;
+            },
             error.EmptyRootKinds => {
                 self.compile_diag = .{
                     .lang = lang,
-                    .rule_id = underivableRuleId(slot.compiled.arena.allocator(), slot.compiled.patterns),
+                    .rule_id = underivableRuleId(self.allocator, compiled.patterns),
                     .detail = "cannot derive root kinds",
                 };
+                slot.* = .{ .failed = .{
+                    .compiled = compiled,
+                    .diagnostic = self.compile_diag,
+                } };
                 return error.CompileFailed;
             },
         };
-        slot.compiled.dispatch = table;
+        compiled.dispatch = table;
+        slot.* = .{ .compiled = compiled };
 
         return &slot.compiled;
     }
 
-    fn underivableRuleId(arena: std.mem.Allocator, patterns: []const rule.CompiledPattern) []const u8 {
+    fn underivableRuleId(allocator: std.mem.Allocator, patterns: []const rule.CompiledPattern) []const u8 {
+        var scratch = std.heap.ArenaAllocator.init(allocator);
+        defer scratch.deinit();
+
         for (patterns) |cp| {
-            _ = dispatch.rootKinds(arena, &cp.pattern) catch return cp.meta.rule_id;
+            _ = scratch.reset(.retain_capacity);
+            _ = dispatch.rootKinds(scratch.allocator(), &cp.pattern) catch return cp.meta.rule_id;
         }
         return "";
     }
@@ -191,10 +230,24 @@ pub const Engine = struct {
         lang: language.Name,
         path: []const u8,
     ) !facts.FileFacts {
-        var tree_ast = try self.frontend.tree(source, lang);
-        defer tree_ast.deinit(self.allocator);
+        var parsed = try self.parseSource(source, lang);
+        defer parsed.deinit();
 
-        return facts.extract(gpa, Node.fromKata(&tree_ast, tree_ast.root()), source, path, lang);
+        return self.extractFactsParsed(gpa, &parsed, path);
+    }
+
+    pub fn parseSource(self: *Engine, source: []const u8, lang: language.Name) !parse.Parsed {
+        return self.frontend.parse(source, lang);
+    }
+
+    pub fn extractFactsParsed(
+        self: *Engine,
+        gpa: std.mem.Allocator,
+        parsed: *const parse.Parsed,
+        path: []const u8,
+    ) !facts.FileFacts {
+        _ = self;
+        return facts.extract(gpa, Node.fromKata(&parsed.ast, parsed.ast.root()), parsed.source, path, parsed.lang);
     }
 
     pub fn lint(
@@ -204,13 +257,25 @@ pub const Engine = struct {
         lang: language.Name,
         path: ?[]const u8,
     ) ![]diagnostic.Diagnostic {
-        var tree_ast = try self.frontend.tree(source, lang);
-        defer tree_ast.deinit(self.allocator);
-        const root = Node.fromKata(&tree_ast, tree_ast.root());
+        var parsed = try self.parseSource(source, lang);
+        defer parsed.deinit();
+
+        return self.lintParsed(allocator, &parsed, path);
+    }
+
+    pub fn lintParsed(
+        self: *Engine,
+        allocator: std.mem.Allocator,
+        parsed: *const parse.Parsed,
+        path: ?[]const u8,
+    ) ![]diagnostic.Diagnostic {
+        const root = Node.fromKata(&parsed.ast, parsed.ast.root());
+        const source = parsed.source;
+        const lang = parsed.lang;
 
         const compiled = try self.ensureCompiled(lang);
 
-        var out: std.ArrayList(diagnostic.Diagnostic) = try .initCapacity(allocator, initial_diagnostic_capacity);
+        var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
         errdefer out.deinit(allocator);
 
         const metric_ctx: ?matcher.MetricContext = if (needsMeasures(compiled)) .{
@@ -228,19 +293,99 @@ pub const Engine = struct {
 
         if (compiled) |dsl| try runRule(allocator, dsl, eval_ctx, lang, self.settings, path, &out);
 
+        std.mem.sort(diagnostic.Diagnostic, out.items, {}, diagnostic.lessThan);
+
         return out.toOwnedSlice(allocator);
     }
 
-    pub fn hasSyntaxError(self: *Engine, source: []const u8, lang: language.Name) !bool {
-        return self.frontend.hasError(source, lang);
-    }
+    pub fn fix(
+        self: *Engine,
+        arena: *std.heap.ArenaAllocator,
+        source: []const u8,
+        lang: language.Name,
+        path: ?[]const u8,
+        policy: FixPolicy,
+    ) !FixResult {
+        const allocator = arena.allocator();
+        var current = source;
+        var diagnostics = try self.lint(allocator, current, lang, path);
+        var pass: usize = 0;
 
-    pub fn fixOverride(self: *const Engine, lang: language.Name, rule_id: []const u8) ?rule.FixMode {
-        for (self.settings) |setting| {
-            if (setting.matches(lang, rule_id)) return setting.fix;
+        while (pass < 8) : (pass += 1) {
+            const applicable = try self.applicableFixes(allocator, lang, diagnostics, policy);
+            if (applicable.fixes.len == 0) {
+                return .{
+                    .source = current,
+                    .diagnostics = diagnostics,
+                    .rule_ids = &.{},
+                    .status = .converged,
+                    .changed = !std.mem.eql(u8, source, current),
+                };
+            }
+
+            const list = try edits.fromFixes(allocator, current, applicable.fixes);
+            const applied = try edits.apply(allocator, current, list);
+            var parsed = try self.parseSource(applied.source, lang);
+            defer parsed.deinit();
+            if (parsed.has_error) {
+                return .{
+                    .source = current,
+                    .diagnostics = diagnostics,
+                    .rule_ids = applicable.rule_ids,
+                    .status = .syntax_error,
+                    .changed = !std.mem.eql(u8, source, current),
+                };
+            }
+
+            current = applied.source;
+            diagnostics = try self.lintParsed(allocator, &parsed, path);
         }
 
-        return null;
+        const remaining = try self.applicableFixes(allocator, lang, diagnostics, policy);
+        return .{
+            .source = current,
+            .diagnostics = diagnostics,
+            .rule_ids = remaining.rule_ids,
+            .status = if (remaining.fixes.len == 0) .converged else .pass_limit,
+            .changed = !std.mem.eql(u8, source, current),
+        };
+    }
+
+    const ApplicableFixes = struct {
+        fixes: []const diagnostic.Fix,
+        rule_ids: []const []const u8,
+    };
+
+    fn applicableFixes(
+        self: *const Engine,
+        allocator: std.mem.Allocator,
+        lang: language.Name,
+        diagnostics: []const diagnostic.Diagnostic,
+        policy: FixPolicy,
+    ) !ApplicableFixes {
+        var fixes: std.ArrayList(diagnostic.Fix) = .empty;
+        var rule_ids: std.ArrayList([]const u8) = .empty;
+
+        for (diagnostics) |item| {
+            const fix_item = item.fix orelse continue;
+            if (policy != .declared) {
+                const override = self.fixOverride(lang, item.rule_id);
+                if (override == .never) continue;
+                if (fix_item.safety == .unsafe and policy != .unsafe and override != .unsafe_ok) continue;
+            }
+
+            try fixes.append(allocator, fix_item);
+            if (!containsString(rule_ids.items, item.rule_id)) try rule_ids.append(allocator, item.rule_id);
+        }
+
+        return .{
+            .fixes = try fixes.toOwnedSlice(allocator),
+            .rule_ids = try rule_ids.toOwnedSlice(allocator),
+        };
+    }
+
+    fn fixOverride(self: *const Engine, lang: language.Name, rule_id: []const u8) ?rule.FixMode {
+        return rule.resolvePolicy(self.settings, .{ .language = lang }, rule_id, null).fix;
     }
 
     pub fn rulesWithFixes(self: *Engine, arena: std.mem.Allocator) ![]const []const u8 {
@@ -278,31 +423,6 @@ fn needsMeasures(compiled: ?*rule.CompiledRule) bool {
     return false;
 }
 
-fn settingSeverity(
-    settings: []const rule.RuleSetting,
-    lang: language.Name,
-    rule_id: []const u8,
-) ?diagnostic.Severity {
-    for (settings) |s| {
-        if (s.matches(lang, rule_id)) return s.severity;
-    }
-
-    return null;
-}
-
-fn settingExcluded(
-    settings: []const rule.RuleSetting,
-    lang: language.Name,
-    rule_id: []const u8,
-    path: ?[]const u8,
-) bool {
-    for (settings) |s| {
-        if (s.matches(lang, rule_id)) return pathExcluded(s.exclude, path);
-    }
-
-    return false;
-}
-
 const PatternRun = struct {
     match_id: query.CaptureId,
     severity: diagnostic.Severity,
@@ -323,18 +443,21 @@ pub fn runRule(
 ) !void {
     const lang_str = lang.toString();
 
-    var scratch = std.heap.ArenaAllocator.init(allocator);
-    defer scratch.deinit();
+    var run_scratch = std.heap.ArenaAllocator.init(allocator);
+    defer run_scratch.deinit();
 
-    var eval_ctx = ctx;
-    eval_ctx.allocator = scratch.allocator();
-
-    const runs = try scratch.allocator().alloc(?PatternRun, r.patterns.len);
+    const runs = try run_scratch.allocator().alloc(?PatternRun, r.patterns.len);
     for (r.patterns, runs) |cp, *run| {
         run.* = patternRun(cp, lang, settings, path);
     }
 
-    try dispatchNode(allocator, r, runs, eval_ctx, lang_str, scratch.allocator(), out, eval_ctx.root);
+    var match_scratch = std.heap.ArenaAllocator.init(allocator);
+    defer match_scratch.deinit();
+
+    var eval_scratch = std.heap.ArenaAllocator.init(allocator);
+    defer eval_scratch.deinit();
+
+    try dispatchTree(allocator, r, runs, ctx, lang_str, &match_scratch, &eval_scratch, out, ctx.root);
 }
 
 fn patternRun(
@@ -345,45 +468,90 @@ fn patternRun(
 ) ?PatternRun {
     const match_id = cp.match_capture_id orelse return null;
     if (pathExcluded(cp.meta.exclude_paths, path)) return null;
-    if (settingExcluded(settings, lang, cp.meta.rule_id, path)) return null;
+    const policy = rule.resolvePolicy(settings, .{ .language = lang }, cp.meta.rule_id, path);
+    if (!policy.enabled or policy.excluded) return null;
 
     return .{
         .match_id = match_id,
-        .severity = settingSeverity(settings, lang, cp.meta.rule_id) orelse cp.meta.severity,
+        .severity = policy.severity orelse cp.meta.severity,
     };
 }
 
-fn dispatchNode(
+fn dispatchTree(
     allocator: std.mem.Allocator,
     r: *const rule.CompiledRule,
     runs: []const ?PatternRun,
-    eval_ctx: matcher.EvalContext,
+    ctx: matcher.EvalContext,
     lang_str: []const u8,
-    scratch: std.mem.Allocator,
+    match_scratch: *std.heap.ArenaAllocator,
+    eval_scratch: *std.heap.ArenaAllocator,
     out: *std.ArrayList(diagnostic.Diagnostic),
     n: Node,
 ) !void {
-    for (r.dispatch.slots[n.kindId()]) |pattern_index| {
-        const run = runs[pattern_index] orelse continue;
-        const cp = r.patterns[pattern_index];
+    var nodes = n.preorder();
+    while (nodes.next()) |candidate| {
+        for (r.dispatch.slots[candidate.kindId()]) |pattern_index| {
+            const run = runs[pattern_index] orelse continue;
+            const cp = r.patterns[pattern_index];
 
-        const matches = try query.runAt(scratch, &cp.pattern, cp.capture_count, n);
-        for (matches) |match| {
-            if (!try matcher.evaluate(cp.meta.predicates, match, eval_ctx)) continue;
-
-            const message = if (cp.meta.message) |m| try renderTemplate(allocator, m, match, eval_ctx) else cp.meta.rule_id;
-            const fix = try renderFix(allocator, cp.meta, match, eval_ctx);
-            const suggestions = try renderSuggestions(allocator, cp.meta, match, eval_ctx);
-
-            try emitDiagnostic(allocator, run.match_id, cp.meta, match, eval_ctx.source, lang_str, message, run.severity, fix, suggestions, out);
+            _ = match_scratch.reset(.retain_capacity);
+            var sink: RuleSink = .{
+                .allocator = allocator,
+                .compiled = &cp,
+                .run = run,
+                .ctx = ctx,
+                .lang_str = lang_str,
+                .eval_scratch = eval_scratch,
+                .out = out,
+            };
+            try query.streamAt(match_scratch.allocator(), &cp.pattern, cp.capture_count, candidate, &sink);
         }
     }
-
-    var i: u32 = 0;
-    while (i < n.childCount()) : (i += 1) {
-        try dispatchNode(allocator, r, runs, eval_ctx, lang_str, scratch, out, n.child(i).?);
-    }
 }
+
+const RuleSink = struct {
+    allocator: std.mem.Allocator,
+    compiled: *const rule.CompiledPattern,
+    run: PatternRun,
+    ctx: matcher.EvalContext,
+    lang_str: []const u8,
+    eval_scratch: *std.heap.ArenaAllocator,
+    out: *std.ArrayList(diagnostic.Diagnostic),
+    done: bool = false,
+
+    pub fn emit(self: *RuleSink, bindings: []const ?Node) std.mem.Allocator.Error!void {
+        _ = self.eval_scratch.reset(.retain_capacity);
+        var eval_ctx = self.ctx;
+        eval_ctx.allocator = self.eval_scratch.allocator();
+        var metric_cache: matcher.MetricCache = .{};
+        if (eval_ctx.metric) |*metric_ctx| {
+            metric_ctx.allocator = eval_ctx.allocator;
+            metric_ctx.cache = &metric_cache;
+        }
+        const match: query.Match = .{ .nodes = bindings };
+        if (!try matcher.evaluate(self.compiled.meta.predicates, match, eval_ctx)) return;
+
+        const message = if (self.compiled.meta.message) |template|
+            try renderTemplate(self.allocator, template, match, eval_ctx)
+        else
+            self.compiled.meta.rule_id;
+        const fix = try renderFix(self.allocator, self.compiled.meta, match, eval_ctx);
+        const suggestions = try renderSuggestions(self.allocator, self.compiled.meta, match, eval_ctx);
+        try emitDiagnostic(
+            self.allocator,
+            self.run.match_id,
+            self.compiled.meta,
+            match,
+            eval_ctx.source,
+            self.lang_str,
+            message,
+            self.run.severity,
+            fix,
+            suggestions,
+            self.out,
+        );
+    }
+};
 
 fn pathExcluded(globs: []const []const u8, path: ?[]const u8) bool {
     const p = path orelse return false;
@@ -418,7 +586,7 @@ fn renderFix(
     const n = match.get(fix.target_id) orelse return null;
 
     return .{
-        .range = nodeRange(n),
+        .range = n.range(),
         .replacement = try renderTemplate(allocator, fix.template, match, ctx),
         .safety = fix.safety,
     };
@@ -437,7 +605,7 @@ fn renderSuggestions(
         const n = match.get(suggestion.target_id) orelse continue;
         try out.append(allocator, .{
             .label = suggestion.label,
-            .range = nodeRange(n),
+            .range = n.range(),
             .replacement = try renderTemplate(allocator, suggestion.template, match, ctx),
         });
     }
@@ -465,7 +633,7 @@ fn emitDiagnostic(
         .rule_id = meta.rule_id,
         .language = lang_str,
         .message = message,
-        .range = nodeRange(n),
+        .range = n.range(),
         .severity = severity,
         .maturity = meta.maturity,
         .context = context,
@@ -484,7 +652,7 @@ fn enclosingContext(allocator: std.mem.Allocator, node: Node, source: []const u8
         entries[count] = .{
             .kind = kind,
             .name = try contextName(allocator, ancestor, source),
-            .range = nodeRange(ancestor),
+            .range = ancestor.range(),
         };
         count += 1;
         if (count == entries.len) break;
@@ -516,17 +684,14 @@ fn goReceiverContext(allocator: std.mem.Allocator, method: Node, source: []const
     return .{
         .kind = .class,
         .name = try allocator.dupe(u8, name),
-        .range = nodeRange(receiver_type),
+        .range = receiver_type.range(),
     };
 }
 
 fn findNamedKind(node: Node, kind: []const u8) ?Node {
-    if (std.mem.eql(u8, node.kind(), kind)) return node;
-
-    var index: u32 = 0;
-    while (index < node.namedChildCount()) : (index += 1) {
-        const child = node.namedChild(index).?;
-        if (findNamedKind(child, kind)) |match| return match;
+    var nodes = node.preorder();
+    while (nodes.next()) |candidate| {
+        if (std.mem.eql(u8, candidate.kind(), kind)) return candidate;
     }
 
     return null;
@@ -552,14 +717,4 @@ fn contextName(allocator: std.mem.Allocator, node: Node, source: []const u8) ![]
     }
 
     return allocator.dupe(u8, "<anonymous>");
-}
-
-fn nodeRange(node: Node) diagnostic.Range {
-    const start = node.startPoint();
-    const end = node.endPoint();
-
-    return .{
-        .start = .{ .line = start.row, .column = start.column },
-        .end = .{ .line = end.row, .column = end.column },
-    };
 }

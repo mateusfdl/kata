@@ -4,6 +4,7 @@ const mvzr = @import("mvzr");
 const diagnostic = @import("diagnostic.zig");
 const dispatch = @import("dispatch.zig");
 const expr = @import("expr.zig");
+const glob = @import("glob.zig");
 const language = @import("language.zig");
 const query = @import("query.zig");
 
@@ -268,6 +269,53 @@ pub const RuleSetting = struct {
         return self.project and std.mem.eql(u8, self.id, id);
     }
 };
+
+pub const Scope = union(enum) {
+    language: language.Name,
+    project,
+};
+
+pub const Policy = struct {
+    enabled: bool = true,
+    severity: ?diagnostic.Severity = null,
+    fix: ?FixMode = null,
+    excluded: bool = false,
+};
+
+pub fn resolvePolicy(
+    settings: []const RuleSetting,
+    scope: Scope,
+    id: []const u8,
+    path: ?[]const u8,
+) Policy {
+    for (settings) |setting| {
+        const matches = switch (scope) {
+            .language => |lang| setting.matches(lang, id),
+            .project => setting.matchesProject(id),
+        };
+        if (!matches) continue;
+
+        return .{
+            .enabled = setting.enabled,
+            .severity = setting.severity,
+            .fix = setting.fix,
+            .excluded = pathExcluded(setting.exclude, path),
+        };
+    }
+
+    return .{};
+}
+
+fn pathExcluded(patterns: []const []const u8, path: ?[]const u8) bool {
+    const value = path orelse return false;
+    if (value.len == 0) return false;
+
+    for (patterns) |pattern| {
+        if (glob.match(pattern, value)) return true;
+    }
+
+    return false;
+}
 
 pub fn isValidId(s: []const u8) bool {
     if (s.len == 0) return false;

@@ -28,6 +28,7 @@ fn compileDsl(
     var compiled = try compile.compile(gpa, lang, file, &diag);
     compiled.dispatch = try engine.dispatch.Table.build(
         compiled.arena.allocator(),
+        gpa,
         compiled.patterns,
         engine.family.of(lang.family()).kind_count,
     );

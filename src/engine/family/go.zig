@@ -1,6 +1,4 @@
 const std = @import("std");
-const ts = @import("tree_sitter");
-
 const node_kinds = @import("node_kinds");
 
 const diagnostic = @import("../diagnostic.zig");
@@ -22,8 +20,8 @@ pub const adapter: family.Adapter = .{
     .kindId = kind_fns.id,
     .fieldId = fields.id,
     .fieldName = fields.name,
-    .buildKindRemap = buildKindRemap,
-    .buildFieldRemap = buildFieldRemap,
+    .buildKindRemap = kinds.buildKindRemap,
+    .buildFieldRemap = kinds.buildFieldRemap,
     .buildMetricTable = metric_table.build,
     .contextKind = contextKind,
     .paramCount = paramCount,
@@ -209,9 +207,8 @@ fn classifyMetric(k: kinds.Kind) ?metric.MetricKind {
 
 fn paramCount(params: Node) u32 {
     var total: u32 = 0;
-    var i: u32 = 0;
-    while (i < params.namedChildCount()) : (i += 1) {
-        const decl = params.namedChild(i) orelse continue;
+    var children = params.namedChildren();
+    while (children.next()) |decl| {
         if (!isParameterDeclaration(decl)) continue;
         const names = countFieldChildren(decl, "name");
         total += if (names == 0) 1 else names;
@@ -227,18 +224,10 @@ fn isParameterDeclaration(node: Node) bool {
 
 fn countFieldChildren(node: Node, field_: []const u8) u32 {
     var count: u32 = 0;
-    var i: u32 = 0;
-    while (i < node.childCount()) : (i += 1) {
-        const name = node.fieldNameForChild(i) orelse continue;
+    var children = node.children();
+    while (children.next()) |candidate| {
+        const name = candidate.fieldName() orelse continue;
         if (std.mem.eql(u8, name, field_)) count += 1;
     }
     return count;
-}
-
-fn buildKindRemap(grammar: *const ts.Language, gpa: std.mem.Allocator) std.mem.Allocator.Error![]u16 {
-    return kinds.buildKindRemap(grammar, gpa);
-}
-
-fn buildFieldRemap(grammar: *const ts.Language, gpa: std.mem.Allocator) std.mem.Allocator.Error![]u16 {
-    return kinds.buildFieldRemap(grammar, gpa);
 }

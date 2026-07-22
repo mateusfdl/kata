@@ -12,7 +12,6 @@ test "edits: applies a single replacement" {
     const result = try edits.apply(arena.allocator(), source, &list);
 
     try std.testing.expectEqualStrings("const n = Number.parseInt(x);\n", result.source);
-    try std.testing.expectEqual(@as(usize, 1), result.applied);
 }
 
 test "edits: an empty text deletes the span" {
@@ -23,7 +22,6 @@ test "edits: an empty text deletes the span" {
     const result = try edits.apply(arena.allocator(), "keep DELETE keep\n", &list);
 
     try std.testing.expectEqualStrings("keep  keep\n", result.source);
-    try std.testing.expectEqual(@as(usize, 1), result.applied);
 }
 
 test "edits: applies unsorted edits in position order" {
@@ -37,7 +35,6 @@ test "edits: applies unsorted edits in position order" {
     const result = try edits.apply(arena.allocator(), "aaa bbb c ddd\n", &list);
 
     try std.testing.expectEqualStrings("one bbb two ddd\n", result.source);
-    try std.testing.expectEqual(@as(usize, 2), result.applied);
 }
 
 test "edits: skips an edit overlapping an applied one" {
@@ -51,7 +48,6 @@ test "edits: skips an edit overlapping an applied one" {
     const result = try edits.apply(arena.allocator(), "aaaabbbbcccc\n", &list);
 
     try std.testing.expectEqualStrings("firstcccc\n", result.source);
-    try std.testing.expectEqual(@as(usize, 1), result.applied);
 }
 
 test "edits: skips a duplicate of an applied range" {
@@ -65,7 +61,6 @@ test "edits: skips a duplicate of an applied range" {
     const result = try edits.apply(arena.allocator(), "aaaa rest\n", &list);
 
     try std.testing.expectEqualStrings("kept rest\n", result.source);
-    try std.testing.expectEqual(@as(usize, 1), result.applied);
 }
 
 test "edits: fromFixes converts line and column ranges to byte offsets" {

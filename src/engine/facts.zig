@@ -88,6 +88,18 @@ const Lists = struct {
     imports: std.ArrayList(Import) = .empty,
 };
 
+const ExtractionSink = struct {
+    arena: std.mem.Allocator,
+    source: []const u8,
+    constructor_prefix: ?[]const u8,
+    lists: *Lists,
+    done: bool = false,
+
+    pub fn emit(self: *ExtractionSink, bindings: []const ?Node) std.mem.Allocator.Error!void {
+        try assemble(self.arena, self.source, .{ .nodes = bindings }, self.constructor_prefix, self.lists);
+    }
+};
+
 pub fn receiverType(file: *const FileFacts, receiver: []const u8) ?[]const u8 {
     var found: ?[]const u8 = null;
 
@@ -165,11 +177,19 @@ pub fn extract(
 
     var lists: Lists = .{};
 
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+
     const adapter = family_mod.of(lang.family());
     for (adapter.fact_patterns) |*pattern| {
-        for (try query.run(arena, pattern, role_count, root)) |match| {
-            try assemble(arena, source, match, adapter.constructor_prefix, &lists);
-        }
+        _ = scratch.reset(.retain_capacity);
+        var sink: ExtractionSink = .{
+            .arena = arena,
+            .source = source,
+            .constructor_prefix = adapter.constructor_prefix,
+            .lists = &lists,
+        };
+        try query.stream(scratch.allocator(), pattern, role_count, root, &sink);
     }
 
     sortByStart(ClassDef, lists.classes.items);
@@ -184,11 +204,11 @@ pub fn extract(
         .arena = arena_ptr,
         .path = try arena.dupe(u8, path),
         .lang = lang,
-        .classes = try lists.classes.toOwnedSlice(arena),
-        .methods = try lists.methods.toOwnedSlice(arena),
-        .typed_decls = try lists.typed_decls.toOwnedSlice(arena),
-        .calls = try lists.calls.toOwnedSlice(arena),
-        .imports = try lists.imports.toOwnedSlice(arena),
+        .classes = lists.classes.items,
+        .methods = lists.methods.items,
+        .typed_decls = lists.typed_decls.items,
+        .calls = lists.calls.items,
+        .imports = lists.imports.items,
     };
 }
 
@@ -211,7 +231,7 @@ fn assemble(
             .container = if (match.get(cap(.method_recv))) |recv| try nodeText(arena, source, recv) else "",
             .start = span_node.startByte(),
             .end = span_node.endByte(),
-            .range = rangeOf(span_node),
+            .range = span_node.range(),
         });
 
         return;
@@ -223,7 +243,7 @@ fn assemble(
             .name = try nodeText(arena, source, name_node),
             .start = span_node.startByte(),
             .end = span_node.endByte(),
-            .range = rangeOf(span_node),
+            .range = span_node.range(),
         });
     }
 
@@ -236,7 +256,7 @@ fn assemble(
             .name = try nodeText(arena, source, name_node),
             .type_name = type_name,
             .start = name_node.startByte(),
-            .range = rangeOf(name_node),
+            .range = name_node.range(),
         });
 
         return;
@@ -250,7 +270,7 @@ fn assemble(
             .method = try nodeText(arena, source, method_node),
             .container = "",
             .start = span_node.startByte(),
-            .range = rangeOf(span_node),
+            .range = span_node.range(),
         });
 
         return;
@@ -263,7 +283,7 @@ fn assemble(
             .name = if (match.get(cap(.import_name))) |name| try nodeText(arena, source, name) else "",
             .source = std.mem.trim(u8, raw, "\""),
             .start = source_node.startByte(),
-            .range = rangeOf(source_node),
+            .range = source_node.range(),
         });
 
         return;
@@ -314,14 +334,4 @@ fn nodeSlice(source: []const u8, node: Node) []const u8 {
 
 fn nodeText(arena: std.mem.Allocator, source: []const u8, node: Node) ![]const u8 {
     return arena.dupe(u8, nodeSlice(source, node));
-}
-
-fn rangeOf(node: Node) diagnostic.Range {
-    const sp = node.startPoint();
-    const ep = node.endPoint();
-
-    return .{
-        .start = .{ .line = sp.row, .column = sp.column },
-        .end = .{ .line = ep.row, .column = ep.column },
-    };
 }

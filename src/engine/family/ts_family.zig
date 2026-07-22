@@ -1,6 +1,4 @@
 const std = @import("std");
-const ts = @import("tree_sitter");
-
 const node_kinds = @import("node_kinds");
 
 const diagnostic = @import("../diagnostic.zig");
@@ -22,8 +20,8 @@ pub const adapter: family.Adapter = .{
     .kindId = kind_fns.id,
     .fieldId = fields.id,
     .fieldName = fields.name,
-    .buildKindRemap = buildKindRemap,
-    .buildFieldRemap = buildFieldRemap,
+    .buildKindRemap = kinds.buildKindRemap,
+    .buildFieldRemap = kinds.buildFieldRemap,
     .buildMetricTable = metric_table.build,
     .contextKind = contextKind,
     .paramCount = paramCount,
@@ -217,12 +215,4 @@ fn classifyMetric(k: kinds.Kind) ?metric.MetricKind {
 
 fn paramCount(params: Node) u32 {
     return metric.countNonExtraNamed(params);
-}
-
-fn buildKindRemap(grammar: *const ts.Language, gpa: std.mem.Allocator) std.mem.Allocator.Error![]u16 {
-    return kinds.buildKindRemap(grammar, gpa);
-}
-
-fn buildFieldRemap(grammar: *const ts.Language, gpa: std.mem.Allocator) std.mem.Allocator.Error![]u16 {
-    return kinds.buildFieldRemap(grammar, gpa);
 }

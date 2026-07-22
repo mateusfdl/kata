@@ -43,6 +43,16 @@ pub const Fixture = struct {
         id: []const u8,
         source: []const u8,
     ) !*Fixture {
+        return initWithSettings(allocator, langs, id, source, &.{});
+    }
+
+    pub fn initWithSettings(
+        allocator: std.mem.Allocator,
+        langs: []const language.Name,
+        id: []const u8,
+        source: []const u8,
+        settings: []const lint.rule.RuleSetting,
+    ) !*Fixture {
         const self = try allocator.create(Fixture);
         self.* = .{
             .allocator = allocator,
@@ -51,7 +61,7 @@ pub const Fixture = struct {
         };
         for (langs) |l| try self.add(l, id, source);
 
-        self.engine = Engine.init(allocator, &self.rule_set, dsl.engine_compiler.ruleCompiler());
+        self.engine = Engine.init(allocator, &self.rule_set, dsl.engine_compiler.ruleCompiler(), settings);
         return self;
     }
 

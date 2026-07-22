@@ -7,50 +7,34 @@ const protocol = @import("protocol.zig");
 
 const diagnostic = lint.diagnostic;
 const language = lint.language;
-const project_rule = lint.project_rule;
 const Engine = lint.Engine;
 
 pub const Context = struct {
     engine: *Engine,
     binary_mtime: i64,
     io: std.Io,
-    project: ?*ProjectState = null,
+    project: ?*lint.Project = null,
     ratchet: bool = false,
     cache: ?*sources.context.Cache = null,
 };
 
-pub const ProjectState = struct {
-    rules: []const project_rule.ProjectRule,
-    index: lint.ProjectIndex,
-
-    pub fn init(gpa: std.mem.Allocator, rules: []const project_rule.ProjectRule) ProjectState {
-        return .{ .rules = rules, .index = lint.ProjectIndex.init(gpa) };
-    }
-
-    pub fn deinit(self: *ProjectState) void {
-        self.index.deinit();
-    }
-};
-
 const IndexVisit = struct {
-    engine: *Engine,
-    index: *lint.ProjectIndex,
+    project: *lint.Project,
 };
 
 pub fn buildIndex(
     io: std.Io,
     gpa: std.mem.Allocator,
-    engine: *Engine,
     root: []const u8,
-    state: *ProjectState,
+    state: *lint.Project,
 ) !usize {
-    const visit: IndexVisit = .{ .engine = engine, .index = &state.index };
+    const visit: IndexVisit = .{ .project = state };
 
     return fs.source.walkFiles(io, gpa, root, visit, visitForIndex);
 }
 
 fn visitForIndex(visit: IndexVisit, lang: language.Name, source: []const u8, path: []const u8) anyerror!void {
-    try visit.index.put(try visit.engine.extractFacts(visit.index.allocator, source, lang, path));
+    try visit.project.replace(source, lang, path);
 }
 
 pub fn binaryMtime(io: std.Io) !i64 {
@@ -176,7 +160,13 @@ pub fn handle(
         }
     }
 
-    const diagnostics = engine.lint(arena, source, lang, req.filename) catch
+    const diagnostics = if (ctx.project) |project| lint: {
+        project.configure(engine) catch return reply(ctx, .fail, null, "project configuration failed");
+        const path = req.filename orelse break :lint engine.lint(arena, source, lang, null) catch
+            return reply(ctx, .fail, null, "lint failed");
+        break :lint project.lint(arena, source, lang, path) catch
+            return reply(ctx, .fail, null, "lint failed");
+    } else engine.lint(arena, source, lang, req.filename) catch
         return reply(ctx, .fail, null, "lint failed");
 
     lint.fingerprint.assign(arena, req.filename orelse "", source, diagnostics) catch
@@ -185,7 +175,7 @@ pub fn handle(
     applyRatchet(ctx, engine, ratchet, arena, lang, req.filename, source, diagnostics) catch
         return reply(ctx, .fail, null, "ratchet baseline failed");
 
-    const all = appendProjectDiagnostics(ctx, engine, arena, source, lang, req.filename, diagnostics) catch
+    const all = appendProjectDiagnostics(ctx, arena, req.filename, diagnostics) catch
         return reply(ctx, .fail, null, "project analysis failed");
 
     lint.fingerprint.assign(arena, req.filename orelse "", source, all) catch
@@ -227,26 +217,20 @@ fn applyRatchet(
 
 fn appendProjectDiagnostics(
     ctx: Context,
-    engine: *Engine,
     arena: std.mem.Allocator,
-    source: []const u8,
-    lang: language.Name,
     filename: ?[]const u8,
     diagnostics: []diagnostic.Diagnostic,
 ) ![]diagnostic.Diagnostic {
     const project = ctx.project orelse return diagnostics;
     const path = filename orelse return diagnostics;
 
-    try project.index.put(try engine.extractFacts(project.index.allocator, source, lang, path));
-
-    const fact_rules = try engine.ensureCompiledFact();
-    const violations = try project_rule.evaluate(arena, project.rules, engine.settings, &project.index, path);
-    const fact_violations = try lint.fact_rule.evaluate(arena, fact_rules, engine.settings, &project.index, path);
+    const violations = try project.diagnostics(arena, path);
     var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
     try out.appendSlice(arena, diagnostics);
 
     for (violations) |v| try out.append(arena, v.diagnostic);
-    for (fact_violations) |v| try out.append(arena, v.diagnostic);
+
+    std.mem.sort(diagnostic.Diagnostic, out.items, {}, diagnostic.lessThan);
 
     return out.toOwnedSlice(arena);
 }

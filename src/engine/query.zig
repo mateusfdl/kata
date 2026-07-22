@@ -132,14 +132,26 @@ pub fn stream(
     try walk(pattern, root, bindings, sink);
 }
 
-fn walk(pattern: *const Pattern, n: Node, scratch: []?Node, collector: anytype) Error!void {
+pub fn streamAt(
+    scratch: std.mem.Allocator,
+    pattern: *const Pattern,
+    capture_count: usize,
+    n: Node,
+    sink: anytype,
+) Error!void {
+    const bindings = try scratch.alloc(?Node, capture_count);
+    defer scratch.free(bindings);
+    @memset(bindings, null);
     const emit: Cont = .emit;
-    try matchNode(pattern, n, scratch, &emit, collector);
+    try matchNode(pattern, n, bindings, &emit, sink);
+}
 
-    var i: u32 = 0;
-    while (i < n.childCount()) : (i += 1) {
+fn walk(pattern: *const Pattern, n: Node, scratch: []?Node, collector: anytype) Error!void {
+    var nodes = n.preorder();
+    while (nodes.next()) |candidate| {
+        const emit: Cont = .emit;
+        try matchNode(pattern, candidate, scratch, &emit, collector);
         if (collector.done) return;
-        try walk(pattern, n.child(i).?, scratch, collector);
     }
 }
 
@@ -212,10 +224,13 @@ fn matchFields(
             try matchNode(&field.pattern, child, bindings, &cont, collector);
         },
         .child => {
+            var children = parent.namedChildren();
             var k: u32 = min_child;
-            while (k < parent.namedChildCount()) : (k += 1) {
+            var skipped: u32 = 0;
+            while (skipped < min_child) : (skipped += 1) _ = children.next() orelse return;
+            while (children.next()) |child| : (k += 1) {
                 const cont = fieldsCont(fields, index, parent, k + 1, next);
-                try matchNode(&field.pattern, parent.namedChild(k).?, bindings, &cont, collector);
+                try matchNode(&field.pattern, child, bindings, &cont, collector);
             }
         },
         .children => try matchChildren(&field.pattern, parent, index, fields, min_child, bindings, next, collector),
@@ -246,11 +261,14 @@ fn matchChildren(
     collector: anytype,
 ) Error!void {
     var fired = false;
+    var children = parent.namedChildren();
     var k: u32 = min_child;
-    while (k < parent.namedChildCount()) : (k += 1) {
+    var skipped: u32 = 0;
+    while (skipped < min_child) : (skipped += 1) _ = children.next() orelse return matchFields(fields, index + 1, parent, min_child, bindings, next, collector);
+    while (children.next()) |child| : (k += 1) {
         var cont = fieldsCont(fields, index, parent, k + 1, next);
         cont.fields.fired = &fired;
-        try matchNode(pattern, parent.namedChild(k).?, bindings, &cont, collector);
+        try matchNode(pattern, child, bindings, &cont, collector);
         if (fired) return;
     }
 

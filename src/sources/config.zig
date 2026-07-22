@@ -113,6 +113,7 @@ pub const ParseError = error{
     InvalidEnabledValue,
     InvalidSeverityValue,
     InvalidFixValue,
+    UnsupportedProjectFix,
     DuplicateRule,
 } || std.mem.Allocator.Error;
 
@@ -143,6 +144,7 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.InvalidEnabledValue => "enabled must be 'true' or 'false'",
         error.InvalidSeverityValue => "severity must be 'error' or 'warn'",
         error.InvalidFixValue => "fix must be 'never' or 'unsafe-ok'",
+        error.UnsupportedProjectFix => "project rules do not support fixes",
         error.DuplicateRule => "rule is already configured for this scope",
         else => @errorName(err),
     };
@@ -505,6 +507,7 @@ fn setRuleProperty(pending: *PendingRule, content: []const u8) ParseError!void {
     }
 
     if (std.mem.eql(u8, key, "fix")) {
+        if (pending.scope.project) return error.UnsupportedProjectFix;
         pending.fix = try parseFixValue(value);
         return;
     }

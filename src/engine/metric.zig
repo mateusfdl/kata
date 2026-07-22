@@ -93,7 +93,6 @@ fn analyze(
     var list: std.ArrayList(Span) = .empty;
     errdefer list.deinit(allocator);
     try collectSpans(allocator, compiled, root, &list);
-    std.mem.sort(Span, list.items, {}, spanLessThan);
 
     const spans = try list.toOwnedSlice(allocator);
     errdefer allocator.free(spans);
@@ -221,9 +220,8 @@ pub fn paramsOf(node: Node, fam: family_mod.Family) ?u32 {
 
 pub fn countNonExtraNamed(node: Node) u32 {
     var count: u32 = 0;
-    var i: u32 = 0;
-    while (i < node.namedChildCount()) : (i += 1) {
-        const child = node.namedChild(i) orelse continue;
+    var children = node.namedChildren();
+    while (children.next()) |child| {
         if (child.isExtra()) continue;
         count += 1;
     }
@@ -241,11 +239,8 @@ fn collectSpans(
     root: Node,
     spans: *std.ArrayList(Span),
 ) !void {
-    var stack: std.ArrayList(Node) = .empty;
-    defer stack.deinit(allocator);
-    try stack.append(allocator, root);
-
-    while (stack.pop()) |node| {
+    var nodes = root.preorder();
+    while (nodes.next()) |node| {
         if (classify(compiled.table, node)) |kind| {
             try spans.append(allocator, .{
                 .kind = kind,
@@ -253,19 +248,7 @@ fn collectSpans(
                 .end = node.endByte(),
             });
         }
-
-        var i: u32 = 0;
-        while (i < node.childCount()) : (i += 1) {
-            if (node.child(i)) |child| try stack.append(allocator, child);
-        }
     }
-}
-
-/// start ascending, end descending: an enclosing span always sorts before the
-/// spans it contains.
-fn spanLessThan(_: void, a: Span, b: Span) bool {
-    if (a.start != b.start) return a.start < b.start;
-    return a.end > b.end;
 }
 
 fn containsSpan(outer: Span, inner: Span) bool {
@@ -280,8 +263,6 @@ fn containsSpan(outer: Span, inner: Span) bool {
 /// the same byte, so a chain counts as a single level of indentation. the
 /// construct's own (kind, end) is excluded for the same reason — an `else if`
 /// link sits at the depth of its chain head, not one below it.
-///
-/// TODO: For god sake get rid of it
 fn nestingDepths(
     allocator: std.mem.Allocator,
     spans: []const Span,

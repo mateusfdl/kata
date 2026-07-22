@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const Position = struct {
     line: u32,
     column: u32,
@@ -75,4 +77,17 @@ pub fn hasErrors(diagnostics: []const Diagnostic) bool {
     }
 
     return false;
+}
+
+pub fn lessThan(_: void, a: Diagnostic, b: Diagnostic) bool {
+    if (a.range.start.line != b.range.start.line) return a.range.start.line < b.range.start.line;
+    if (a.range.start.column != b.range.start.column) return a.range.start.column < b.range.start.column;
+    if (a.range.end.line != b.range.end.line) return a.range.end.line > b.range.end.line;
+    if (a.range.end.column != b.range.end.column) return a.range.end.column > b.range.end.column;
+
+    switch (std.mem.order(u8, a.rule_id, b.rule_id)) {
+        .lt => return true,
+        .gt => return false,
+        .eq => return std.mem.order(u8, a.message, b.message) == .lt,
+    }
 }

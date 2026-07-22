@@ -259,3 +259,38 @@ test "query: stream stops enumeration when the sink is done" {
 
     try std.testing.expectEqual(@as(usize, 1), sink.emits);
 }
+
+test "query: streamAt only offers the anchored node" {
+    const src = "a; b;";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 };
+
+    const Counter = struct {
+        emits: usize = 0,
+        done: bool = false,
+
+        pub fn emit(self: *@This(), bindings: []const ?Node) std.mem.Allocator.Error!void {
+            _ = bindings;
+            self.emits += 1;
+        }
+    };
+
+    var root_sink: Counter = .{};
+    try query.streamAt(std.testing.allocator, &pattern, 1, t.root(), &root_sink);
+    try std.testing.expectEqual(@as(usize, 0), root_sink.emits);
+
+    var nodes = t.root().preorder();
+    var identifier: ?Node = null;
+    while (nodes.next()) |candidate| {
+        if (candidate.kindId() == t.sym("identifier")) {
+            identifier = candidate;
+            break;
+        }
+    }
+
+    var identifier_sink: Counter = .{};
+    try query.streamAt(std.testing.allocator, &pattern, 1, identifier.?, &identifier_sink);
+    try std.testing.expectEqual(@as(usize, 1), identifier_sink.emits);
+}

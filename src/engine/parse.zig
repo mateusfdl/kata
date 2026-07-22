@@ -14,6 +14,18 @@ pub const Kinds = struct {
     field_remap: []const u16,
 };
 
+pub const Parsed = struct {
+    allocator: std.mem.Allocator,
+    ast: ast.Ast,
+    has_error: bool,
+    source: []const u8,
+    lang: language.Name,
+
+    pub fn deinit(self: *Parsed) void {
+        self.ast.deinit(self.allocator);
+    }
+};
+
 pub fn buildKinds(
     fam: family_mod.Family,
     grammar: *const ts.Language,
@@ -59,23 +71,27 @@ pub const Frontend = struct {
     }
 
     pub fn tree(self: *Frontend, source: []const u8, lang: language.Name) !ast.Ast {
+        const parsed = try self.parse(source, lang);
+        return parsed.ast;
+    }
+
+    pub fn parse(self: *Frontend, source: []const u8, lang: language.Name) !Parsed {
         const kinds = try self.ensureKinds(lang);
         const parser = try self.ensureParser(lang);
         const parsed = parser.parseString(source, null) orelse return error.ParseFailed;
+        const has_error = parsed.rootNode().hasError();
         const cloned = convert.build(lang.family(), kinds.kind_remap, kinds.field_remap, parsed.rootNode(), source, self.allocator) catch |err| {
             parsed.destroy();
             return err;
         };
         parsed.destroy();
-        return cloned;
-    }
-
-    pub fn hasError(self: *Frontend, source: []const u8, lang: language.Name) !bool {
-        const parser = try self.ensureParser(lang);
-        const parsed = parser.parseString(source, null) orelse return error.ParseFailed;
-        defer parsed.destroy();
-
-        return parsed.rootNode().hasError();
+        return .{
+            .allocator = self.allocator,
+            .ast = cloned,
+            .has_error = has_error,
+            .source = source,
+            .lang = lang,
+        };
     }
 
     fn ensureParser(self: *Frontend, lang: language.Name) !*ts.Parser {

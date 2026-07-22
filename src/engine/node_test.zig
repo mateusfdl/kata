@@ -87,7 +87,7 @@ test "node: comment inside params is extra" {
     try std.testing.expect(saw_extra);
 }
 
-test "node: named symbol vs anonymous token" {
+test "node: named symbol and anonymous token kinds" {
     const src = "x;";
     var t = test_tree.build(std.testing.allocator, .ts, src);
     defer t.deinit(std.testing.allocator);
@@ -97,11 +97,9 @@ test "node: named symbol vs anonymous token" {
 
     const identifier = stmt.child(0).?;
     try std.testing.expectEqualStrings("identifier", identifier.kind());
-    try std.testing.expect(identifier.isNamed());
 
     const semicolon = stmt.child(1).?;
     try std.testing.expectEqualStrings(";", semicolon.kind());
-    try std.testing.expect(!semicolon.isNamed());
 }
 
 test "node: text is null when span exceeds the given source" {
@@ -110,4 +108,38 @@ test "node: text is null when span exceeds the given source" {
     defer t.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(?[]const u8, null), t.root().text("short"));
+}
+
+test "node: preorder visits each subtree node once" {
+    const src = "const x = call(1);";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    var nodes = t.root().preorder();
+    var count: usize = 0;
+    while (nodes.next()) |_| count += 1;
+
+    try std.testing.expectEqual(t.ast.nodes.len, count);
+}
+
+test "node: child iterators visit direct children in source order" {
+    const src = "f(a, b);";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const call = t.root().namedChild(0).?.namedChild(0).?;
+    const args = call.childByFieldName("arguments").?;
+
+    var all = args.children();
+    try std.testing.expectEqualStrings("(", all.next().?.text(src).?);
+    try std.testing.expectEqualStrings("a", all.next().?.text(src).?);
+    try std.testing.expectEqualStrings(",", all.next().?.text(src).?);
+    try std.testing.expectEqualStrings("b", all.next().?.text(src).?);
+    try std.testing.expectEqualStrings(")", all.next().?.text(src).?);
+    try std.testing.expectEqual(@as(?@TypeOf(args), null), all.next());
+
+    var named = args.namedChildren();
+    try std.testing.expectEqualStrings("a", named.next().?.text(src).?);
+    try std.testing.expectEqualStrings("b", named.next().?.text(src).?);
+    try std.testing.expectEqual(@as(?@TypeOf(args), null), named.next());
 }

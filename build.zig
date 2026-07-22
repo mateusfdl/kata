@@ -4,6 +4,7 @@ const manifest = @import("build.zig.zon");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const native_optimize = if (optimize == .ReleaseSafe) .ReleaseFast else optimize;
 
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "version", manifest.version);
@@ -11,7 +12,7 @@ pub fn build(b: *std.Build) void {
 
     const tree_sitter_dep = b.dependency("tree_sitter", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = native_optimize,
     });
     const tree_sitter_module = tree_sitter_dep.module("tree_sitter");
 
@@ -23,14 +24,14 @@ pub fn build(b: *std.Build) void {
 
     const ts_typescript_dep = b.dependency("tree_sitter_typescript", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = native_optimize,
     });
     const typescript_lib = ts_typescript_dep.artifact("ts_typescript");
     const tsx_lib = ts_typescript_dep.artifact("ts_tsx");
 
     const ts_go_dep = b.dependency("tree_sitter_go", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = native_optimize,
     });
     const go_lib = ts_go_dep.artifact("ts_go");
 
@@ -147,6 +148,22 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_exe.addArgs(args);
     const run_step = b.step("run", "Run kata (pass args after --)");
     run_step.dependOn(&run_exe.step);
+
+    const bench_module = b.createModule(.{
+        .root_source_file = b.path("src/bench.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    bench_module.addImport("engine", engine_module);
+    bench_module.addImport("dsl", dsl_module);
+    const bench_exe = b.addExecutable(.{
+        .name = "kata-bench",
+        .root_module = bench_module,
+    });
+    const run_bench = b.addRunArtifact(bench_exe);
+    const bench_step = b.step("bench", "Run engine performance benchmarks");
+    bench_step.dependOn(&run_bench.step);
 }
 
 fn wireEngineModule(

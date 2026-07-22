@@ -1054,11 +1054,8 @@ test "rules: fix defaults to null" {
     try std.testing.expectEqual(@as(?lint.rule.FixMode, null), cfg.settings[0].fix);
 }
 
-test "rules: fix is carried on project scope" {
-    var cfg = try expectParseOk("rules:\n  project:\n    repository-isolation:\n      fix: never\n");
-    defer cfg.deinit();
-    try std.testing.expectEqual(true, cfg.settings[0].project);
-    try std.testing.expectEqual(@as(?lint.rule.FixMode, .never), cfg.settings[0].fix);
+test "rules: fix is rejected on project scope" {
+    try expectParseErr("rules:\n  project:\n    repository-isolation:\n      fix: never\n", error.UnsupportedProjectFix, 4);
 }
 
 test "rules: invalid fix value is rejected" {

@@ -374,8 +374,9 @@ Schema:
   directions.
 - `exclude:` takes a list of glob patterns; the rule skips matching paths on
   top of any `exclude paths` clause in the rule itself.
-- `fix: never | unsafe-ok` controls `--fix` application only (see Autofix);
-  reported fixes are unaffected.
+- `fix: never | unsafe-ok` controls `--fix` application for language rules only
+  (see Autofix); reported fixes are unaffected. Project rules reject `fix` because
+  they do not produce edits.
 - Listing the same rule twice for one scope is an error, including a
   `typescript` entry overlapping a `ts` or `tsx` entry for the same id.
 - Entries matching no available rule are ignored.

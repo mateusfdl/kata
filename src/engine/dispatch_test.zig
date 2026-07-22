@@ -109,7 +109,7 @@ test "Table.build orders a shared slot by rule id" {
         try compiledPattern(a, "a-rule", .{ .symbol = 7 }),
     };
 
-    const table = try dispatch.Table.build(a, &patterns, 10);
+    const table = try dispatch.Table.build(a, std.testing.allocator, &patterns, 10);
 
     try std.testing.expectEqual(@as(usize, 10), table.slots.len);
     try std.testing.expectEqualSlices(u16, &.{ 1, 0 }, table.slots[7]);
@@ -126,7 +126,7 @@ test "Table.build registers a supertype set in every member slot" {
         try compiledPattern(a, "super-rule", .{ .symbols = &.{ 3, 5 } }),
     };
 
-    const table = try dispatch.Table.build(a, &patterns, 6);
+    const table = try dispatch.Table.build(a, std.testing.allocator, &patterns, 6);
 
     try std.testing.expectEqualSlices(u16, &.{0}, table.slots[3]);
     try std.testing.expectEqualSlices(u16, &.{0}, table.slots[5]);
@@ -145,7 +145,7 @@ test "Table.build registers an alternation in each branch slot" {
         } }),
     };
 
-    const table = try dispatch.Table.build(a, &patterns, 12);
+    const table = try dispatch.Table.build(a, std.testing.allocator, &patterns, 12);
 
     try std.testing.expectEqualSlices(u16, &.{0}, table.slots[2]);
     try std.testing.expectEqualSlices(u16, &.{0}, table.slots[9]);
@@ -160,7 +160,7 @@ test "Table.build propagates an underivable pattern" {
         try compiledPattern(a, "broken", .{ .alternation = &.{} }),
     };
 
-    try std.testing.expectError(error.EmptyRootKinds, dispatch.Table.build(a, &patterns, 4));
+    try std.testing.expectError(error.EmptyRootKinds, dispatch.Table.build(a, std.testing.allocator, &patterns, 4));
 }
 
 test "Table.build indexes a dsl compiled rule under its head kind" {
@@ -174,7 +174,7 @@ test "Table.build indexes a dsl compiled rule under its head kind" {
     defer compiled.deinit();
 
     const adapter = family.of(.ts_family);
-    const table = try dispatch.Table.build(a, compiled.patterns, adapter.kind_count);
+    const table = try dispatch.Table.build(a, std.testing.allocator, compiled.patterns, adapter.kind_count);
     const as_expression = adapter.kindId("as_expression", true);
 
     try std.testing.expectEqualSlices(u16, &.{ 0, 1 }, table.slots[as_expression]);
@@ -216,7 +216,7 @@ fn emptyCompileFacts(
     return &.{};
 }
 
-test "engine reports an underivable rule as a compile failure" {
+test "engine reports an underivable rule as a compile failure on every attempt" {
     const gpa = std.testing.allocator;
 
     var rule_set: RuleSet = .{ .allocator = gpa };
@@ -225,7 +225,7 @@ test "engine reports an underivable rule as a compile failure" {
     var engine = Engine.init(gpa, &rule_set, .{
         .compileLang = brokenCompileLang,
         .compileFacts = emptyCompileFacts,
-    });
+    }, &.{});
     defer engine.deinit();
 
     var out: std.Io.Writer.Allocating = .init(gpa);
@@ -233,4 +233,10 @@ test "engine reports an underivable rule as a compile failure" {
 
     try std.testing.expectEqual(false, try engine.prewarmOrReport("kata", &out.writer));
     try std.testing.expectEqualStrings("kata: rule ts/broken: cannot derive root kinds\n", out.written());
+
+    var retry_out: std.Io.Writer.Allocating = .init(gpa);
+    defer retry_out.deinit();
+
+    try std.testing.expectEqual(false, try engine.prewarmOrReport("kata", &retry_out.writer));
+    try std.testing.expectEqualStrings("kata: rule ts/broken: cannot derive root kinds\n", retry_out.written());
 }

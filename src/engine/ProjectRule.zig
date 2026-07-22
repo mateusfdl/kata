@@ -55,47 +55,39 @@ pub fn evaluate(
     var out: std.ArrayList(Violation) = .empty;
     errdefer out.deinit(allocator);
 
-    for (rules) |project| {
-        switch (project.kind) {
-            .restricted_callers => |rc| try evaluateRestrictedCallers(allocator, project.id, rc, index, path_filter, &out),
-            .import_boundary => |ib| try evaluateImportBoundary(allocator, project.id, ib, index, path_filter, &out),
-        }
-    }
-
-    var i: usize = 0;
-    while (i < out.items.len) {
-        if (settingExcludes(settings, out.items[i].diagnostic.rule_id, out.items[i].path)) {
-            _ = out.swapRemove(i);
-        } else {
-            i += 1;
-        }
-    }
-
-    for (out.items) |*v| {
-        if (settingSeverity(settings, v.diagnostic.rule_id)) |severity| v.diagnostic.severity = severity;
-    }
+    try evaluateInto(allocator, rules, settings, index, path_filter, &out);
 
     std.mem.sort(Violation, out.items, {}, violationLessThan);
     return out.toOwnedSlice(allocator);
 }
 
-pub fn settingSeverity(settings: []const rule.RuleSetting, id: []const u8) ?diagnostic.Severity {
-    for (settings) |s| {
-        if (s.matchesProject(id)) return s.severity;
-    }
+pub fn evaluateInto(
+    allocator: std.mem.Allocator,
+    rules: []const ProjectRule,
+    settings: []const rule.RuleSetting,
+    index: *const ProjectIndex,
+    path_filter: ?[]const u8,
+    out: *std.ArrayList(Violation),
+) !void {
+    const start = out.items.len;
 
-    return null;
-}
-
-pub fn settingExcludes(settings: []const rule.RuleSetting, id: []const u8, path: []const u8) bool {
-    for (settings) |s| {
-        if (!s.matchesProject(id)) continue;
-        for (s.exclude) |pattern| {
-            if (glob.match(pattern, path)) return true;
+    for (rules) |project| {
+        switch (project.kind) {
+            .restricted_callers => |rc| try evaluateRestrictedCallers(allocator, project.id, rc, index, path_filter, out),
+            .import_boundary => |ib| try evaluateImportBoundary(allocator, project.id, ib, index, path_filter, out),
         }
     }
 
-    return false;
+    var i: usize = start;
+    while (i < out.items.len) {
+        const policy = rule.resolvePolicy(settings, .project, out.items[i].diagnostic.rule_id, out.items[i].path);
+        if (!policy.enabled or policy.excluded) {
+            _ = out.swapRemove(i);
+        } else {
+            if (policy.severity) |severity| out.items[i].diagnostic.severity = severity;
+            i += 1;
+        }
+    }
 }
 
 fn evaluateRestrictedCallers(
@@ -229,11 +221,5 @@ pub fn violationLessThan(_: void, a: Violation, b: Violation) bool {
         .eq => {},
     }
 
-    if (a.diagnostic.range.start.line != b.diagnostic.range.start.line)
-        return a.diagnostic.range.start.line < b.diagnostic.range.start.line;
-
-    if (a.diagnostic.range.start.column != b.diagnostic.range.start.column)
-        return a.diagnostic.range.start.column < b.diagnostic.range.start.column;
-
-    return std.mem.order(u8, a.diagnostic.rule_id, b.diagnostic.rule_id) == .lt;
+    return diagnostic.lessThan({}, a.diagnostic, b.diagnostic);
 }

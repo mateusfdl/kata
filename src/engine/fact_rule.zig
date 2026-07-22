@@ -138,6 +138,20 @@ pub fn evaluate(
     var out: std.ArrayList(Violation) = .empty;
     errdefer out.deinit(allocator);
 
+    try evaluateInto(allocator, rules, settings, index, path_filter, &out);
+
+    std.mem.sort(Violation, out.items, {}, project_rule.violationLessThan);
+    return out.toOwnedSlice(allocator);
+}
+
+pub fn evaluateInto(
+    allocator: std.mem.Allocator,
+    rules: []const CompiledFactRule,
+    settings: []const rule.RuleSetting,
+    index: *const ProjectIndex,
+    path_filter: ?[]const u8,
+    out: *std.ArrayList(Violation),
+) !void {
     var class_names: std.StringHashMapUnmanaged(void) = .empty;
     defer class_names.deinit(allocator);
     if (needsClassIndex(rules)) try collectClassNames(allocator, index, &class_names);
@@ -145,25 +159,17 @@ pub fn evaluate(
     if (path_filter) |path| {
         if (index.get(path)) |file| {
             const ctx: Context = .{ .allocator = allocator, .file = file, .class_names = &class_names };
-            for (rules) |r| try evaluateFile(&out, allocator, r, settings, ctx);
+            for (rules) |r| try evaluateFile(out, allocator, r, settings, ctx);
         }
     } else {
         for (rules) |r| {
             var files = index.files.valueIterator();
             while (files.next()) |file| {
                 const ctx: Context = .{ .allocator = allocator, .file = file, .class_names = &class_names };
-                try evaluateFile(&out, allocator, r, settings, ctx);
+                try evaluateFile(out, allocator, r, settings, ctx);
             }
         }
     }
-
-    for (out.items) |*v| {
-        if (project_rule.settingSeverity(settings, v.diagnostic.rule_id)) |severity| v.diagnostic.severity = severity;
-    }
-
-    std.mem.sort(Violation, out.items, {}, project_rule.violationLessThan);
-
-    return out.toOwnedSlice(allocator);
 }
 
 fn needsClassIndex(rules: []const CompiledFactRule) bool {
@@ -206,14 +212,17 @@ fn evaluateFile(
         if (glob.match(pattern, ctx.file.path)) return;
     }
 
-    if (project_rule.settingExcludes(settings, r.id, ctx.file.path)) return;
+    const policy = rule.resolvePolicy(settings, .project, r.id, ctx.file.path);
+    if (!policy.enabled or policy.excluded) return;
+    var configured = r;
+    configured.severity = policy.severity orelse r.severity;
 
-    switch (r.fact) {
-        .class => for (ctx.file.classes) |c| try evaluateFact(out, allocator, r, ctx, .{ .class = c }),
-        .method => for (ctx.file.methods) |m| try evaluateFact(out, allocator, r, ctx, .{ .method = m }),
-        .typed_decl => for (ctx.file.typed_decls) |d| try evaluateFact(out, allocator, r, ctx, .{ .typed_decl = d }),
-        .call => for (ctx.file.calls) |c| try evaluateFact(out, allocator, r, ctx, .{ .call = c }),
-        .import => for (ctx.file.imports) |i| try evaluateFact(out, allocator, r, ctx, .{ .import = i }),
+    switch (configured.fact) {
+        .class => for (ctx.file.classes) |c| try evaluateFact(out, allocator, configured, ctx, .{ .class = c }),
+        .method => for (ctx.file.methods) |m| try evaluateFact(out, allocator, configured, ctx, .{ .method = m }),
+        .typed_decl => for (ctx.file.typed_decls) |d| try evaluateFact(out, allocator, configured, ctx, .{ .typed_decl = d }),
+        .call => for (ctx.file.calls) |c| try evaluateFact(out, allocator, configured, ctx, .{ .call = c }),
+        .import => for (ctx.file.imports) |i| try evaluateFact(out, allocator, configured, ctx, .{ .import = i }),
     }
 }
 

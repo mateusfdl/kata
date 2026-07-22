@@ -12,6 +12,35 @@ pub const MetricContext = struct {
     allocator: std.mem.Allocator,
     compiled: *const metric.Compiled,
     fam: family_mod.Family,
+    cache: ?*MetricCache = null,
+};
+
+const MetricKey = struct {
+    node_index: u32,
+    measure: expr.Measure,
+};
+
+pub const MetricCache = struct {
+    entries: [8]Entry = undefined,
+    len: usize = 0,
+
+    const Entry = struct {
+        key: MetricKey,
+        value: u32,
+    };
+
+    fn get(self: MetricCache, key: MetricKey) ?u32 {
+        for (self.entries[0..self.len]) |entry| {
+            if (entry.key.node_index == key.node_index and entry.key.measure == key.measure) return entry.value;
+        }
+        return null;
+    }
+
+    fn put(self: *MetricCache, key: MetricKey, value: u32) void {
+        if (self.len == self.entries.len) return;
+        self.entries[self.len] = .{ .key = key, .value = value };
+        self.len += 1;
+    }
 };
 
 pub const EvalContext = struct {
@@ -44,8 +73,7 @@ const NodeMeasures = struct {
         const node = self.match.get(capture_id) orelse return null;
 
         return switch (m) {
-            .complexity => try metric.complexityOf(self.ctx.allocator, self.ctx.compiled, node),
-            .nesting => try metric.nestingOf(self.ctx.allocator, self.ctx.compiled, node),
+            .complexity, .nesting => try self.expensiveMeasure(m, node),
             .length => metric.lengthOf(node),
             .text => self.numericText(node),
             .params => metric.paramsOf(node, self.ctx.fam),
@@ -53,6 +81,20 @@ const NodeMeasures = struct {
             .position => metric.positionOf(node),
             .siblings => metric.siblingsOf(node),
         };
+    }
+
+    fn expensiveMeasure(self: NodeMeasures, kind: expr.Measure, node: Node) Error!u32 {
+        const key: MetricKey = .{ .node_index = node.index, .measure = kind };
+        if (self.ctx.cache) |cache| {
+            if (cache.get(key)) |cached| return cached;
+        }
+        const value = switch (kind) {
+            .complexity => try metric.complexityOf(self.ctx.allocator, self.ctx.compiled, node),
+            .nesting => try metric.nestingOf(self.ctx.allocator, self.ctx.compiled, node),
+            else => unreachable,
+        };
+        if (self.ctx.cache) |cache| cache.put(key, value);
+        return value;
     }
 
     fn numericText(self: NodeMeasures, node: Node) ?u32 {
@@ -167,7 +209,16 @@ fn evalInside(
     ctx: EvalContext,
     negate: bool,
 ) std.mem.Allocator.Error!bool {
-    return evalEnclosing(pred, match, ctx, .ancestor, negate);
+    const subject = subjectNode(pred.args, match) orelse return false;
+    var current = subject.parent();
+    while (current) |candidate| : (current = candidate.parent()) {
+        var sink: EnclosingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx, .require_strict = true };
+        try query.streamAt(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, candidate, &sink);
+        if (sink.found) return !negate;
+        if (std.mem.indexOfScalar(u16, pred.until_kinds, candidate.kindId()) != null) break;
+    }
+
+    return negate;
 }
 
 fn evalParent(
@@ -176,20 +227,11 @@ fn evalParent(
     ctx: EvalContext,
     negate: bool,
 ) std.mem.Allocator.Error!bool {
-    return evalEnclosing(pred, match, ctx, .direct_parent, negate);
-}
-
-fn evalEnclosing(
-    pred: rule.NestedPredicate,
-    match: query.Match,
-    ctx: EvalContext,
-    relation: EnclosingSink.Relation,
-    negate: bool,
-) std.mem.Allocator.Error!bool {
     const subject = subjectNode(pred.args, match) orelse return false;
+    const parent = subject.parent() orelse return negate;
 
-    var sink: EnclosingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx, .relation = relation, .until_kinds = pred.until_kinds };
-    try query.stream(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, ctx.root, &sink);
+    var sink: EnclosingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx };
+    try query.streamAt(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, parent, &sink);
 
     return sink.found != negate;
 }
@@ -198,46 +240,20 @@ const EnclosingSink = struct {
     matcher: *const rule.NestedMatcher,
     subject: Node,
     ctx: EvalContext,
-    relation: Relation,
-    until_kinds: []const u16 = &.{},
+    require_strict: bool = false,
     found: bool = false,
     done: bool = false,
-
-    const Relation = enum { ancestor, direct_parent };
 
     pub fn emit(self: *EnclosingSink, bindings: []const ?Node) std.mem.Allocator.Error!void {
         const nested_match: query.Match = .{ .nodes = bindings };
         const candidate = nested_match.get(self.matcher.root_capture_id) orelse return;
-        const related = switch (self.relation) {
-            .ancestor => strictlyContains(candidate, self.subject),
-            .direct_parent => isDirectParent(candidate, self.subject),
-        };
-
-        if (!related) return;
-        if (self.relation == .ancestor and crossesBoundary(self.subject, candidate, self.until_kinds)) return;
+        if (self.require_strict and !strictlyContains(candidate, self.subject)) return;
         if (!try evaluate(self.matcher.predicates, nested_match, self.ctx)) return;
 
         self.found = true;
         self.done = true;
     }
 };
-
-fn crossesBoundary(subject: Node, candidate: Node, until_kinds: []const u16) bool {
-    if (until_kinds.len == 0) return false;
-    var current = subject.parent();
-    while (current) |node| : (current = node.parent()) {
-        if (node.eql(candidate)) return false;
-        if (std.mem.indexOfScalar(u16, until_kinds, node.kindId()) != null) return true;
-    }
-
-    return false;
-}
-
-fn isDirectParent(candidate: Node, subject: Node) bool {
-    const p = subject.parent() orelse return false;
-
-    return p.eql(candidate);
-}
 
 fn evalCount(
     pred: rule.CountPredicate,

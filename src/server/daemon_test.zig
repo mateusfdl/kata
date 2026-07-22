@@ -12,6 +12,10 @@ fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
     return test_fixture.Fixture.init(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule);
 }
 
+fn newFixtureWithSettings(gpa: std.mem.Allocator, settings: []const lint.rule.RuleSetting) !*test_fixture.Fixture {
+    return test_fixture.Fixture.initWithSettings(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule, settings);
+}
+
 fn context(f: *test_fixture.Fixture) daemon.Context {
     return .{ .engine = &f.engine, .binary_mtime = daemon_mtime, .io = std.testing.io };
 }
@@ -280,10 +284,10 @@ test "daemon: project rules report violations for the linted file only" {
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    var state = daemon.ProjectState.init(gpa, &repository_isolation);
+    var state = try lint.Project.init(gpa, &f.engine, &repository_isolation);
     defer state.deinit();
-    try state.index.put(try f.engine.extractFacts(gpa, user_repository_src, .ts, "/proj/user-repository.ts"));
-    try state.index.put(try f.engine.extractFacts(gpa, order_service_src, .ts, "/proj/other-service.ts"));
+    try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
+    try state.replace(order_service_src, .ts, "/proj/other-service.ts");
 
     var ctx = context(f);
     ctx.project = &state;
@@ -310,14 +314,13 @@ test "daemon: project violations demoted by warnings leave the report clean" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    var f = try newFixture(gpa);
+    var f = try newFixtureWithSettings(gpa, &.{.{ .lang = null, .id = "repository-isolation", .project = true, .severity = .warn }});
     defer f.deinit();
-    f.engine.settings = &.{.{ .lang = null, .id = "repository-isolation", .project = true, .severity = .warn }};
 
-    var state = daemon.ProjectState.init(gpa, &repository_isolation);
+    var state = try lint.Project.init(gpa, &f.engine, &repository_isolation);
     defer state.deinit();
-    try state.index.put(try f.engine.extractFacts(gpa, user_repository_src, .ts, "/proj/user-repository.ts"));
-    try state.index.put(try f.engine.extractFacts(gpa, order_service_src, .ts, "/proj/other-service.ts"));
+    try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
+    try state.replace(order_service_src, .ts, "/proj/other-service.ts");
 
     var ctx = context(f);
     ctx.project = &state;
@@ -342,9 +345,9 @@ test "daemon: lint requests update the project index incrementally" {
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    var state = daemon.ProjectState.init(gpa, &repository_isolation);
+    var state = try lint.Project.init(gpa, &f.engine, &repository_isolation);
     defer state.deinit();
-    try state.index.put(try f.engine.extractFacts(gpa, user_repository_src, .ts, "/proj/user-repository.ts"));
+    try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
 
     var ctx = context(f);
     ctx.project = &state;
@@ -363,7 +366,6 @@ test "daemon: lint requests update the project index incrementally" {
     });
     try std.testing.expect(second.report.?.clean);
     try std.testing.expectEqual(@as(usize, 0), second.report.?.diagnostics.len);
-    try std.testing.expectEqual(@as(usize, 2), state.index.count());
 }
 
 test "daemon: requests without a filename skip project analysis" {
@@ -373,9 +375,9 @@ test "daemon: requests without a filename skip project analysis" {
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    var state = daemon.ProjectState.init(gpa, &repository_isolation);
+    var state = try lint.Project.init(gpa, &f.engine, &repository_isolation);
     defer state.deinit();
-    try state.index.put(try f.engine.extractFacts(gpa, user_repository_src, .ts, "/proj/user-repository.ts"));
+    try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
 
     var ctx = context(f);
     ctx.project = &state;
@@ -388,7 +390,6 @@ test "daemon: requests without a filename skip project analysis" {
 
     try std.testing.expectEqual(protocol.Status.ok, resp.status);
     try std.testing.expect(resp.report.?.clean);
-    try std.testing.expectEqual(@as(usize, 1), state.index.count());
 }
 
 test "daemon: language is inferred from the filename" {
@@ -855,9 +856,9 @@ test "daemon: project kata rules flag a write" {
     defer f.deinit();
 
     f.engine.compiled_fact = &fact_repository_isolation;
-    var state = daemon.ProjectState.init(gpa, &.{});
+    var state = try lint.Project.init(gpa, &f.engine, &.{});
     defer state.deinit();
-    try state.index.put(try f.engine.extractFacts(gpa, user_repository_src, .ts, "/proj/user-repository.ts"));
+    try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
 
     var ctx = context(f);
     ctx.project = &state;

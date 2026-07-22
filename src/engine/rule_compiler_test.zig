@@ -54,7 +54,7 @@ test "rule_compiler: engine compiles only the linted language, lazily and once" 
     var rule_set: RuleSet = .{ .allocator = gpa };
     defer rule_set.deinit();
 
-    var engine = Engine.init(gpa, &rule_set, fakeCompiler());
+    var engine = Engine.init(gpa, &rule_set, fakeCompiler(), &.{});
     defer engine.deinit();
 
     const first = try engine.lint(gpa, "const x = 1;\n", .ts, null);
@@ -75,7 +75,7 @@ test "rule_compiler: a populated compile diagnostic is reported, not propagated"
     var rule_set: RuleSet = .{ .allocator = gpa };
     defer rule_set.deinit();
 
-    var engine = Engine.init(gpa, &rule_set, fakeCompiler());
+    var engine = Engine.init(gpa, &rule_set, fakeCompiler(), &.{});
     defer engine.deinit();
 
     var out: std.Io.Writer.Allocating = .init(gpa);
@@ -84,6 +84,11 @@ test "rule_compiler: a populated compile diagnostic is reported, not propagated"
     const ready = try engine.prewarmOrReport("kata", &out.writer);
     try std.testing.expect(!ready);
     try std.testing.expectEqualStrings("kata: rule ts/boom-rule: boom\n", out.written());
+
+    var retry_out: std.Io.Writer.Allocating = .init(gpa);
+    defer retry_out.deinit();
+    try std.testing.expectEqual(false, try engine.prewarmOrReport("kata", &retry_out.writer));
+    try std.testing.expectEqual(@as(u32, 1), fake_seen.get(.ts));
 }
 
 test "rule_compiler: an empty compile diagnostic propagates the underlying error" {
@@ -94,11 +99,15 @@ test "rule_compiler: an empty compile diagnostic propagates the underlying error
     var rule_set: RuleSet = .{ .allocator = gpa };
     defer rule_set.deinit();
 
-    var engine = Engine.init(gpa, &rule_set, fakeCompiler());
+    var engine = Engine.init(gpa, &rule_set, fakeCompiler(), &.{});
     defer engine.deinit();
 
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
 
     try std.testing.expectError(error.OutOfMemory, engine.prewarmOrReport("kata", &out.writer));
+
+    fake_mode = .none;
+    try std.testing.expectEqual(true, try engine.prewarmOrReport("kata", &out.writer));
+    try std.testing.expectEqual(@as(u32, 2), fake_seen.get(.ts));
 }
