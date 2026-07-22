@@ -324,7 +324,7 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
 
     if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
 
-    const socket_path = resolveSocketPath(c.arena, c.environ) catch |err|
+    const socket_path = resolveSocketPath(c) catch |err|
         return internalError(c.stderr, "resolve socket path", err);
 
     const binary_mtime = daemon.binaryMtime(c.io) catch |err|
@@ -433,7 +433,7 @@ fn runRuleTest(c: Command, dir: []const u8) !u8 {
 }
 
 fn runStop(c: Command) !u8 {
-    const socket_path = resolveSocketPath(c.arena, c.environ) catch |err|
+    const socket_path = resolveSocketPath(c) catch |err|
         return internalError(c.stderr, "resolve socket path", err);
 
     const address = std.Io.net.UnixAddress.init(socket_path) catch |err|
@@ -453,14 +453,16 @@ fn runStop(c: Command) !u8 {
 }
 
 fn resolveSocketPath(
-    arena: std.mem.Allocator,
-    environ: *std.process.Environ.Map,
+    c: Command,
 ) ![]const u8 {
-    if (environ.get(args_mod.env_socket)) |path| return path;
-    if (environ.get(args_mod.env_runtime_dir)) |dir|
-        return std.fmt.allocPrint(arena, "{s}/kata.sock", .{dir});
+    const binary_mtime = try daemon.binaryMtime(c.io);
 
-    return args_mod.fallback_socket_path;
+    return args_mod.socketPath(
+        c.arena,
+        c.environ.get(args_mod.env_socket),
+        c.environ.get(args_mod.env_runtime_dir),
+        binary_mtime,
+    );
 }
 
 pub fn run(

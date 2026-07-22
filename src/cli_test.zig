@@ -2,6 +2,8 @@ const std = @import("std");
 const cli = @import("cli.zig");
 const reports = @import("reports.zig");
 const test_fixture = @import("test_fixture.zig");
+const args_mod = @import("cli/args.zig");
+const build_options = @import("build_options");
 const check = @import("cli/check.zig");
 
 const diagnostic = @import("engine").diagnostic;
@@ -370,4 +372,43 @@ test "parseSubcommand: 'check --fix-unsafe' selects unsafe fix application" {
 test "parseSubcommand: check without fix flags applies nothing" {
     const sub = cli.parseSubcommand(&.{ "check", "src/" });
     try std.testing.expectEqual(check.FixLevel.off, sub.check.fix);
+}
+
+test "socketPath: KATA_SOCKET override wins verbatim" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const path = try args_mod.socketPath(arena.allocator(), "/custom/kata.sock", "/run/user/1000", 42);
+
+    try std.testing.expectEqualStrings("/custom/kata.sock", path);
+}
+
+test "socketPath: runtime dir yields a version and mtime stamped name" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const path = try args_mod.socketPath(arena.allocator(), null, "/run/user/1000", 42);
+    const expected = try std.fmt.allocPrint(arena.allocator(), "/run/user/1000/kata-{s}-42.sock", .{build_options.version});
+
+    try std.testing.expectEqualStrings(expected, path);
+}
+
+test "socketPath: falls back to /tmp with the same stamped name" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const path = try args_mod.socketPath(arena.allocator(), null, null, 42);
+    const expected = try std.fmt.allocPrint(arena.allocator(), "/tmp/kata-{s}-42.sock", .{build_options.version});
+
+    try std.testing.expectEqualStrings(expected, path);
+}
+
+test "socketPath: different binary mtimes yield different paths" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const first = try args_mod.socketPath(arena.allocator(), null, null, 1);
+    const second = try args_mod.socketPath(arena.allocator(), null, null, 2);
+
+    try std.testing.expect(!std.mem.eql(u8, first, second));
 }

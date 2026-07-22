@@ -1,9 +1,25 @@
 const std = @import("std");
 
+const build_options = @import("build_options");
+
 pub const env_baseline = "KATA_BASELINE";
 pub const env_socket = "KATA_SOCKET";
 pub const env_runtime_dir = "XDG_RUNTIME_DIR";
-pub const fallback_socket_path = "/tmp/kata.sock";
+
+pub fn socketPath(
+    arena: std.mem.Allocator,
+    override: ?[]const u8,
+    runtime_dir: ?[]const u8,
+    binary_mtime: i64,
+) ![]const u8 {
+    if (override) |path| return path;
+
+    return std.fmt.allocPrint(arena, "{s}/kata-{s}-{d}.sock", .{
+        runtime_dir orelse "/tmp",
+        build_options.version,
+        binary_mtime,
+    });
+}
 
 const flag_prefix = "--";
 

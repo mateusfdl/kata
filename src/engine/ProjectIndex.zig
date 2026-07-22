@@ -41,5 +41,4 @@ pub const ProjectIndex = struct {
     pub fn get(self: *const ProjectIndex, path: []const u8) ?*const facts.FileFacts {
         return self.files.getPtr(path);
     }
-
 };
