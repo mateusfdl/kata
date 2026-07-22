@@ -8,7 +8,6 @@ test "protocol: request round-trips with all fields" {
     const gpa = std.testing.allocator;
 
     const req: protocol.Request = .{
-        .binary_mtime = 1726000000123,
         .language = "ts",
         .filename = "/tmp/foo.ts",
         .source = "const x = 1;\nconst y = 2;\n",
@@ -21,7 +20,6 @@ test "protocol: request round-trips with all fields" {
     const parsed = try protocol.decode(protocol.Request, gpa, &reader);
     defer parsed.deinit();
 
-    try std.testing.expectEqual(@as(i64, 1726000000123), parsed.value.binary_mtime);
     try std.testing.expectEqual(false, parsed.value.shutdown);
     try std.testing.expectEqualStrings("ts", parsed.value.language.?);
     try std.testing.expectEqualStrings("/tmp/foo.ts", parsed.value.filename.?);
@@ -31,7 +29,7 @@ test "protocol: request round-trips with all fields" {
 test "protocol: request round-trips with null optionals" {
     const gpa = std.testing.allocator;
 
-    const req: protocol.Request = .{ .binary_mtime = 0 };
+    const req: protocol.Request = .{};
 
     const bytes = try test_frame.frame(gpa, req);
     defer gpa.free(bytes);
@@ -40,7 +38,6 @@ test "protocol: request round-trips with null optionals" {
     const parsed = try protocol.decode(protocol.Request, gpa, &reader);
     defer parsed.deinit();
 
-    try std.testing.expectEqual(@as(i64, 0), parsed.value.binary_mtime);
     try std.testing.expectEqual(false, parsed.value.shutdown);
     try std.testing.expectEqual(@as(?[]const u8, null), parsed.value.language);
     try std.testing.expectEqual(@as(?[]const u8, null), parsed.value.filename);
@@ -91,7 +88,6 @@ test "protocol: response round-trips with a populated report" {
 
     const resp: protocol.Response = .{
         .status = .ok,
-        .binary_mtime = 42,
         .report = .{
             .language = "ts",
             .diagnostics = &diagnostics,
@@ -107,7 +103,6 @@ test "protocol: response round-trips with a populated report" {
     defer parsed.deinit();
 
     try std.testing.expectEqual(protocol.Status.ok, parsed.value.status);
-    try std.testing.expectEqual(@as(i64, 42), parsed.value.binary_mtime);
     try std.testing.expectEqual(@as(?[]const u8, null), parsed.value.message);
 
     const report = parsed.value.report.?;

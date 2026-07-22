@@ -11,7 +11,6 @@ const Engine = lint.Engine;
 
 pub const Context = struct {
     engine: *Engine,
-    binary_mtime: i64,
     io: std.Io,
     project: ?*lint.Project = null,
     ratchet: bool = false,
@@ -103,7 +102,7 @@ fn shutdownLiveSocket(gpa: std.mem.Allocator, path: []const u8) bool {
 
     var frame: std.Io.Writer.Allocating = .init(gpa);
     defer frame.deinit();
-    protocol.encode(gpa, &frame.writer, protocol.Request{ .binary_mtime = 0, .shutdown = true }) catch return true;
+    protocol.encode(gpa, &frame.writer, protocol.Request{ .shutdown = true }) catch return true;
     _ = linux.write(fd, frame.written().ptr, frame.written().len);
 
     return true;
@@ -175,12 +174,12 @@ pub fn processConnection(
     const a = arena.allocator();
 
     const parsed = protocol.decode(protocol.Request, a, reader) catch {
-        sendBestEffort(a, writer, reply(ctx, .fail, null, "malformed request"));
+        sendBestEffort(a, writer, reply(.fail, null, "malformed request"));
         return false;
     };
 
     if (parsed.value.shutdown) {
-        sendBestEffort(a, writer, reply(ctx, .ok, null, "shutting down"));
+        sendBestEffort(a, writer, reply(.ok, null, "shutting down"));
 
         return true;
     }
@@ -199,23 +198,20 @@ pub fn handle(
     arena: std.mem.Allocator,
     req: protocol.Request,
 ) protocol.Response {
-    if (req.binary_mtime != 0 and req.binary_mtime != ctx.binary_mtime)
-        return reply(ctx, .stale, null, "daemon is running a stale binary");
-
     const lang = switch (language.resolve(req.language orelse "", req.filename orelse "")) {
         .ok => |n| n,
-        .missing => return reply(ctx, .fail, null, "missing language or filename"),
-        .unknown_extension, .unsupported_language => return reply(ctx, .fail, null, "unsupported language"),
+        .missing => return reply(.fail, null, "missing language or filename"),
+        .unknown_extension, .unsupported_language => return reply(.fail, null, "unsupported language"),
     };
 
     const source = req.source orelse
-        return reply(ctx, .fail, null, "missing source");
+        return reply(.fail, null, "missing source");
 
     if (req.filename) |filename| {
         const is_fixture = fs.rules.isFixturePath(ctx.io, filename) catch
-            return reply(ctx, .fail, null, "fixture check failed");
+            return reply(.fail, null, "fixture check failed");
         if (is_fixture)
-            return reply(ctx, .ok, .{
+            return reply(.ok, .{
                 .language = lang.toString(),
                 .diagnostics = &.{},
                 .clean = true,
@@ -227,7 +223,7 @@ pub fn handle(
 
     if (ctx.cache) |cache| {
         const per_project = cache.acquire(arena, req.filename) catch
-            return reply(ctx, .fail, null, "project context failed");
+            return reply(.fail, null, "project context failed");
 
         if (per_project) |p| {
             engine = &p.engine;
@@ -236,27 +232,27 @@ pub fn handle(
     }
 
     const diagnostics = if (ctx.project) |project| lint: {
-        project.configure(engine) catch return reply(ctx, .fail, null, "project configuration failed");
+        project.configure(engine) catch return reply(.fail, null, "project configuration failed");
         const path = req.filename orelse break :lint engine.lint(arena, source, lang, null) catch
-            return reply(ctx, .fail, null, "lint failed");
+            return reply(.fail, null, "lint failed");
         break :lint project.lint(arena, source, lang, path) catch
-            return reply(ctx, .fail, null, "lint failed");
+            return reply(.fail, null, "lint failed");
     } else engine.lint(arena, source, lang, req.filename) catch
-        return reply(ctx, .fail, null, "lint failed");
+        return reply(.fail, null, "lint failed");
 
     lint.fingerprint.assign(arena, req.filename orelse "", source, diagnostics) catch
-        return reply(ctx, .fail, null, "fingerprint failed");
+        return reply(.fail, null, "fingerprint failed");
 
     applyRatchet(ctx, engine, ratchet, arena, lang, req.filename, source, diagnostics) catch
-        return reply(ctx, .fail, null, "ratchet baseline failed");
+        return reply(.fail, null, "ratchet baseline failed");
 
     const all = appendProjectDiagnostics(ctx, arena, req.filename, diagnostics) catch
-        return reply(ctx, .fail, null, "project analysis failed");
+        return reply(.fail, null, "project analysis failed");
 
     lint.fingerprint.assign(arena, req.filename orelse "", source, all) catch
-        return reply(ctx, .fail, null, "fingerprint failed");
+        return reply(.fail, null, "fingerprint failed");
 
-    return reply(ctx, .ok, .{
+    return reply(.ok, .{
         .language = lang.toString(),
         .diagnostics = all,
         .clean = !diagnostic.hasErrors(all),
@@ -311,14 +307,12 @@ fn appendProjectDiagnostics(
 }
 
 fn reply(
-    ctx: Context,
     status: protocol.Status,
     report: ?diagnostic.Report,
     message: ?[]const u8,
 ) protocol.Response {
     return .{
         .status = status,
-        .binary_mtime = ctx.binary_mtime,
         .report = report,
         .message = message,
     };

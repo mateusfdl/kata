@@ -6,8 +6,6 @@ const protocol = @import("protocol.zig");
 const test_fixture = @import("../test_fixture.zig");
 const test_frame = @import("../test_frame.zig");
 
-const daemon_mtime: i64 = 1726000000000;
-
 fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
     return test_fixture.Fixture.init(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule);
 }
@@ -17,7 +15,7 @@ fn newFixtureWithSettings(gpa: std.mem.Allocator, settings: []const lint.rule.Ru
 }
 
 fn context(f: *test_fixture.Fixture) daemon.Context {
-    return .{ .engine = &f.engine, .binary_mtime = daemon_mtime, .io = std.testing.io };
+    return .{ .engine = &f.engine, .io = std.testing.io };
 }
 
 test "daemon: clean source replies ok with an empty report" {
@@ -28,13 +26,11 @@ test "daemon: clean source replies ok with an empty report" {
     defer f.deinit();
 
     const resp = daemon.handle(context(f), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .language = "ts",
         .source = "const x: string = \"ok\";",
     });
 
     try std.testing.expectEqual(protocol.Status.ok, resp.status);
-    try std.testing.expectEqual(@as(i64, daemon_mtime), resp.binary_mtime);
     try std.testing.expectEqual(@as(?[]const u8, null), resp.message);
     const report = resp.report.?;
     try std.testing.expectEqualStrings("ts", report.language);
@@ -50,7 +46,6 @@ test "daemon: violation replies ok with a populated report" {
     defer f.deinit();
 
     const resp = daemon.handle(context(f), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .language = "ts",
         .source = "const x = (foo[0] as any).bar;",
     });
@@ -72,42 +67,6 @@ test "daemon: violation replies ok with a populated report" {
     try std.testing.expectEqualStrings("f8442f8df97b699227020f1ca99a3d34007e51a6f4a3934089158471a8f2963b", d.fingerprint);
 }
 
-test "daemon: a mismatched binary mtime replies stale without linting" {
-    const gpa = std.testing.allocator;
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-    var f = try newFixture(gpa);
-    defer f.deinit();
-
-    const resp = daemon.handle(context(f), arena.allocator(), .{
-        .binary_mtime = daemon_mtime + 1,
-        .language = "ts",
-        .source = "const x = foo as any;",
-    });
-
-    try std.testing.expectEqual(protocol.Status.stale, resp.status);
-    try std.testing.expectEqual(@as(i64, daemon_mtime), resp.binary_mtime);
-    try std.testing.expect(resp.report == null);
-    try std.testing.expectEqualStrings("daemon is running a stale binary", resp.message.?);
-}
-
-test "daemon: a zero binary mtime skips the stale check" {
-    const gpa = std.testing.allocator;
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-    var f = try newFixture(gpa);
-    defer f.deinit();
-
-    const resp = daemon.handle(context(f), arena.allocator(), .{
-        .binary_mtime = 0,
-        .language = "ts",
-        .source = "const x = foo as any;",
-    });
-
-    try std.testing.expectEqual(protocol.Status.ok, resp.status);
-    try std.testing.expectEqual(@as(usize, 1), resp.report.?.diagnostics.len);
-}
-
 test "daemon: a missing source replies fail" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -116,7 +75,6 @@ test "daemon: a missing source replies fail" {
     defer f.deinit();
 
     const resp = daemon.handle(context(f), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .language = "ts",
     });
 
@@ -132,7 +90,6 @@ test "daemon: an unsupported language replies fail" {
     defer f.deinit();
 
     const resp = daemon.handle(context(f), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .language = "python",
         .source = "print('hi')",
     });
@@ -147,7 +104,6 @@ test "daemon: processConnection frames a lint response and keeps serving" {
     defer f.deinit();
 
     const request_bytes = try test_frame.frame(gpa, protocol.Request{
-        .binary_mtime = daemon_mtime,
         .language = "ts",
         .source = "const x = (foo[0] as any).bar;",
     });
@@ -165,7 +121,6 @@ test "daemon: processConnection frames a lint response and keeps serving" {
     defer parsed.deinit();
 
     try std.testing.expectEqual(protocol.Status.ok, parsed.value.status);
-    try std.testing.expectEqual(@as(i64, daemon_mtime), parsed.value.binary_mtime);
     const report = parsed.value.report.?;
     try std.testing.expectEqualStrings("ts", report.language);
     try std.testing.expect(!report.clean);
@@ -179,7 +134,6 @@ test "daemon: processConnection stops on a shutdown request" {
     defer f.deinit();
 
     const request_bytes = try test_frame.frame(gpa, protocol.Request{
-        .binary_mtime = daemon_mtime,
         .shutdown = true,
     });
     defer gpa.free(request_bytes);
@@ -238,7 +192,6 @@ test "daemon: rule fixtures are skipped" {
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/ts+tsx/tests/no-as-any.ts", .{dir});
 
     const resp = daemon.handle(context(f), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = filename,
         .source = "const x = (foo[0] as any).bar;",
     });
@@ -293,7 +246,6 @@ test "daemon: project rules report violations for the linted file only" {
     ctx.project = &state;
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = "/proj/order-service.ts",
         .source = order_service_src,
     });
@@ -326,7 +278,6 @@ test "daemon: project violations demoted by warnings leave the report clean" {
     ctx.project = &state;
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = "/proj/order-service.ts",
         .source = order_service_src,
     });
@@ -353,14 +304,12 @@ test "daemon: lint requests update the project index incrementally" {
     ctx.project = &state;
 
     const first = daemon.handle(ctx, arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = "/proj/order-service.ts",
         .source = order_service_src,
     });
     try std.testing.expectEqual(@as(usize, 1), first.report.?.diagnostics.len);
 
     const second = daemon.handle(ctx, arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = "/proj/order-service.ts",
         .source = fixed_order_service_src,
     });
@@ -383,7 +332,6 @@ test "daemon: requests without a filename skip project analysis" {
     ctx.project = &state;
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .language = "ts",
         .source = order_service_src,
     });
@@ -400,7 +348,6 @@ test "daemon: language is inferred from the filename" {
     defer f.deinit();
 
     const resp = daemon.handle(context(f), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = "/tmp/component.tsx",
         .source = "const C = () => <div>{(props as any).label}</div>;",
     });
@@ -430,7 +377,6 @@ test "daemon: warn-only diagnostics keep the report clean" {
     defer f.deinit();
 
     const resp = daemon.handle(context(f), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .language = "ts",
         .source = "const x = (foo[0] as any).bar;",
     });
@@ -448,7 +394,7 @@ const ratchet_proposed_replacement = "const b = y as any;\n";
 const ratchet_proposed_growth = "const a = x as any;\nconst b = y as any;\n";
 
 fn ratchetContext(f: *test_fixture.Fixture, io: std.Io) daemon.Context {
-    return .{ .engine = &f.engine, .binary_mtime = daemon_mtime, .io = io, .ratchet = true };
+    return .{ .engine = &f.engine, .io = io, .ratchet = true };
 }
 
 test "daemon: ratchet demotes an unchanged violation to warn" {
@@ -468,7 +414,6 @@ test "daemon: ratchet demotes an unchanged violation to warn" {
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
 
     const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = filename,
         .source = ratchet_proposed_moved,
     });
@@ -498,7 +443,6 @@ test "daemon: ratchet keeps a replacement violation as error" {
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
 
     const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = filename,
         .source = ratchet_proposed_replacement,
     });
@@ -528,7 +472,6 @@ test "daemon: ratchet keeps violation growth as error" {
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
 
     const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = filename,
         .source = ratchet_proposed_growth,
     });
@@ -559,7 +502,6 @@ test "daemon: ratchet treats a missing file as zero baseline" {
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/new.ts", .{dir});
 
     const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = filename,
         .source = ratchet_disk_one_violation,
     });
@@ -588,7 +530,6 @@ test "daemon: ratchet baseline follows the current disk state" {
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
 
     const first = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = filename,
         .source = ratchet_proposed_moved,
     });
@@ -597,7 +538,6 @@ test "daemon: ratchet baseline follows the current disk state" {
     try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const clean: string = \"ok\";\n" });
 
     const second = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = filename,
         .source = ratchet_proposed_moved,
     });
@@ -639,7 +579,6 @@ test "daemon: ratchet compares error counts so warn diagnostics never mask error
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
 
     const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = filename,
         .source = "const a = x as any;\nconst c = z as any;\n",
     });
@@ -665,7 +604,6 @@ test "daemon: ratchet without filename leaves severity untouched" {
     ctx.ratchet = true;
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .language = "ts",
         .source = ratchet_disk_one_violation,
     });
@@ -727,7 +665,6 @@ test "daemon: file outside any project falls back to the daemon engine" {
     ctx.cache = &h.cache;
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = "/kata-daemon-test-absent/main.ts",
         .source = "const x = (foo[0] as any).bar;",
     });
@@ -758,7 +695,6 @@ test "daemon: project ratchet demotes unchanged violations while the daemon defa
     ctx.cache = &h.cache;
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = try h.path("proj/a.ts"),
         .source = "const zzz = 2;\n",
     });
@@ -788,7 +724,6 @@ test "daemon: broken project rules yaml fails the request" {
     ctx.cache = &h.cache;
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = try h.path("proj/a.ts"),
         .source = "const ok = 1;",
     });
@@ -825,7 +760,6 @@ test "daemon: cached project context lints with kata project rules" {
     ctx.cache = &h.cache;
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = try h.path("proj/main.ts"),
         .source = "const zzz = 1;",
     });
@@ -864,7 +798,6 @@ test "daemon: project kata rules flag a write" {
     ctx.project = &state;
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
-        .binary_mtime = daemon_mtime,
         .filename = "/proj/order-service.ts",
         .source = order_service_src,
     });

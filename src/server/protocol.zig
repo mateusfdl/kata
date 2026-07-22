@@ -6,10 +6,9 @@ pub const max_frame_bytes: usize = 16 * 1024 * 1024;
 
 const content_length_prefix = "Content-Length:";
 
-pub const Status = enum { ok, stale, fail };
+pub const Status = enum { ok, fail };
 
 pub const Request = struct {
-    binary_mtime: i64,
     shutdown: bool = false,
     language: ?[]const u8 = null,
     filename: ?[]const u8 = null,
@@ -18,7 +17,6 @@ pub const Request = struct {
 
 pub const Response = struct {
     status: Status,
-    binary_mtime: i64,
     report: ?diagnostic.Report = null,
     message: ?[]const u8 = null,
 };

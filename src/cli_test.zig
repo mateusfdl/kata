@@ -412,3 +412,8 @@ test "socketPath: different binary mtimes yield different paths" {
 
     try std.testing.expect(!std.mem.eql(u8, first, second));
 }
+
+test "parseSubcommand: '--version' selects the version command" {
+    const sub = cli.parseSubcommand(&.{"--version"});
+    try std.testing.expectEqual(cli.Subcommand.version, sub);
+}

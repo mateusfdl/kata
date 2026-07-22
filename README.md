@@ -23,6 +23,7 @@ make test             # unit tests
 | Command | Behavior |
 | --- | --- |
 | `kata` | Start the daemon (foreground). Socket path from `KATA_SOCKET` (see Daemon). |
+| `kata --version` | Print the binary version. |
 | `kata check <path>` | Lint a file or, recursively, a directory. `kata check .` for the whole tree. |
 | `kata check --text\|--json\|--sarif <path>` | Select the report format (see Reports). |
 | `kata check --baseline <git-ref> <path>` | Demote errors already present at the ref to warnings (see Baseline). |
@@ -313,9 +314,16 @@ document sync.
 
 Socket path resolution (server and clients agree on this order):
 
-1. `KATA_SOCKET`
-2. `$XDG_RUNTIME_DIR/kata.sock`
-3. `/tmp/kata.sock`
+1. `KATA_SOCKET` (explicit override, no version stamp, the user owns compatibility)
+2. `$XDG_RUNTIME_DIR/kata-<version>-<binary mtime ms>.sock`
+3. `/tmp/kata-<version>-<binary mtime ms>.sock`
+
+The version and mtime stamp make staleness structurally impossible: a rebuilt
+binary computes a path no old daemon listens on, so cross-version requests
+cannot happen. On startup the daemon sweeps its socket directory: every other
+`kata-*.sock` (and the legacy `kata.sock`) is probed, live daemons receive a
+`shutdown` request, dead socket files are unlinked. At most one daemon per
+build survives.
 
 Protocol: one `Content-Length: <n>\r\n\r\n<json>` framed request and response
 per connection.
@@ -323,24 +331,21 @@ per connection.
 Request:
 
 ```
-{ "binary_mtime": <ms>, "shutdown": false,
+{ "shutdown": false,
   "language": "ts"|null, "filename": <path>|null, "source": <text>|null }
 ```
 
 Response:
 
 ```
-{ "status": "ok"|"stale"|"fail", "binary_mtime": <ms>,
+{ "status": "ok"|"fail",
   "report": { "language", "diagnostics", "clean" }|null, "message": <text>|null }
 ```
 
-`binary_mtime` is the modification time in milliseconds of the kata executable.
-A client sends the mtime it expects; if it differs from the running daemon's own
-executable, the daemon replies `stale` without linting so the client can restart
-it after a rebuild. Sending `0` skips the check.
-
-The opencode hook at `harness/opencode/hooks/kata.ts` connects to the socket,
-autostarts the daemon if absent, and restarts it on a `stale` reply.
+Hook clients resolve the same stamped path (version from `kata --version`,
+mtime from the executable), autostart the daemon if the socket is absent, and
+fall back to one-shot mode when neither is possible. No staleness handling is
+needed: after a rebuild the old socket simply no longer matches.
 
 ## Configuration
 

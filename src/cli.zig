@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const build_options = @import("build_options");
+
 const fs = @import("fs.zig");
 const lint = @import("engine");
 const reports = @import("reports.zig");
@@ -52,6 +54,7 @@ pub const CheckOptions = struct {
 };
 
 pub const Subcommand = union(enum) {
+    version,
     daemon: ?[]const u8,
     check: CheckOptions,
     facts: []const u8,
@@ -69,6 +72,7 @@ pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
     if (args.len == 0) return .{ .daemon = null };
 
     const cmd = args[0];
+    if (std.mem.eql(u8, cmd, "--version")) return .version;
     if (args_mod.isFlag(cmd)) return .one_shot;
 
     return switch (args_mod.CommandName.parse(cmd) orelse return .{ .unknown = cmd }) {
@@ -226,6 +230,13 @@ pub fn main(init: std.process.Init) u8 {
     }, subcommand) catch |err| die(stderr, "kata", err);
 }
 
+fn runVersion(c: Command) !u8 {
+    try c.stdout.print("{s}\n", .{build_options.version});
+    try c.stdout.flush();
+
+    return exit_clean;
+}
+
 fn rootFlag(args: []const [:0]const u8) ?[]const u8 {
     var i: usize = 0;
 
@@ -242,6 +253,7 @@ fn rootFlag(args: []const [:0]const u8) ?[]const u8 {
 
 fn dispatchSubcommand(c: Command, subcommand: Subcommand) !u8 {
     return switch (subcommand) {
+        .version => runVersion(c),
         .daemon => |root| runDaemon(c, root),
         .check => |opts| runCheck(c, opts),
         .facts => |target| runFacts(c, target),
@@ -327,9 +339,6 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
     const socket_path = resolveSocketPath(c) catch |err|
         return internalError(c.stderr, "resolve socket path", err);
 
-    const binary_mtime = daemon.binaryMtime(c.io) catch |err|
-        return internalError(c.stderr, "stat executable", err);
-
     var project_state: ?lint.Project = null;
     defer if (project_state) |*p| p.deinit();
 
@@ -348,7 +357,6 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
 
     daemon.serve(c.gpa, .{
         .engine = &ctx.engine,
-        .binary_mtime = binary_mtime,
         .io = c.io,
         .project = if (project_state) |*p| p else null,
         .ratchet = ctx.resolved.ratchet,
@@ -444,7 +452,7 @@ fn runStop(c: Command) !u8 {
 
     var write_buf: [512]u8 = undefined;
     var writer = stream.writer(c.io, &write_buf);
-    try protocol.encode(c.arena, &writer.interface, protocol.Request{ .binary_mtime = 0, .shutdown = true });
+    try protocol.encode(c.arena, &writer.interface, protocol.Request{ .shutdown = true });
 
     try c.stdout.writeAll("kata daemon stopped\n");
     try c.stdout.flush();
