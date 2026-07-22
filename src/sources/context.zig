@@ -7,6 +7,7 @@ const dsl = @import("dsl");
 const lifecycle = @import("lifecycle.zig");
 const loader = @import("loader.zig");
 const retired = @import("retired.zig");
+const server_replay = @import("../server/replay.zig");
 
 const Engine = lint.Engine;
 const language = lint.language;
@@ -22,8 +23,10 @@ pub const Context = struct {
     rule_set: loader.RuleSet,
     lifecycle: lifecycle.Table,
     engine: Engine,
+    replay: server_replay.ReplayCache,
 
     pub fn deinit(self: *Context) void {
+        self.replay.deinit();
         self.engine.deinit();
         self.rule_set.deinit();
 
@@ -134,6 +137,7 @@ pub const Resolver = struct {
             .rule_set = rule_set,
             .lifecycle = table,
             .engine = undefined,
+            .replay = server_replay.ReplayCache.init(self.gpa, server_replay.default_capacity),
         };
 
         ctx.engine = Engine.init(self.gpa, &ctx.rule_set, dsl.engine_compiler.ruleCompiler(), resolved.settings);

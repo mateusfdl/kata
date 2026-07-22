@@ -2,6 +2,8 @@ const std = @import("std");
 
 const diagnostic = @import("engine").diagnostic;
 
+pub const default_capacity: usize = 2048;
+
 pub const ReplayCache = struct {
     gpa: std.mem.Allocator,
     capacity: usize,

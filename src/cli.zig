@@ -361,6 +361,7 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
         .project = if (project_state) |*p| p else null,
         .ratchet = ctx.resolved.ratchet,
         .cache = &cache,
+        .replay = &ctx.replay,
     }, socket_path) catch |err| switch (err) {
         error.AlreadyRunning => return printAndExit(c.stderr, "kata daemon already running\n", exit_clean),
         else => return internalError(c.stderr, "serve", err),

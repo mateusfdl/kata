@@ -3,6 +3,7 @@ const std = @import("std");
 const lint = @import("engine");
 const daemon = @import("daemon.zig");
 const protocol = @import("protocol.zig");
+const replay = @import("replay.zig");
 const test_fixture = @import("../test_fixture.zig");
 const test_frame = @import("../test_frame.zig");
 
@@ -839,4 +840,135 @@ test "daemon: sweep unlinks dead kata sockets and spares everything else" {
     _ = try tmp.dir.statFile(io, "kata-current.sock", .{});
     _ = try tmp.dir.statFile(io, "other.sock", .{});
     _ = try tmp.dir.statFile(io, "kata-notes.txt", .{});
+}
+
+fn encodeResponse(arena: std.mem.Allocator, resp: protocol.Response) ![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    try protocol.encode(arena, &out.writer, resp);
+    return try arena.dupe(u8, out.written());
+}
+
+test "daemon: replay returns an identical response for unchanged content" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var cache = replay.ReplayCache.init(gpa, 4);
+    defer cache.deinit();
+    var ctx = context(f);
+    ctx.replay = &cache;
+
+    const request: protocol.Request = .{
+        .filename = "/proj/a.ts",
+        .source = "const x = (foo[0] as any).bar;",
+    };
+
+    const first = daemon.handle(ctx, arena.allocator(), request);
+    const second = daemon.handle(ctx, arena.allocator(), request);
+
+    try std.testing.expectEqual(protocol.Status.ok, second.status);
+    try std.testing.expectEqual(@as(usize, 1), second.report.?.diagnostics.len);
+    try std.testing.expectEqualStrings(
+        try encodeResponse(arena.allocator(), first),
+        try encodeResponse(arena.allocator(), second),
+    );
+}
+
+test "daemon: replay re-lints when content changes" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var cache = replay.ReplayCache.init(gpa, 4);
+    defer cache.deinit();
+    var ctx = context(f);
+    ctx.replay = &cache;
+
+    const first = daemon.handle(ctx, arena.allocator(), .{
+        .filename = "/proj/a.ts",
+        .source = "const x = (foo[0] as any).bar;",
+    });
+    const second = daemon.handle(ctx, arena.allocator(), .{
+        .filename = "/proj/a.ts",
+        .source = "const x = (foo[0] as any).bar;\nconst y = (foo[1] as any).bar;",
+    });
+
+    try std.testing.expectEqual(@as(usize, 1), first.report.?.diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 2), second.report.?.diagnostics.len);
+}
+
+test "daemon: ratchet demotion repeats on replayed diagnostics" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = ratchet_disk_one_violation });
+
+    var path_buf: [256]u8 = undefined;
+    const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
+
+    var cache = replay.ReplayCache.init(gpa, 4);
+    defer cache.deinit();
+    var ctx = ratchetContext(f, io);
+    ctx.replay = &cache;
+
+    const request: protocol.Request = .{
+        .filename = filename,
+        .source = ratchet_proposed_growth,
+    };
+
+    const first = daemon.handle(ctx, arena.allocator(), request);
+    const second = daemon.handle(ctx, arena.allocator(), request);
+
+    try std.testing.expectEqual(lint.diagnostic.Severity.warn, first.report.?.diagnostics[0].severity);
+    try std.testing.expectEqual(true, first.report.?.diagnostics[0].demoted);
+    try std.testing.expectEqual(lint.diagnostic.Severity.warn, second.report.?.diagnostics[0].severity);
+    try std.testing.expectEqual(true, second.report.?.diagnostics[0].demoted);
+    try std.testing.expectEqualStrings(
+        try encodeResponse(arena.allocator(), first),
+        try encodeResponse(arena.allocator(), second),
+    );
+}
+
+test "daemon: project violations appear on a replay hit" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var state = try lint.Project.init(gpa, &f.engine, &repository_isolation);
+    defer state.deinit();
+    try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
+
+    var cache = replay.ReplayCache.init(gpa, 4);
+    defer cache.deinit();
+    var ctx = context(f);
+    ctx.project = &state;
+    ctx.replay = &cache;
+
+    const request: protocol.Request = .{
+        .filename = "/proj/order-service.ts",
+        .source = order_service_src,
+    };
+
+    const first = daemon.handle(ctx, arena.allocator(), request);
+    const second = daemon.handle(ctx, arena.allocator(), request);
+
+    try std.testing.expectEqualStrings("repository-isolation", first.report.?.diagnostics[0].rule_id);
+    try std.testing.expectEqualStrings("repository-isolation", second.report.?.diagnostics[0].rule_id);
+    try std.testing.expectEqualStrings(
+        try encodeResponse(arena.allocator(), first),
+        try encodeResponse(arena.allocator(), second),
+    );
 }

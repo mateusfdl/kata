@@ -4,6 +4,7 @@ const fs = @import("../fs.zig");
 const lint = @import("engine");
 const sources = @import("../sources.zig");
 const protocol = @import("protocol.zig");
+const replay = @import("replay.zig");
 
 const diagnostic = lint.diagnostic;
 const language = lint.language;
@@ -15,6 +16,7 @@ pub const Context = struct {
     project: ?*lint.Project = null,
     ratchet: bool = false,
     cache: ?*sources.context.Cache = null,
+    replay: ?*replay.ReplayCache = null,
 };
 
 const IndexVisit = struct {
@@ -220,6 +222,7 @@ pub fn handle(
 
     var engine = ctx.engine;
     var ratchet = ctx.ratchet;
+    var replay_cache = ctx.replay;
 
     if (ctx.cache) |cache| {
         const per_project = cache.acquire(arena, req.filename) catch
@@ -228,20 +231,44 @@ pub fn handle(
         if (per_project) |p| {
             engine = &p.engine;
             ratchet = p.resolved.ratchet;
+            replay_cache = &p.replay;
         }
     }
 
-    const diagnostics = if (ctx.project) |project| lint: {
+    if (ctx.project) |project| {
         project.configure(engine) catch return reply(.fail, null, "project configuration failed");
-        const path = req.filename orelse break :lint engine.lint(arena, source, lang, null) catch
-            return reply(.fail, null, "lint failed");
-        break :lint project.lint(arena, source, lang, path) catch
-            return reply(.fail, null, "lint failed");
-    } else engine.lint(arena, source, lang, req.filename) catch
-        return reply(.fail, null, "lint failed");
+    }
 
-    lint.fingerprint.assign(arena, req.filename orelse "", source, diagnostics) catch
-        return reply(.fail, null, "fingerprint failed");
+    var content_hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(source, &content_hash, .{});
+
+    const diagnostics = replayed: {
+        if (replay_cache) |rc| {
+            if (req.filename) |path| {
+                if (rc.get(path, content_hash)) |cached| {
+                    break :replayed arena.dupe(diagnostic.Diagnostic, cached) catch
+                        return reply(.fail, null, "lint failed");
+                }
+            }
+        }
+
+        const fresh = if (ctx.project) |project| lint: {
+            const path = req.filename orelse break :lint engine.lint(arena, source, lang, null) catch
+                return reply(.fail, null, "lint failed");
+            break :lint project.lint(arena, source, lang, path) catch
+                return reply(.fail, null, "lint failed");
+        } else engine.lint(arena, source, lang, req.filename) catch
+            return reply(.fail, null, "lint failed");
+
+        lint.fingerprint.assign(arena, req.filename orelse "", source, fresh) catch
+            return reply(.fail, null, "fingerprint failed");
+
+        if (replay_cache) |rc| {
+            if (req.filename) |path| rc.put(path, content_hash, fresh) catch {};
+        }
+
+        break :replayed fresh;
+    };
 
     applyRatchet(ctx, engine, ratchet, arena, lang, req.filename, source, diagnostics) catch
         return reply(.fail, null, "ratchet baseline failed");
