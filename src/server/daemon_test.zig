@@ -880,3 +880,30 @@ test "daemon: project kata rules flag a write" {
     );
     try std.testing.expectEqual(@as(u32, 4), report.diagnostics[0].range.start.line);
 }
+
+test "daemon: sweep unlinks dead kata sockets and spares everything else" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "kata-0.0.1-1.sock", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "kata.sock", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "kata-current.sock", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "other.sock", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "kata-notes.txt", .data = "" });
+
+    var path_buf: [256]u8 = undefined;
+    const dir_path = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const socket_path = try std.fmt.allocPrint(gpa, "{s}/kata-current.sock", .{dir_path});
+    defer gpa.free(socket_path);
+
+    daemon.sweepStaleSockets(io, gpa, socket_path);
+
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "kata-0.0.1-1.sock", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "kata.sock", .{}));
+    _ = try tmp.dir.statFile(io, "kata-current.sock", .{});
+    _ = try tmp.dir.statFile(io, "other.sock", .{});
+    _ = try tmp.dir.statFile(io, "kata-notes.txt", .{});
+}
