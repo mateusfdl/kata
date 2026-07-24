@@ -2053,3 +2053,120 @@ test "parser: rejects malformed fix and suggest clauses" {
         \\}
     , &clause_diag));
 }
+
+test "parser: parses between composition with two subjects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule no-await-in-transaction {
+        \\  lang ts
+        \\  match statement_block @block {
+        \\    child: expression_statement @begin
+        \\    child: expression_statement @commit
+        \\  }
+        \\  where {
+        \\    not between @begin @commit expression_statement
+        \\  }
+        \\  emit @block { message "no await between begin and commit" }
+        \\}
+    , &diag);
+
+    const composition = file.rules[0].where[0].composition;
+    try std.testing.expectEqual(ast.CompositionOp.between, composition.op);
+    try std.testing.expectEqual(true, composition.negated);
+    try std.testing.expectEqualStrings("begin", composition.matcher.subject.name);
+    try std.testing.expectEqualStrings("commit", composition.second.?.name);
+    try std.testing.expectEqualStrings("expression_statement", composition.matcher.pattern.node_kind.symbol);
+}
+
+test "parser: parses between inside an any group" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule bracketed {
+        \\  lang ts
+        \\  match statement_block @block {
+        \\    child: expression_statement @begin
+        \\    child: expression_statement @commit
+        \\  }
+        \\  where {
+        \\    any {
+        \\      between @begin @commit return_statement
+        \\      between @begin @commit throw_statement
+        \\    }
+        \\  }
+        \\  emit @block { message "bracketed" }
+        \\}
+    , &diag);
+
+    const group = file.rules[0].where[0].group;
+    try std.testing.expectEqual(@as(usize, 2), group.predicates.len);
+    try std.testing.expectEqual(ast.CompositionOp.between, group.predicates[0].composition.op);
+    try std.testing.expectEqualStrings("commit", group.predicates[0].composition.second.?.name);
+}
+
+test "parser: leaves second subject unset for follows and precedes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule sequenced {
+        \\  lang go
+        \\  match expression_statement @match
+        \\  where {
+        \\    follows @match return_statement
+        \\  }
+        \\  emit @match { message "sequenced" }
+        \\}
+    , &diag);
+
+    try std.testing.expectEqual(@as(?ast.Capture, null), file.rules[0].where[0].composition.second);
+}
+
+test "parser: rejects between with a single subject" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedCapture, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match statement_block @block {
+        \\    child: expression_statement @begin
+        \\  }
+        \\  where {
+        \\    between @begin expression_statement
+        \\  }
+        \\  emit @block { message "bad" }
+        \\}
+    , &diag));
+}
+
+test "parser: rejects between inside a nested where" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.NestedComposition, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match statement_block @block {
+        \\    child: expression_statement @begin
+        \\    child: expression_statement @commit
+        \\  }
+        \\  where {
+        \\    has @block call_expression {
+        \\      where {
+        \\        between @begin @commit expression_statement
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @block { message "bad" }
+        \\}
+    , &diag));
+}

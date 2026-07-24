@@ -341,10 +341,11 @@ fn compositionPredicate(ctx: *Compiler, composition: ast.Composition) Error!rule
         .parent => if (composition.negated) .not_parent else .parent,
         .follows => if (composition.negated) .not_follows else .follows,
         .precedes => if (composition.negated) .not_precedes else .precedes,
+        .between => if (composition.negated) .not_between else .between,
     };
 
     const pred: rule.NestedPredicate = .{
-        .args = try subjectArgs(ctx, composition.matcher),
+        .args = try compositionArgs(ctx, composition),
         .matcher = try compileNestedMatcher(ctx, composition.matcher),
         .until_kinds = try untilKinds(ctx, composition.until),
     };
@@ -360,6 +361,8 @@ fn compositionPredicate(ctx: *Compiler, composition: ast.Composition) Error!rule
         .not_follows => .{ .not_follows = pred },
         .precedes => .{ .precedes = pred },
         .not_precedes => .{ .not_precedes = pred },
+        .between => .{ .between = pred },
+        .not_between => .{ .not_between = pred },
         else => unreachable,
     };
 }
@@ -390,6 +393,16 @@ fn untilKinds(ctx: *Compiler, names: []const []const u8) Error![]const u16 {
 fn subjectArgs(ctx: *Compiler, matcher: ast.NestedMatcher) Error![]rule.PredicateOperand {
     const args = try ctx.arena.alloc(rule.PredicateOperand, 1);
     args[0] = .{ .capture = try resolveCapture(ctx, matcher.subject.name) };
+
+    return args;
+}
+
+fn compositionArgs(ctx: *Compiler, composition: ast.Composition) Error![]rule.PredicateOperand {
+    const second = composition.second orelse return subjectArgs(ctx, composition.matcher);
+
+    const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
+    args[0] = .{ .capture = try resolveCapture(ctx, composition.matcher.subject.name) };
+    args[1] = .{ .capture = try resolveCapture(ctx, second.name) };
 
     return args;
 }

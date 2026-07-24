@@ -150,6 +150,8 @@ fn evalOne(
         .not_follows => |p| evalSequence(p, match, ctx, .follows, true),
         .precedes => |p| evalSequence(p, match, ctx, .precedes, false),
         .not_precedes => |p| evalSequence(p, match, ctx, .precedes, true),
+        .between => |p| evalBetween(p, match, ctx, false),
+        .not_between => |p| evalBetween(p, match, ctx, true),
         .count => |p| evalCount(p, match, ctx),
         .any_group => |members| evalAnyGroup(members, match, ctx),
         .all_group => |members| evaluate(members, match, ctx),
@@ -274,10 +276,57 @@ fn evalSequence(
     var siblings = parent.namedChildren();
     while (siblings.next()) |candidate| {
         if (!inDirection(direction, subject, candidate)) continue;
-        if (try siblingMatches(pred.matcher, candidate, subject, ctx)) return !negate;
+        if (sameRange(candidate, subject)) continue;
+        if (try candidateMatches(pred.matcher, candidate, ctx)) return !negate;
     }
 
     return negate;
+}
+
+const BoundPair = struct {
+    left: Node,
+    right: Node,
+};
+
+fn evalBetween(
+    pred: rule.NestedPredicate,
+    match: query.Match,
+    ctx: EvalContext,
+    negate: bool,
+) std.mem.Allocator.Error!bool {
+    const bounds = boundPair(pred.args, match) orelse return false;
+    const parent = bounds.left.parent() orelse return false;
+    const right_parent = bounds.right.parent() orelse return false;
+    if (!parent.eql(right_parent)) return false;
+
+    var siblings = parent.namedChildren();
+    while (siblings.next()) |candidate| {
+        if (candidate.startByte() < bounds.left.endByte()) continue;
+        if (candidate.endByte() > bounds.right.startByte()) continue;
+        if (sameRange(candidate, bounds.left) or sameRange(candidate, bounds.right)) continue;
+        if (try candidateMatches(pred.matcher, candidate, ctx)) return !negate;
+    }
+
+    return negate;
+}
+
+fn boundPair(args: []const rule.PredicateOperand, match: query.Match) ?BoundPair {
+    if (args.len != 2) return null;
+
+    const first = captureNode(args[0], match) orelse return null;
+    const second = captureNode(args[1], match) orelse return null;
+
+    return if (first.startByte() <= second.startByte())
+        .{ .left = first, .right = second }
+    else
+        .{ .left = second, .right = first };
+}
+
+fn captureNode(operand: rule.PredicateOperand, match: query.Match) ?Node {
+    return switch (operand) {
+        .capture => |id| match.get(id),
+        .string => null,
+    };
 }
 
 fn inDirection(direction: Direction, subject: Node, candidate: Node) bool {
@@ -287,15 +336,12 @@ fn inDirection(direction: Direction, subject: Node, candidate: Node) bool {
     };
 }
 
-fn siblingMatches(
+fn candidateMatches(
     nested: *const rule.NestedMatcher,
     candidate: Node,
-    subject: Node,
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
-    if (sameRange(candidate, subject)) return false;
-
-    var sink: EnclosingSink = .{ .matcher = nested, .subject = subject, .ctx = ctx };
+    var sink: EnclosingSink = .{ .matcher = nested, .subject = candidate, .ctx = ctx };
     try query.streamAt(ctx.allocator, &nested.pattern, nested.capture_count, candidate, &sink);
 
     return sink.found;

@@ -76,6 +76,7 @@ const Keyword = enum {
     parent,
     follows,
     precedes,
+    between,
     count,
     not,
     in,
@@ -693,7 +694,9 @@ pub const Parser = struct {
             try self.advance();
         }
 
-        const matcher = try self.parseNestedMatcher();
+        const subject = try self.expectCapture();
+        const second = if (op == .between) try self.expectCapture() else null;
+        const matcher = try self.parseNestedMatcherFor(subject);
         var until: []const []const u8 = &.{};
         if (op == .inside and self.currentIs(.until)) {
             try self.advance();
@@ -705,12 +708,16 @@ pub const Parser = struct {
             .op = compositionOp(op).?,
             .negated = negated,
             .matcher = matcher,
+            .second = second,
             .until = until,
         } };
     }
 
     fn parseNestedMatcher(self: *Parser) Error!ast.NestedMatcher {
-        const subject = try self.expectCapture();
+        return self.parseNestedMatcherFor(try self.expectCapture());
+    }
+
+    fn parseNestedMatcherFor(self: *Parser, subject: ast.Capture) Error!ast.NestedMatcher {
         const node = try self.parseNodeKind(.rejected);
         const capture = try self.parseOptionalCapture();
         var fields: []const ast.FieldPattern = &.{};
@@ -1199,6 +1206,7 @@ fn compositionKeyword(token: Token) ?Keyword {
     if (isKeyword(token, .parent)) return .parent;
     if (isKeyword(token, .follows)) return .follows;
     if (isKeyword(token, .precedes)) return .precedes;
+    if (isKeyword(token, .between)) return .between;
     if (isKeyword(token, .count)) return .count;
     if (isKeyword(token, .not)) return .not;
 
@@ -1212,6 +1220,7 @@ fn compositionOp(keyword: Keyword) ?ast.CompositionOp {
         .parent => .parent,
         .follows => .follows,
         .precedes => .precedes,
+        .between => .between,
         else => null,
     };
 }

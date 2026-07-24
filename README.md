@@ -669,8 +669,8 @@ compile error.
 
 `where` blocks also take composition predicates - `inside`, `not inside`,
 `has`, `not has`, `parent`, `not parent`, `follows`, `not follows`,
-`precedes`, `not precedes`, and `count` - to express containment and ordering
-rules that a single query cannot:
+`precedes`, `not precedes`, `between`, `not between`, and `count` - to express
+containment and ordering rules that a single query cannot:
 
 ```kata
 rule no-empty-catch {
@@ -764,11 +764,34 @@ capture that is unbound in the matched alternation branch makes the predicate
 false in both polarities, the same fail-closed rule the other compositions
 follow.
 
+`between @a @b P` takes two subjects and searches the siblings strictly inside
+the interval they bracket, which is the "nothing of this shape happens in
+here" form:
+
+```kata
+where {
+  text(@open) == "begin"
+  text(@close) == "commit"
+  not between @begin @commit expression_statement {
+    child: await_expression
+  }
+}
+```
+
+The two captures must be bound and must share the same parent node. When they
+do not, `between` is false and so is `not between`: this is a failed
+precondition, not an empty search, and negating it must not turn a rule that
+cannot be evaluated into a rule that fires. Bounds are order-normalized, so it
+does not matter which of `@a` and `@b` appears first in the source. The bounds
+themselves are never candidates, and adjacent bounds leave an empty interval,
+so `between` is false and `not between` true.
+
 A nested matcher may bind its own captures and filter them with a trailing
 `where` block; those captures stay scoped to the nested matcher. `count`
 compares the number of nested matches: `count @match return_statement > 3`.
 A node never contains itself: matches spanning exactly the subject node's
-range do not count for `inside`, `has`, `count`, `follows`, or `precedes`.
+range do not count for `inside`, `has`, `count`, `follows`, `precedes`, or
+`between`.
 
 Predicates in a `where` block are conjoined. `any { }` groups predicates into
 a disjunction - the match survives when at least one member passes - and

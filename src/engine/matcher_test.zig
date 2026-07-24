@@ -1200,3 +1200,128 @@ test "matcher: follows and precedes are false without a usable subject" {
     var string_subject = [_]rule.PredicateOperand{.{ .string = "a();" }};
     try std.testing.expectEqual(false, try evalOne(&t, src, .{ .follows = .{ .args = &string_subject, .matcher = &nested } }, match));
 }
+
+test "matcher: between finds a candidate inside the open interval" {
+    const src = "function f(){a();b();c();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const block = statementBlock(&t);
+    var none = [_]rule.Predicate{};
+    const nested = simpleNested(&t, "expression_statement", &none);
+    var args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .capture = 1 } };
+    const pred: rule.NestedPredicate = .{ .args = &args, .matcher = &nested };
+
+    const spanning: query.Match = .{ .nodes = &.{ block.namedChild(0).?, block.namedChild(2).? } };
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .between = pred }, spanning));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_between = pred }, spanning));
+
+    const adjacent: query.Match = .{ .nodes = &.{ block.namedChild(0).?, block.namedChild(1).? } };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .between = pred }, adjacent));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_between = pred }, adjacent));
+}
+
+test "matcher: between normalizes the order of its bounds" {
+    const src = "function f(){a();b();c();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const block = statementBlock(&t);
+    var none = [_]rule.Predicate{};
+    const nested = simpleNested(&t, "expression_statement", &none);
+    var args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .capture = 1 } };
+    const pred: rule.NestedPredicate = .{ .args = &args, .matcher = &nested };
+
+    const reversed: query.Match = .{ .nodes = &.{ block.namedChild(2).?, block.namedChild(0).? } };
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .between = pred }, reversed));
+}
+
+test "matcher: between excludes its own bounds" {
+    const src = "function f(){a();b();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const block = statementBlock(&t);
+    var none = [_]rule.Predicate{};
+    const nested = simpleNested(&t, "expression_statement", &none);
+    var args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .capture = 1 } };
+    const pred: rule.NestedPredicate = .{ .args = &args, .matcher = &nested };
+
+    const same: query.Match = .{ .nodes = &.{ block.namedChild(0).?, block.namedChild(0).? } };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .between = pred }, same));
+}
+
+test "matcher: between is false for bounds in different parents" {
+    const src = "function f(){a();b();c();} function g(){d();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const first = firstOfKind(t.root().namedChild(0).?, "statement_block").?;
+    const second = firstOfKind(t.root().namedChild(1).?, "statement_block").?;
+    const match: query.Match = .{ .nodes = &.{ first.namedChild(0).?, second.namedChild(0).? } };
+
+    var none = [_]rule.Predicate{};
+    const nested = simpleNested(&t, "expression_statement", &none);
+    var args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .capture = 1 } };
+    const pred: rule.NestedPredicate = .{ .args = &args, .matcher = &nested };
+
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .between = pred }, match));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_between = pred }, match));
+}
+
+test "matcher: between is false when a bound is unbound" {
+    const src = "function f(){a();b();c();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const block = statementBlock(&t);
+    const match: query.Match = .{ .nodes = &.{ block.namedChild(0).?, null } };
+
+    var none = [_]rule.Predicate{};
+    const nested = simpleNested(&t, "expression_statement", &none);
+    var args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .capture = 1 } };
+    const pred: rule.NestedPredicate = .{ .args = &args, .matcher = &nested };
+
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .between = pred }, match));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_between = pred }, match));
+
+    var single = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    const one: rule.NestedPredicate = .{ .args = &single, .matcher = &nested };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .between = one }, match));
+}
+
+test "matcher: between applies nested predicates to interval candidates" {
+    const src = "function f(){a();b();c();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const block = statementBlock(&t);
+    const match: query.Match = .{ .nodes = &.{ block.namedChild(0).?, block.namedChild(2).? } };
+    var args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .capture = 1 } };
+
+    var accept_args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "b();" } };
+    var accept = [_]rule.Predicate{.{ .eq = &accept_args }};
+    const accepting = simpleNested(&t, "expression_statement", &accept);
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .between = .{ .args = &args, .matcher = &accepting } }, match));
+
+    var reject_args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "c();" } };
+    var reject = [_]rule.Predicate{.{ .eq = &reject_args }};
+    const rejecting = simpleNested(&t, "expression_statement", &reject);
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .between = .{ .args = &args, .matcher = &rejecting } }, match));
+}
+
+test "matcher: between does not descend into interval candidates" {
+    const src = "function f(){a();(function(){b();});c();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const block = statementBlock(&t);
+    const match: query.Match = .{ .nodes = &.{ block.namedChild(0).?, block.namedChild(2).? } };
+
+    var inner_args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "b();" } };
+    var predicates = [_]rule.Predicate{.{ .eq = &inner_args }};
+    const nested = simpleNested(&t, "expression_statement", &predicates);
+    var args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .capture = 1 } };
+
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .between = .{ .args = &args, .matcher = &nested } }, match));
+}

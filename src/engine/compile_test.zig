@@ -39,7 +39,7 @@ fn predicateArgs(predicate: rule.Predicate) []const rule.PredicateOperand {
     return switch (predicate) {
         .eq, .not_eq, .any_of, .not_any_of, .starts_with, .not_starts_with, .ends_with, .not_ends_with, .contains, .not_contains, .glob, .not_glob, .captured, .not_captured => |args| args,
         .match, .not_match => |p| p.args,
-        .has, .not_has, .inside, .not_inside, .parent, .not_parent, .follows, .not_follows, .precedes, .not_precedes => |p| p.args,
+        .has, .not_has, .inside, .not_inside, .parent, .not_parent, .follows, .not_follows, .precedes, .not_precedes, .between, .not_between => |p| p.args,
         .count => |p| p.args,
         .where, .any_group, .all_group => unreachable,
     };
@@ -61,7 +61,7 @@ fn regexPredicate(predicate: rule.Predicate) rule.RegexPredicate {
 
 fn nestedPredicate(predicate: rule.Predicate) rule.NestedPredicate {
     return switch (predicate) {
-        .has, .not_has, .inside, .not_inside, .parent, .not_parent, .follows, .not_follows, .precedes, .not_precedes => |p| p,
+        .has, .not_has, .inside, .not_inside, .parent, .not_parent, .follows, .not_follows, .precedes, .not_precedes, .between, .not_between => |p| p,
         else => unreachable,
     };
 }
@@ -2019,4 +2019,132 @@ test "compile: follows filters diagnostics by later siblings" {
     try std.testing.expectEqual(@as(usize, 1), flagged.len);
     try std.testing.expectEqualStrings("lock-without-unlock", flagged[0].rule_id);
     try std.testing.expectEqual(@as(u32, 2), flagged[0].range.start.line);
+}
+
+test "compile: translates between with both subject captures" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule bracketed {
+        \\  lang ts
+        \\  match statement_block @block {
+        \\    child: expression_statement @begin
+        \\    child: expression_statement @commit
+        \\  }
+        \\  where {
+        \\    not between @begin @commit return_statement
+        \\  }
+        \\  emit @block { message "bracketed" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].meta.predicates;
+    try std.testing.expectEqual(@as(usize, 1), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.not_between, std.meta.activeTag(predicates[0]));
+
+    const between = nestedPredicate(predicates[0]);
+    try std.testing.expectEqual(@as(usize, 2), between.args.len);
+    try std.testing.expect(between.args[0].capture != between.args[1].capture);
+    try std.testing.expect(between.matcher.root_capture_id < between.matcher.capture_count);
+    try std.testing.expect(!compiled.needs_measures);
+}
+
+test "compile: rejects between with an unknown second capture" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match statement_block @block {
+        \\    child: expression_statement @begin
+        \\  }
+        \\  where {
+        \\    between @begin @nope return_statement
+        \\  }
+        \\  emit @block { message "bad" }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.UnknownCapture, compile.compile(gpa, .ts, file, &diag));
+    try std.testing.expectEqualStrings("unknown capture", diag.detail);
+}
+
+test "compile: measures in a between nested where set needs_measures" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule long-interval {
+        \\  lang ts
+        \\  match statement_block @block {
+        \\    child: expression_statement @begin
+        \\    child: expression_statement @commit
+        \\  }
+        \\  where {
+        \\    between @begin @commit expression_statement @mid {
+        \\      where {
+        \\        length(@mid) > 3
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @block { message "long interval" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    try std.testing.expectEqual(rule.PredicateOp.between, std.meta.activeTag(compiled.patterns[0].meta.predicates[0]));
+    try std.testing.expectEqual(true, compiled.needs_measures);
+}
+
+test "compile: between filters diagnostics by what sits in the interval" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .ts,
+        \\rule no-await-in-transaction {
+        \\  lang ts
+        \\  match statement_block @block {
+        \\    child: expression_statement @begin {
+        \\      child: call_expression {
+        \\        function: member_expression {
+        \\          property: property_identifier @open
+        \\        }
+        \\      }
+        \\    }
+        \\    child: expression_statement @commit {
+        \\      child: call_expression {
+        \\        function: member_expression {
+        \\          property: property_identifier @close
+        \\        }
+        \\      }
+        \\    }
+        \\  }
+        \\  where {
+        \\    text(@open) == "begin"
+        \\    text(@close) == "commit"
+        \\    between @begin @commit expression_statement @mid {
+        \\      child: await_expression
+        \\    }
+        \\  }
+        \\  emit @block { message "no await between begin and commit" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const clean = try runCompiled(arena.allocator(), &compiled, .ts, "async function f(){ tx.begin(); work(); tx.commit(); }", null);
+    try std.testing.expectEqual(@as(usize, 0), clean.len);
+
+    const flagged = try runCompiled(arena.allocator(), &compiled, .ts, "async function f(){ tx.begin(); await work(); tx.commit(); }", null);
+    try std.testing.expectEqual(@as(usize, 1), flagged.len);
+    try std.testing.expectEqualStrings("no-await-in-transaction", flagged[0].rule_id);
+
+    const outside = try runCompiled(arena.allocator(), &compiled, .ts, "async function f(){ await work(); tx.begin(); tx.commit(); }", null);
+    try std.testing.expectEqual(@as(usize, 0), outside.len);
 }
