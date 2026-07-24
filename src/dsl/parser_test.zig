@@ -1489,6 +1489,199 @@ test "parser: parses not inside with multiple until boundary kinds" {
     try std.testing.expectEqualStrings("method_declaration", composition.until[1]);
 }
 
+test "parser: parses follows composition" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule lock-then-unlock {
+        \\  lang go
+        \\  match expression_statement @match
+        \\  where {
+        \\    follows @match expression_statement
+        \\  }
+        \\  emit @match { message "lock then unlock" }
+        \\}
+    , &diag);
+
+    const composition = file.rules[0].where[0].composition;
+    try std.testing.expectEqual(ast.CompositionOp.follows, composition.op);
+    try std.testing.expectEqual(false, composition.negated);
+    try std.testing.expectEqualStrings("match", composition.matcher.subject.name);
+    try std.testing.expectEqualStrings("expression_statement", composition.matcher.pattern.node_kind.symbol);
+    try std.testing.expectEqual(@as(usize, 0), composition.until.len);
+}
+
+test "parser: parses precedes composition" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule defer-after-open {
+        \\  lang go
+        \\  match defer_statement @match
+        \\  where {
+        \\    precedes @match short_var_declaration
+        \\  }
+        \\  emit @match { message "defer after open" }
+        \\}
+    , &diag);
+
+    const composition = file.rules[0].where[0].composition;
+    try std.testing.expectEqual(ast.CompositionOp.precedes, composition.op);
+    try std.testing.expectEqual(false, composition.negated);
+    try std.testing.expectEqualStrings("short_var_declaration", composition.matcher.pattern.node_kind.symbol);
+}
+
+test "parser: parses negated follows and precedes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule sequenced {
+        \\  lang go
+        \\  match expression_statement @match
+        \\  where {
+        \\    not follows @match return_statement
+        \\    not precedes @match return_statement
+        \\  }
+        \\  emit @match { message "sequenced" }
+        \\}
+    , &diag);
+
+    const follows = file.rules[0].where[0].composition;
+    try std.testing.expectEqual(ast.CompositionOp.follows, follows.op);
+    try std.testing.expectEqual(true, follows.negated);
+    const precedes = file.rules[0].where[1].composition;
+    try std.testing.expectEqual(ast.CompositionOp.precedes, precedes.op);
+    try std.testing.expectEqual(true, precedes.negated);
+}
+
+test "parser: parses follows with a nested capture and where" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule unlock-follows-lock {
+        \\  lang go
+        \\  match expression_statement @match
+        \\  where {
+        \\    not follows @match expression_statement {
+        \\      child: call_expression {
+        \\        function: selector_expression {
+        \\          field: field_identifier @unlock
+        \\        }
+        \\      }
+        \\      where {
+        \\        text(@unlock) in ["Unlock", "RUnlock"]
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @match { message "lock without unlock" }
+        \\}
+    , &diag);
+
+    const composition = file.rules[0].where[0].composition;
+    try std.testing.expectEqual(ast.CompositionOp.follows, composition.op);
+    try std.testing.expectEqual(true, composition.negated);
+    try std.testing.expectEqualStrings("expression_statement", composition.matcher.pattern.node_kind.symbol);
+    try std.testing.expectEqual(@as(usize, 1), composition.matcher.pattern.fields.len);
+    try std.testing.expectEqual(@as(usize, 1), composition.matcher.where.len);
+    const membership = composition.matcher.where[0].membership;
+    try std.testing.expectEqual(false, membership.negated);
+    try std.testing.expectEqual(@as(usize, 2), membership.values.len);
+    try std.testing.expectEqualStrings("Unlock", membership.values[0].value);
+}
+
+test "parser: parses follows inside an any group" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule sequenced {
+        \\  lang go
+        \\  match expression_statement @match
+        \\  where {
+        \\    any {
+        \\      follows @match return_statement
+        \\      precedes @match return_statement
+        \\    }
+        \\  }
+        \\  emit @match { message "sequenced" }
+        \\}
+    , &diag);
+
+    const group = file.rules[0].where[0].group;
+    try std.testing.expectEqual(ast.GroupOp.any, group.op);
+    try std.testing.expectEqual(@as(usize, 2), group.predicates.len);
+    try std.testing.expectEqual(ast.CompositionOp.follows, group.predicates[0].composition.op);
+    try std.testing.expectEqual(ast.CompositionOp.precedes, group.predicates[1].composition.op);
+}
+
+test "parser: rejects until on follows" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.InvalidExpression, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang go
+        \\  match expression_statement @match
+        \\  where {
+        \\    follows @match return_statement until func_literal
+        \\  }
+        \\  emit @match { message "bad" }
+        \\}
+    , &diag));
+    try std.testing.expectEqual(@as(u32, 5), diag.line);
+    try std.testing.expectEqual(@as(u32, 37), diag.column);
+}
+
+test "parser: rejects follows inside a nested where" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.NestedComposition, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang go
+        \\  match expression_statement @match
+        \\  where {
+        \\    has @match call_expression {
+        \\      where {
+        \\        follows @match return_statement
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @match { message "bad" }
+        \\}
+    , &diag));
+    try std.testing.expectEqual(@as(u32, 7), diag.line);
+    try std.testing.expectEqual(@as(u32, 9), diag.column);
+}
+
+test "parser: rejects follows without a subject capture" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    try std.testing.expectError(error.ExpectedCapture, parse(arena.allocator(),
+        \\rule bad {
+        \\  lang go
+        \\  match expression_statement @match
+        \\  where {
+        \\    follows return_statement
+        \\  }
+        \\  emit @match { message "bad" }
+        \\}
+    , &diag));
+}
+
 test "parser: parses in membership with a trailing comma" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

@@ -1006,3 +1006,197 @@ test "matcher: renderMessage falls back when the measure resolves to nothing" {
     defer std.testing.allocator.free(msg);
     try std.testing.expectEqualStrings("?", msg);
 }
+
+fn statementBlock(t: *const test_tree.Tree) Node {
+    return firstOfKind(t.root(), "statement_block").?;
+}
+
+fn simpleNested(t: *const test_tree.Tree, kind_name: []const u8, predicates: []rule.Predicate) rule.NestedMatcher {
+    return .{
+        .pattern = .{ .kind = .{ .symbol = t.sym(kind_name) }, .capture = 0 },
+        .capture_count = 1,
+        .root_capture_id = 0,
+        .predicates = predicates,
+    };
+}
+
+test "matcher: follows finds a later sibling" {
+    const src = "function f(){a();b();c();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const block = statementBlock(&t);
+    var none = [_]rule.Predicate{};
+    const nested = simpleNested(&t, "expression_statement", &none);
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    const pred: rule.NestedPredicate = .{ .args = &args, .matcher = &nested };
+
+    const first: query.Match = .{ .nodes = &.{block.namedChild(0).?} };
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .follows = pred }, first));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_follows = pred }, first));
+
+    const last: query.Match = .{ .nodes = &.{block.namedChild(2).?} };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .follows = pred }, last));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_follows = pred }, last));
+}
+
+test "matcher: follows accepts a sibling starting at the subject's end byte" {
+    const src = "function f(){a();b();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const block = statementBlock(&t);
+    const subject = block.namedChild(0).?;
+    const next = block.namedChild(1).?;
+    try std.testing.expectEqual(subject.endByte(), next.startByte());
+
+    var none = [_]rule.Predicate{};
+    const nested = simpleNested(&t, "expression_statement", &none);
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    const match: query.Match = .{ .nodes = &.{subject} };
+
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .follows = .{ .args = &args, .matcher = &nested } }, match));
+}
+
+test "matcher: follows ignores earlier siblings" {
+    const src = "function f(){a();b();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const block = statementBlock(&t);
+    const match: query.Match = .{ .nodes = &.{block.namedChild(1).?} };
+
+    var only_first = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "a();" } };
+    var predicates = [_]rule.Predicate{.{ .eq = &only_first }};
+    const nested = simpleNested(&t, "expression_statement", &predicates);
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .follows = .{ .args = &args, .matcher = &nested } }, match));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .precedes = .{ .args = &args, .matcher = &nested } }, match));
+}
+
+test "matcher: follows and precedes are false for an only child" {
+    const src = "function f(){a();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const match: query.Match = .{ .nodes = &.{statementBlock(&t).namedChild(0).?} };
+
+    var none = [_]rule.Predicate{};
+    const nested = simpleNested(&t, "expression_statement", &none);
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    const pred: rule.NestedPredicate = .{ .args = &args, .matcher = &nested };
+
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .follows = pred }, match));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_follows = pred }, match));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .precedes = pred }, match));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_precedes = pred }, match));
+}
+
+test "matcher: follows is false for a subject without a parent" {
+    const src = "function f(){a();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const match: query.Match = .{ .nodes = &.{t.root()} };
+
+    var none = [_]rule.Predicate{};
+    const nested = simpleNested(&t, "function_declaration", &none);
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    const pred: rule.NestedPredicate = .{ .args = &args, .matcher = &nested };
+
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .follows = pred }, match));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_follows = pred }, match));
+}
+
+test "matcher: follows applies nested predicates to each candidate" {
+    const src = "function f(){a();b();c();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const match: query.Match = .{ .nodes = &.{statementBlock(&t).namedChild(0).?} };
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+
+    var accept_args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "c();" } };
+    var accept = [_]rule.Predicate{.{ .eq = &accept_args }};
+    const accepting = simpleNested(&t, "expression_statement", &accept);
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .follows = .{ .args = &args, .matcher = &accepting } }, match));
+
+    var reject_args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "z();" } };
+    var reject = [_]rule.Predicate{.{ .eq = &reject_args }};
+    const rejecting = simpleNested(&t, "expression_statement", &reject);
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .follows = .{ .args = &args, .matcher = &rejecting } }, match));
+}
+
+test "matcher: follows does not descend into a sibling" {
+    const src = "function f(){a();(function(){b();});}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const match: query.Match = .{ .nodes = &.{statementBlock(&t).namedChild(0).?} };
+
+    var inner_args = [_]rule.PredicateOperand{ .{ .capture = 0 }, .{ .string = "b();" } };
+    var predicates = [_]rule.Predicate{.{ .eq = &inner_args }};
+    const nested = simpleNested(&t, "expression_statement", &predicates);
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .follows = .{ .args = &args, .matcher = &nested } }, match));
+}
+
+test "matcher: precedes finds an earlier sibling" {
+    const src = "function f(){a();b();c();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const block = statementBlock(&t);
+    var none = [_]rule.Predicate{};
+    const nested = simpleNested(&t, "expression_statement", &none);
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    const pred: rule.NestedPredicate = .{ .args = &args, .matcher = &nested };
+
+    const last: query.Match = .{ .nodes = &.{block.namedChild(2).?} };
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .precedes = pred }, last));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_precedes = pred }, last));
+
+    const first: query.Match = .{ .nodes = &.{block.namedChild(0).?} };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .precedes = pred }, first));
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .not_precedes = pred }, first));
+}
+
+test "matcher: precedes accepts a sibling ending at the subject's start byte" {
+    const src = "function f(){a();b();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const block = statementBlock(&t);
+    const subject = block.namedChild(1).?;
+    try std.testing.expectEqual(subject.startByte(), block.namedChild(0).?.endByte());
+
+    var none = [_]rule.Predicate{};
+    const nested = simpleNested(&t, "expression_statement", &none);
+    var args = [_]rule.PredicateOperand{.{ .capture = 0 }};
+    const match: query.Match = .{ .nodes = &.{subject} };
+
+    try std.testing.expectEqual(true, try evalOne(&t, src, .{ .precedes = .{ .args = &args, .matcher = &nested } }, match));
+}
+
+test "matcher: follows and precedes are false without a usable subject" {
+    const src = "function f(){a();b();}";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const match: query.Match = .{ .nodes = &.{ statementBlock(&t).namedChild(0).?, null } };
+
+    var none = [_]rule.Predicate{};
+    const nested = simpleNested(&t, "expression_statement", &none);
+
+    var unbound = [_]rule.PredicateOperand{.{ .capture = 1 }};
+    const pred: rule.NestedPredicate = .{ .args = &unbound, .matcher = &nested };
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .follows = pred }, match));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_follows = pred }, match));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .precedes = pred }, match));
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .not_precedes = pred }, match));
+
+    var string_subject = [_]rule.PredicateOperand{.{ .string = "a();" }};
+    try std.testing.expectEqual(false, try evalOne(&t, src, .{ .follows = .{ .args = &string_subject, .matcher = &nested } }, match));
+}

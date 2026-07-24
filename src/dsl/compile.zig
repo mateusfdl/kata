@@ -339,6 +339,8 @@ fn compositionPredicate(ctx: *Compiler, composition: ast.Composition) Error!rule
         .inside => if (composition.negated) .not_inside else .inside,
         .has => if (composition.negated) .not_has else .has,
         .parent => if (composition.negated) .not_parent else .parent,
+        .follows => if (composition.negated) .not_follows else .follows,
+        .precedes => if (composition.negated) .not_precedes else .precedes,
     };
 
     const pred: rule.NestedPredicate = .{
@@ -354,6 +356,10 @@ fn compositionPredicate(ctx: *Compiler, composition: ast.Composition) Error!rule
         .not_has => .{ .not_has = pred },
         .parent => .{ .parent = pred },
         .not_parent => .{ .not_parent = pred },
+        .follows => .{ .follows = pred },
+        .not_follows => .{ .not_follows = pred },
+        .precedes => .{ .precedes = pred },
+        .not_precedes => .{ .not_precedes = pred },
         else => unreachable,
     };
 }

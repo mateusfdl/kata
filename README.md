@@ -668,7 +668,8 @@ reference earlier fragments, and an unused or redeclared fragment is a
 compile error.
 
 `where` blocks also take composition predicates - `inside`, `not inside`,
-`has`, `not has`, `parent`, `not parent`, and `count` - to express containment
+`has`, `not has`, `parent`, `not parent`, `follows`, `not follows`,
+`precedes`, `not precedes`, and `count` - to express containment and ordering
 rules that a single query cannot:
 
 ```kata
@@ -708,11 +709,66 @@ Here a `defer` nested anywhere in a loop body matches, but one wrapped in a
 closure inside the loop does not, because the `func_literal` sits between the
 `defer` and the `for_statement`. `not inside` negates the bounded result.
 
+`follows` and `precedes` reach sideways instead of up or down. Their candidate
+set is the named children of the subject's own parent, in source order:
+`follows @a P` is true when at least one sibling starting at or after `@a`'s
+end matches `P`, and `precedes @a P` is the mirror image. The nested pattern is
+matched anchored at the sibling itself, with no descent into it, so a rule that
+wants a statement must name a statement kind:
+
+```kata
+rule unlock-follows-lock {
+  lang go
+
+  match expression_statement @match {
+    child: call_expression {
+      function: selector_expression {
+        field: field_identifier @method
+      }
+    }
+  }
+
+  where {
+    text(@method) == "Lock"
+    not follows @match [
+      expression_statement {
+        child: call_expression {
+          function: selector_expression { field: field_identifier @unlock }
+        }
+      },
+      defer_statement {
+        child: call_expression {
+          function: selector_expression { field: field_identifier @unlock }
+        }
+      },
+    ] {
+      where { text(@unlock) in ["Unlock", "RUnlock"] }
+    }
+  }
+
+  emit @match { message "Lock without a following Unlock in the same block" }
+}
+```
+
+Two consequences follow from siblings-only, anchored matching. Capture the
+statement, not the expression inside it: both grammars wrap a call statement
+(`block` - `expression_statement` - `call_expression` in go), so a rule that
+captures the `call_expression` sees the wrapper as its parent and an empty
+sibling set. And a match nested deeper in a later sibling does not count: an
+`Unlock` inside a closure in a following statement leaves the `Lock` flagged,
+because `follows` never descends. Neither predicate takes an `until` boundary.
+
+A subject with no parent, or one whose siblings are all on the wrong side,
+makes `follows` and `precedes` false and their negated forms true. A subject
+capture that is unbound in the matched alternation branch makes the predicate
+false in both polarities, the same fail-closed rule the other compositions
+follow.
+
 A nested matcher may bind its own captures and filter them with a trailing
 `where` block; those captures stay scoped to the nested matcher. `count`
 compares the number of nested matches: `count @match return_statement > 3`.
 A node never contains itself: matches spanning exactly the subject node's
-range do not count for `inside`, `has`, or `count`.
+range do not count for `inside`, `has`, `count`, `follows`, or `precedes`.
 
 Predicates in a `where` block are conjoined. `any { }` groups predicates into
 a disjunction - the match survives when at least one member passes - and

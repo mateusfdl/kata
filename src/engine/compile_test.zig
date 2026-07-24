@@ -39,7 +39,7 @@ fn predicateArgs(predicate: rule.Predicate) []const rule.PredicateOperand {
     return switch (predicate) {
         .eq, .not_eq, .any_of, .not_any_of, .starts_with, .not_starts_with, .ends_with, .not_ends_with, .contains, .not_contains, .glob, .not_glob, .captured, .not_captured => |args| args,
         .match, .not_match => |p| p.args,
-        .has, .not_has, .inside, .not_inside, .parent, .not_parent => |p| p.args,
+        .has, .not_has, .inside, .not_inside, .parent, .not_parent, .follows, .not_follows, .precedes, .not_precedes => |p| p.args,
         .count => |p| p.args,
         .where, .any_group, .all_group => unreachable,
     };
@@ -61,7 +61,7 @@ fn regexPredicate(predicate: rule.Predicate) rule.RegexPredicate {
 
 fn nestedPredicate(predicate: rule.Predicate) rule.NestedPredicate {
     return switch (predicate) {
-        .has, .not_has, .inside, .not_inside, .parent, .not_parent => |p| p,
+        .has, .not_has, .inside, .not_inside, .parent, .not_parent, .follows, .not_follows, .precedes, .not_precedes => |p| p,
         else => unreachable,
     };
 }
@@ -1887,4 +1887,136 @@ test "compile: needs measures when only the fix template interpolates" {
     defer compiled.deinit();
 
     try std.testing.expectEqual(true, compiled.needs_measures);
+}
+
+test "compile: translates follows and precedes to nested matchers" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule sequenced {
+        \\  lang go
+        \\  match expression_statement @match
+        \\  where {
+        \\    not follows @match expression_statement
+        \\    precedes @match return_statement
+        \\  }
+        \\  emit @match { message "sequenced" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const predicates = compiled.patterns[0].meta.predicates;
+    try std.testing.expectEqual(@as(usize, 2), predicates.len);
+    try std.testing.expectEqual(rule.PredicateOp.not_follows, std.meta.activeTag(predicates[0]));
+    try std.testing.expectEqual(rule.PredicateOp.precedes, std.meta.activeTag(predicates[1]));
+
+    const follows = nestedPredicate(predicates[0]);
+    try std.testing.expectEqual(@as(usize, 1), follows.args.len);
+    try std.testing.expectEqual(compiled.patterns[0].match_capture_id.?, follows.args[0].capture);
+    try std.testing.expect(follows.matcher.root_capture_id < follows.matcher.capture_count);
+    try std.testing.expectEqual(@as(usize, 0), follows.until_kinds.len);
+    try std.testing.expect(!compiled.needs_measures);
+}
+
+test "compile: rejects follows with an unknown subject capture" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang go
+        \\  match expression_statement @match
+        \\  where {
+        \\    follows @nope expression_statement
+        \\  }
+        \\  emit @match { message "bad" }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+    try std.testing.expectError(error.UnknownCapture, compile.compile(gpa, .go, file, &diag));
+    try std.testing.expectEqualStrings("unknown capture", diag.detail);
+}
+
+test "compile: measures in a follows nested where set needs_measures" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule long-neighbour {
+        \\  lang go
+        \\  match expression_statement @match
+        \\  where {
+        \\    follows @match func_literal @fn {
+        \\      where {
+        \\        length(@fn) > 3
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @match { message "long neighbour" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    try std.testing.expectEqual(rule.PredicateOp.follows, std.meta.activeTag(compiled.patterns[0].meta.predicates[0]));
+    try std.testing.expectEqual(true, compiled.needs_measures);
+}
+
+test "compile: follows filters diagnostics by later siblings" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var compiled = try compileDsl(gpa, arena.allocator(), .go,
+        \\rule lock-without-unlock {
+        \\  lang go
+        \\  match expression_statement @match {
+        \\    child: call_expression {
+        \\      function: selector_expression {
+        \\        field: field_identifier @method
+        \\      }
+        \\    }
+        \\  }
+        \\  where {
+        \\    text(@method) == "Lock"
+        \\    not follows @match expression_statement {
+        \\      child: call_expression {
+        \\        function: selector_expression {
+        \\          field: field_identifier @unlock
+        \\        }
+        \\      }
+        \\      where {
+        \\        text(@unlock) == "Unlock"
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @match { message "Lock without a following Unlock" }
+        \\}
+    );
+    defer compiled.deinit();
+
+    const guarded =
+        \\package main
+        \\func f() {
+        \\    mu.Lock()
+        \\    mu.Unlock()
+        \\}
+    ;
+    const clean = try runCompiled(arena.allocator(), &compiled, .go, guarded, null);
+    try std.testing.expectEqual(@as(usize, 0), clean.len);
+
+    const leaked =
+        \\package main
+        \\func f() {
+        \\    mu.Lock()
+        \\    do()
+        \\}
+    ;
+    const flagged = try runCompiled(arena.allocator(), &compiled, .go, leaked, null);
+    try std.testing.expectEqual(@as(usize, 1), flagged.len);
+    try std.testing.expectEqualStrings("lock-without-unlock", flagged[0].rule_id);
+    try std.testing.expectEqual(@as(u32, 2), flagged[0].range.start.line);
 }

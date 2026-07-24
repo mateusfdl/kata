@@ -146,6 +146,10 @@ fn evalOne(
         .not_inside => |p| evalInside(p, match, ctx, true),
         .parent => |p| evalParent(p, match, ctx, false),
         .not_parent => |p| evalParent(p, match, ctx, true),
+        .follows => |p| evalSequence(p, match, ctx, .follows, false),
+        .not_follows => |p| evalSequence(p, match, ctx, .follows, true),
+        .precedes => |p| evalSequence(p, match, ctx, .precedes, false),
+        .not_precedes => |p| evalSequence(p, match, ctx, .precedes, true),
         .count => |p| evalCount(p, match, ctx),
         .any_group => |members| evalAnyGroup(members, match, ctx),
         .all_group => |members| evaluate(members, match, ctx),
@@ -254,6 +258,48 @@ const EnclosingSink = struct {
         self.done = true;
     }
 };
+
+const Direction = enum { follows, precedes };
+
+fn evalSequence(
+    pred: rule.NestedPredicate,
+    match: query.Match,
+    ctx: EvalContext,
+    direction: Direction,
+    negate: bool,
+) std.mem.Allocator.Error!bool {
+    const subject = subjectNode(pred.args, match) orelse return false;
+    const parent = subject.parent() orelse return negate;
+
+    var siblings = parent.namedChildren();
+    while (siblings.next()) |candidate| {
+        if (!inDirection(direction, subject, candidate)) continue;
+        if (try siblingMatches(pred.matcher, candidate, subject, ctx)) return !negate;
+    }
+
+    return negate;
+}
+
+fn inDirection(direction: Direction, subject: Node, candidate: Node) bool {
+    return switch (direction) {
+        .follows => candidate.startByte() >= subject.endByte(),
+        .precedes => candidate.endByte() <= subject.startByte(),
+    };
+}
+
+fn siblingMatches(
+    nested: *const rule.NestedMatcher,
+    candidate: Node,
+    subject: Node,
+    ctx: EvalContext,
+) std.mem.Allocator.Error!bool {
+    if (sameRange(candidate, subject)) return false;
+
+    var sink: EnclosingSink = .{ .matcher = nested, .subject = subject, .ctx = ctx };
+    try query.streamAt(ctx.allocator, &nested.pattern, nested.capture_count, candidate, &sink);
+
+    return sink.found;
+}
 
 fn evalCount(
     pred: rule.CountPredicate,

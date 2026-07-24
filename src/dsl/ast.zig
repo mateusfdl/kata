@@ -99,6 +99,8 @@ pub const CompositionOp = enum {
     inside,
     has,
     parent,
+    follows,
+    precedes,
 };
 
 pub const CountPredicate = struct {

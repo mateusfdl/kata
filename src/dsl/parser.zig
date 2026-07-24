@@ -74,6 +74,8 @@ const Keyword = enum {
     inside,
     has,
     parent,
+    follows,
+    precedes,
     count,
     not,
     in,
@@ -682,7 +684,7 @@ pub const Parser = struct {
                 return error.ExpectedComposition;
             };
 
-            if (op != .inside and op != .has and op != .parent) {
+            if (compositionOp(op) == null) {
                 self.failAt(inner);
 
                 return error.ExpectedComposition;
@@ -700,12 +702,7 @@ pub const Parser = struct {
         }
 
         return .{ .composition = .{
-            .op = switch (op) {
-                .inside => .inside,
-                .has => .has,
-                .parent => .parent,
-                else => unreachable,
-            },
+            .op = compositionOp(op).?,
             .negated = negated,
             .matcher = matcher,
             .until = until,
@@ -1200,10 +1197,23 @@ fn compositionKeyword(token: Token) ?Keyword {
     if (isKeyword(token, .inside)) return .inside;
     if (isKeyword(token, .has)) return .has;
     if (isKeyword(token, .parent)) return .parent;
+    if (isKeyword(token, .follows)) return .follows;
+    if (isKeyword(token, .precedes)) return .precedes;
     if (isKeyword(token, .count)) return .count;
     if (isKeyword(token, .not)) return .not;
 
     return null;
+}
+
+fn compositionOp(keyword: Keyword) ?ast.CompositionOp {
+    return switch (keyword) {
+        .inside => .inside,
+        .has => .has,
+        .parent => .parent,
+        .follows => .follows,
+        .precedes => .precedes,
+        else => null,
+    };
 }
 
 fn hasAnonymousRoot(pattern: ast.NodePattern) bool {
