@@ -30,7 +30,7 @@ func (r Runner) Wait(ctx context.Context, id string) error {
 }
 
 // kata-expect: context-first-param
-var handle = func(id string, ctx context.Context) error {
+var handleLate = func(id string, ctx context.Context) error {
 	return ctx.Err()
 }
 
