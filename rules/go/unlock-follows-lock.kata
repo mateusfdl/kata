@@ -1,0 +1,35 @@
+rule unlock-follows-lock {
+  maturity experimental
+
+  lang go
+
+  match expression_statement @match {
+    child: call_expression {
+      function: selector_expression {
+        field: field_identifier @method
+      }
+    }
+  }
+
+  where {
+    text(@method) in ["Lock", "RLock"]
+    not follows @match [
+      expression_statement {
+        child: call_expression {
+          function: selector_expression { field: field_identifier @unlock }
+        }
+      },
+      defer_statement {
+        child: call_expression {
+          function: selector_expression { field: field_identifier @unlock }
+        }
+      },
+    ] {
+      where { text(@unlock) in ["Unlock", "RUnlock"] }
+    }
+  }
+
+  emit @match {
+    message "{text(@method)} without a following Unlock in the same block - pair it with defer mu.Unlock() right after the lock"
+  }
+}
