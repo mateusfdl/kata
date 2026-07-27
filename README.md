@@ -391,7 +391,8 @@ ratchet: true
 
 Schema:
 
-- Top-level keys: `rules`, `project-rules`, `ratchet`, `max-matches-per-file`.
+- Top-level keys: `rules`, `project-rules`, `ratchet`, `max-matches-per-file`,
+  `daemon-autostart`.
 - `rules:` nests scope keys, each scope nests rule ids: `go`, `ts`, `tsx`,
   `typescript` (both `ts` and `tsx`), and `project` (DSL project rules).
 - A listed rule is active. `enabled: false` deactivates it; `enabled: true`
@@ -411,6 +412,9 @@ Schema:
   pattern, and they drown the findings that matter for an agent hook consumer.
   Capping bounds output only: suppressed error-severity findings still count
   toward the exit code and the report summary.
+- `daemon-autostart: true` (top-level, default false) lets a one-shot check
+  start the daemon in the background when no live socket is found. The check
+  itself still runs in process; the daemon is there for the next call.
 - Listing the same rule twice for one scope is an error, including a
   `typescript` entry overlapping a `ts` or `tsx` entry for the same id.
 - Entries matching no available rule are ignored.
@@ -429,7 +433,7 @@ Schema:
 Errors are reported with a line number and abort startup:
 
 ```
-kata: rules.yaml: line 1: unknown top-level key (expected 'rules', 'project-rules', 'ratchet', or 'max-matches-per-file')
+kata: rules.yaml: line 1: unknown top-level key (expected 'rules', 'project-rules', 'ratchet', 'max-matches-per-file', or 'daemon-autostart')
 ```
 
 The daemon reads the global `rules.yaml` once at startup. Edit the file then

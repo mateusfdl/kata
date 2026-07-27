@@ -62,7 +62,8 @@
             + lib.optionalString cfg.settings.ratchet "ratchet: true\n"
             + lib.optionalString (
               cfg.settings.maxMatchesPerFile != null
-            ) "max-matches-per-file: ${toString cfg.settings.maxMatchesPerFile}\n";
+            ) "max-matches-per-file: ${toString cfg.settings.maxMatchesPerFile}\n"
+            + lib.optionalString cfg.settings.daemonAutostart "daemon-autostart: true\n";
         in
         {
           options.programs.kata = {
@@ -176,6 +177,12 @@
                 type = lib.types.nullOr lib.types.ints.unsigned;
                 default = null;
                 description = "Default per-rule-per-file diagnostic cap (kata defaults to 25 when unset).";
+              };
+
+              daemonAutostart = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Start the daemon in the background when a one-shot check finds no live socket.";
               };
             };
           };

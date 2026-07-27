@@ -524,8 +524,12 @@ test "errorMessage: returns descriptive text for known errors" {
         config.errorMessage(error.TabInIndent),
     );
     try std.testing.expectEqualStrings(
-        "unknown top-level key (expected 'rules', 'project-rules', 'ratchet', or 'max-matches-per-file')",
+        "unknown top-level key (expected 'rules', 'project-rules', 'ratchet', 'max-matches-per-file', or 'daemon-autostart')",
         config.errorMessage(error.UnknownTopLevelKey),
+    );
+    try std.testing.expectEqualStrings(
+        "daemon-autostart must be 'true' or 'false'",
+        config.errorMessage(error.InvalidDaemonAutostartValue),
     );
 }
 
@@ -1100,6 +1104,42 @@ test "rules: max-matches defaults to null" {
 
 test "rules: invalid max-matches value is rejected" {
     try expectParseErr("rules:\n  ts:\n    no-as-any:\n      max-matches: -1\n", error.InvalidMaxMatchesValue, 4);
+}
+
+test "config: daemon-autostart defaults to absent" {
+    var cfg = try expectParseOk("");
+    defer cfg.deinit();
+    try std.testing.expectEqual(false, cfg.present.daemon_autostart);
+    try std.testing.expectEqual(false, cfg.daemon_autostart);
+}
+
+test "config: parses top-level daemon-autostart" {
+    var cfg = try expectParseOk("daemon-autostart: true\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(true, cfg.present.daemon_autostart);
+    try std.testing.expectEqual(true, cfg.daemon_autostart);
+}
+
+test "config: rejects a non-boolean daemon-autostart" {
+    try expectParseErr("daemon-autostart: yes\n", error.InvalidDaemonAutostartValue, 1);
+}
+
+test "config: resolve carries daemon-autostart with a default of false" {
+    var global = try expectParseOk("daemon-autostart: true\n");
+    defer global.deinit();
+    var project = try expectParseOk("daemon-autostart: false\n");
+    defer project.deinit();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const with_global = try config.resolve(arena.allocator(), &global, null);
+    try std.testing.expectEqual(true, with_global.daemon_autostart);
+
+    const overridden = try config.resolve(arena.allocator(), &global, &project);
+    try std.testing.expectEqual(false, overridden.daemon_autostart);
+
+    const without = try config.resolve(arena.allocator(), null, null);
+    try std.testing.expectEqual(false, without.daemon_autostart);
 }
 
 test "config: resolve carries max-matches-per-file with a default of 25" {

@@ -18,6 +18,7 @@ pub const Presence = struct {
     project_rules: bool = false,
     ratchet: bool = false,
     max_matches_per_file: bool = false,
+    daemon_autostart: bool = false,
 };
 
 pub const Config = struct {
@@ -25,6 +26,7 @@ pub const Config = struct {
     project_rules: []const project_rule.ProjectRule,
     ratchet: bool,
     max_matches_per_file: u32,
+    daemon_autostart: bool,
     present: Presence,
     arena: *std.heap.ArenaAllocator,
 
@@ -40,6 +42,7 @@ pub const Resolved = struct {
     project_rules: []const project_rule.ProjectRule = &.{},
     ratchet: bool = false,
     max_matches_per_file: u32 = 25,
+    daemon_autostart: bool = false,
 };
 
 pub fn resolve(
@@ -93,6 +96,7 @@ fn applyPresent(out: *Resolved, cfg_opt: ?*const Config) void {
     if (cfg.present.project_rules) out.project_rules = cfg.project_rules;
     if (cfg.present.ratchet) out.ratchet = cfg.ratchet;
     if (cfg.present.max_matches_per_file) out.max_matches_per_file = cfg.max_matches_per_file;
+    if (cfg.present.daemon_autostart) out.daemon_autostart = cfg.daemon_autostart;
 }
 
 pub const ParseError = error{
@@ -111,6 +115,7 @@ pub const ParseError = error{
     WrongKindProjectRuleKey,
     IncompleteImportBoundary,
     InvalidRatchetValue,
+    InvalidDaemonAutostartValue,
     UnknownScope,
     MalformedRuleEntry,
     UnknownRuleKey,
@@ -128,7 +133,7 @@ pub const Diagnostic = struct {
 
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
-        error.UnknownTopLevelKey => "unknown top-level key (expected 'rules', 'project-rules', 'ratchet', or 'max-matches-per-file')",
+        error.UnknownTopLevelKey => "unknown top-level key (expected 'rules', 'project-rules', 'ratchet', 'max-matches-per-file', or 'daemon-autostart')",
         error.TabInIndent => "tabs are not allowed in indentation",
         error.BadIndent => "indent must be 0 or 2 spaces",
         error.MalformedListItem => "list item must be '  - <rule-id>'",
@@ -143,6 +148,7 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.WrongKindProjectRuleKey => "'callee-suffix' and 'caller-suffix' apply to restricted-callers; 'from' and 'deny' apply to import-boundary",
         error.IncompleteImportBoundary => "import-boundary requires 'from' and 'deny'",
         error.InvalidRatchetValue => "ratchet must be 'true' or 'false'",
+        error.InvalidDaemonAutostartValue => "daemon-autostart must be 'true' or 'false'",
         error.UnknownScope => "unknown scope (expected 'go', 'ts', 'tsx', 'typescript', or 'project')",
         error.MalformedRuleEntry => "rule must be '    <id>:' followed by indented '<key>: <value>' properties",
         error.UnknownRuleKey => "unknown rule key (expected 'enabled', 'severity', 'fix', or 'exclude')",
@@ -197,6 +203,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     var project_rules: std.ArrayList(project_rule.ProjectRule) = .empty;
     var ratchet = false;
     var max_matches_per_file: u32 = 25;
+    var daemon_autostart = false;
     var present: Presence = .{};
     var pending: ?PendingProjectRule = null;
     var pending_rule: ?PendingRule = null;
@@ -234,6 +241,12 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
             if (std.mem.startsWith(u8, content, "max-matches-per-file:")) {
                 max_matches_per_file = try parseMaxMatchesValue(content["max-matches-per-file:".len..]);
                 present.max_matches_per_file = true;
+                state = .top;
+                continue;
+            }
+            if (std.mem.startsWith(u8, content, "daemon-autostart:")) {
+                daemon_autostart = try parseAutostartValue(content["daemon-autostart:".len..]);
+                present.daemon_autostart = true;
                 state = .top;
                 continue;
             }
@@ -311,6 +324,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
         .project_rules = try project_rules.toOwnedSlice(arena),
         .ratchet = ratchet,
         .max_matches_per_file = max_matches_per_file,
+        .daemon_autostart = daemon_autostart,
         .present = present,
         .arena = arena_ptr,
     };
@@ -330,12 +344,11 @@ fn parseMaxMatchesValue(raw: []const u8) ParseError!u32 {
 }
 
 fn parseRatchetValue(raw: []const u8) ParseError!bool {
-    const value = std.mem.trim(u8, raw, " ");
+    return parseBoolValue(std.mem.trim(u8, raw, " "), error.InvalidRatchetValue);
+}
 
-    if (std.mem.eql(u8, value, "true")) return true;
-    if (std.mem.eql(u8, value, "false")) return false;
-
-    return error.InvalidRatchetValue;
+fn parseAutostartValue(raw: []const u8) ParseError!bool {
+    return parseBoolValue(std.mem.trim(u8, raw, " "), error.InvalidDaemonAutostartValue);
 }
 
 fn finalizePending(
