@@ -749,3 +749,100 @@ test "context: undeclared project fact rule stays inactive" {
     try ctx.engine.prewarm();
     try std.testing.expectEqual(@as(usize, 0), ctx.engine.factRules().len);
 }
+
+test "context: rules hash is stable for identical inputs" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "user/ts");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/local.kata", .data = kata_local_old });
+
+    var global = try parseGlobal("rules:\n  ts:\n    local:\n");
+    defer global.deinit();
+
+    var r = s.resolver(try s.path("user"), &global);
+
+    const first = try r.resolve(null);
+    const first_hash = first.rules_hash;
+    first.deinit();
+
+    const second = try r.resolve(null);
+    defer second.deinit();
+
+    try std.testing.expectEqualSlices(u8, &first_hash, &second.rules_hash);
+}
+
+test "context: rules hash changes with rule text" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "user/ts");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/local.kata", .data = kata_local_old });
+
+    var global = try parseGlobal("rules:\n  ts:\n    local:\n");
+    defer global.deinit();
+
+    var r = s.resolver(try s.path("user"), &global);
+    const before = try r.resolve(null);
+    const before_hash = before.rules_hash;
+    before.deinit();
+
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/local.kata", .data = kata_local_new });
+
+    const after = try r.resolve(null);
+    defer after.deinit();
+
+    try std.testing.expect(!std.mem.eql(u8, &before_hash, &after.rules_hash));
+}
+
+test "context: rules hash changes with configured severity" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "user/ts");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/local.kata", .data = kata_local_old });
+
+    var plain = try parseGlobal("rules:\n  ts:\n    local:\n");
+    defer plain.deinit();
+    var warned = try parseGlobal("rules:\n  ts:\n    local:\n      severity: warn\n");
+    defer warned.deinit();
+
+    var r_plain = s.resolver(try s.path("user"), &plain);
+    const plain_ctx = try r_plain.resolve(null);
+    const plain_hash = plain_ctx.rules_hash;
+    plain_ctx.deinit();
+
+    var r_warned = s.resolver(try s.path("user"), &warned);
+    const warned_ctx = try r_warned.resolve(null);
+    defer warned_ctx.deinit();
+
+    try std.testing.expect(!std.mem.eql(u8, &plain_hash, &warned_ctx.rules_hash));
+}
+
+test "context: rules hash changes with the match cap" {
+    const io = std.testing.io;
+    var s = try Setup.init(io);
+    defer s.deinit();
+
+    try s.tmp.dir.createDirPath(io, "user/ts");
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/local.kata", .data = kata_local_old });
+
+    var plain = try parseGlobal("rules:\n  ts:\n    local:\n");
+    defer plain.deinit();
+    var capped = try parseGlobal("rules:\n  ts:\n    local:\nmax-matches-per-file: 3\n");
+    defer capped.deinit();
+
+    var r_plain = s.resolver(try s.path("user"), &plain);
+    const plain_ctx = try r_plain.resolve(null);
+    const plain_hash = plain_ctx.rules_hash;
+    plain_ctx.deinit();
+
+    var r_capped = s.resolver(try s.path("user"), &capped);
+    const capped_ctx = try r_capped.resolve(null);
+    defer capped_ctx.deinit();
+
+    try std.testing.expect(!std.mem.eql(u8, &plain_hash, &capped_ctx.rules_hash));
+}
