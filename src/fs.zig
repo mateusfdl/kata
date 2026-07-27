@@ -3,6 +3,7 @@ pub const discover = @import("fs/discover.zig");
 pub const file = @import("fs/file.zig");
 pub const git = @import("fs/git.zig");
 pub const path = @import("path");
+pub const process = @import("fs/process.zig");
 pub const rules = @import("fs/rules.zig");
 pub const socket = @import("fs/socket.zig");
 pub const source = @import("fs/source.zig");

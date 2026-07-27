@@ -356,6 +356,12 @@ Hook clients therefore need no socket code of their own: spawn `kata`, read the
 report. No staleness handling is needed either, since after a rebuild the old
 socket simply no longer matches.
 
+With `daemon-autostart: true` in `rules.yaml`, a miss also spawns the daemon in
+the background (detached, its own process group, output discarded) for the next
+call; the current call still answers in process. Spawn failures are ignored, and
+racing spawns are harmless: the second daemon finds the socket bound by a live
+process and exits with `kata daemon already running`.
+
 The daemon owns its own configuration: it resolves the global `rules.yaml` and
 `ratchet` setting once at startup, so a warm reply reflects the daemon's config,
 not the caller's. Restart the daemon after editing the global config.

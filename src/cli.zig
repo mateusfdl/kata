@@ -310,12 +310,21 @@ fn runOneShot(c: Command) !u8 {
     const ctx = (try resolveContext(c, request.filename)) orelse return exit_internal_error;
     defer ctx.deinit();
 
+    if (ctx.resolved.daemon_autostart) autostartDaemon(c);
+
     return one_shot.serve(.{
         .engine = &ctx.engine,
         .io = c.io,
         .ratchet = ctx.resolved.ratchet,
         .max_matches = ctx.resolved.max_matches_per_file,
     }, a, request, opts);
+}
+
+fn autostartDaemon(c: Command) void {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const self_path = fs.process.selfPath(c.io, &buf) catch return;
+
+    fs.process.spawnDetached(c.io, &.{ self_path, "daemon" });
 }
 
 fn oneShotOptions(c: Command) one_shot.Options {
