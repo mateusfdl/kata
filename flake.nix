@@ -63,7 +63,8 @@
             + lib.optionalString (
               cfg.settings.maxMatchesPerFile != null
             ) "max-matches-per-file: ${toString cfg.settings.maxMatchesPerFile}\n"
-            + lib.optionalString cfg.settings.daemonAutostart "daemon-autostart: true\n";
+            + lib.optionalString cfg.settings.daemonAutostart "daemon-autostart: true\n"
+            + lib.optionalString cfg.settings.cache "cache: true\n";
         in
         {
           options.programs.kata = {
@@ -183,6 +184,12 @@
                 type = lib.types.bool;
                 default = false;
                 description = "Start the daemon in the background when a one-shot check finds no live socket.";
+              };
+
+              cache = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Remember clean files on disk under XDG_CACHE_HOME so unchanged files skip linting.";
               };
             };
           };

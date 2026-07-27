@@ -398,7 +398,7 @@ ratchet: true
 Schema:
 
 - Top-level keys: `rules`, `project-rules`, `ratchet`, `max-matches-per-file`,
-  `daemon-autostart`.
+  `daemon-autostart`, `cache`.
 - `rules:` nests scope keys, each scope nests rule ids: `go`, `ts`, `tsx`,
   `typescript` (both `ts` and `tsx`), and `project` (DSL project rules).
 - A listed rule is active. `enabled: false` deactivates it; `enabled: true`
@@ -439,7 +439,7 @@ Schema:
 Errors are reported with a line number and abort startup:
 
 ```
-kata: rules.yaml: line 1: unknown top-level key (expected 'rules', 'project-rules', 'ratchet', 'max-matches-per-file', or 'daemon-autostart')
+kata: rules.yaml: line 1: unknown top-level key (expected 'rules', 'project-rules', 'ratchet', 'max-matches-per-file', 'daemon-autostart', or 'cache')
 ```
 
 The daemon reads the global `rules.yaml` once at startup. Edit the file then

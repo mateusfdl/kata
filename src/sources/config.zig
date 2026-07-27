@@ -19,6 +19,7 @@ pub const Presence = struct {
     ratchet: bool = false,
     max_matches_per_file: bool = false,
     daemon_autostart: bool = false,
+    cache: bool = false,
 };
 
 pub const Config = struct {
@@ -27,6 +28,7 @@ pub const Config = struct {
     ratchet: bool,
     max_matches_per_file: u32,
     daemon_autostart: bool,
+    cache: bool,
     present: Presence,
     arena: *std.heap.ArenaAllocator,
 
@@ -43,6 +45,7 @@ pub const Resolved = struct {
     ratchet: bool = false,
     max_matches_per_file: u32 = 25,
     daemon_autostart: bool = false,
+    cache: bool = false,
 };
 
 pub fn resolve(
@@ -97,6 +100,7 @@ fn applyPresent(out: *Resolved, cfg_opt: ?*const Config) void {
     if (cfg.present.ratchet) out.ratchet = cfg.ratchet;
     if (cfg.present.max_matches_per_file) out.max_matches_per_file = cfg.max_matches_per_file;
     if (cfg.present.daemon_autostart) out.daemon_autostart = cfg.daemon_autostart;
+    if (cfg.present.cache) out.cache = cfg.cache;
 }
 
 pub const ParseError = error{
@@ -116,6 +120,7 @@ pub const ParseError = error{
     IncompleteImportBoundary,
     InvalidRatchetValue,
     InvalidDaemonAutostartValue,
+    InvalidCacheValue,
     UnknownScope,
     MalformedRuleEntry,
     UnknownRuleKey,
@@ -133,7 +138,7 @@ pub const Diagnostic = struct {
 
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
-        error.UnknownTopLevelKey => "unknown top-level key (expected 'rules', 'project-rules', 'ratchet', 'max-matches-per-file', or 'daemon-autostart')",
+        error.UnknownTopLevelKey => "unknown top-level key (expected 'rules', 'project-rules', 'ratchet', 'max-matches-per-file', 'daemon-autostart', or 'cache')",
         error.TabInIndent => "tabs are not allowed in indentation",
         error.BadIndent => "indent must be 0 or 2 spaces",
         error.MalformedListItem => "list item must be '  - <rule-id>'",
@@ -149,6 +154,7 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.IncompleteImportBoundary => "import-boundary requires 'from' and 'deny'",
         error.InvalidRatchetValue => "ratchet must be 'true' or 'false'",
         error.InvalidDaemonAutostartValue => "daemon-autostart must be 'true' or 'false'",
+        error.InvalidCacheValue => "cache must be 'true' or 'false'",
         error.UnknownScope => "unknown scope (expected 'go', 'ts', 'tsx', 'typescript', or 'project')",
         error.MalformedRuleEntry => "rule must be '    <id>:' followed by indented '<key>: <value>' properties",
         error.UnknownRuleKey => "unknown rule key (expected 'enabled', 'severity', 'fix', or 'exclude')",
@@ -204,6 +210,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     var ratchet = false;
     var max_matches_per_file: u32 = 25;
     var daemon_autostart = false;
+    var cache = false;
     var present: Presence = .{};
     var pending: ?PendingProjectRule = null;
     var pending_rule: ?PendingRule = null;
@@ -247,6 +254,12 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
             if (std.mem.startsWith(u8, content, "daemon-autostart:")) {
                 daemon_autostart = try parseAutostartValue(content["daemon-autostart:".len..]);
                 present.daemon_autostart = true;
+                state = .top;
+                continue;
+            }
+            if (std.mem.startsWith(u8, content, "cache:")) {
+                cache = try parseCacheValue(content["cache:".len..]);
+                present.cache = true;
                 state = .top;
                 continue;
             }
@@ -325,6 +338,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
         .ratchet = ratchet,
         .max_matches_per_file = max_matches_per_file,
         .daemon_autostart = daemon_autostart,
+        .cache = cache,
         .present = present,
         .arena = arena_ptr,
     };
@@ -349,6 +363,10 @@ fn parseRatchetValue(raw: []const u8) ParseError!bool {
 
 fn parseAutostartValue(raw: []const u8) ParseError!bool {
     return parseBoolValue(std.mem.trim(u8, raw, " "), error.InvalidDaemonAutostartValue);
+}
+
+fn parseCacheValue(raw: []const u8) ParseError!bool {
+    return parseBoolValue(std.mem.trim(u8, raw, " "), error.InvalidCacheValue);
 }
 
 fn finalizePending(

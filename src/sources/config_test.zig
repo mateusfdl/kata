@@ -524,7 +524,7 @@ test "errorMessage: returns descriptive text for known errors" {
         config.errorMessage(error.TabInIndent),
     );
     try std.testing.expectEqualStrings(
-        "unknown top-level key (expected 'rules', 'project-rules', 'ratchet', 'max-matches-per-file', or 'daemon-autostart')",
+        "unknown top-level key (expected 'rules', 'project-rules', 'ratchet', 'max-matches-per-file', 'daemon-autostart', or 'cache')",
         config.errorMessage(error.UnknownTopLevelKey),
     );
     try std.testing.expectEqualStrings(
@@ -1140,6 +1140,42 @@ test "config: resolve carries daemon-autostart with a default of false" {
 
     const without = try config.resolve(arena.allocator(), null, null);
     try std.testing.expectEqual(false, without.daemon_autostart);
+}
+
+test "config: cache defaults to absent" {
+    var cfg = try expectParseOk("");
+    defer cfg.deinit();
+    try std.testing.expectEqual(false, cfg.present.cache);
+    try std.testing.expectEqual(false, cfg.cache);
+}
+
+test "config: parses top-level cache" {
+    var cfg = try expectParseOk("cache: true\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(true, cfg.present.cache);
+    try std.testing.expectEqual(true, cfg.cache);
+}
+
+test "config: rejects a non-boolean cache" {
+    try expectParseErr("cache: sometimes\n", error.InvalidCacheValue, 1);
+}
+
+test "config: resolve carries cache with a default of false" {
+    var global = try expectParseOk("cache: true\n");
+    defer global.deinit();
+    var project = try expectParseOk("cache: false\n");
+    defer project.deinit();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const with_global = try config.resolve(arena.allocator(), &global, null);
+    try std.testing.expectEqual(true, with_global.cache);
+
+    const overridden = try config.resolve(arena.allocator(), &global, &project);
+    try std.testing.expectEqual(false, overridden.cache);
+
+    const without = try config.resolve(arena.allocator(), null, null);
+    try std.testing.expectEqual(false, without.cache);
 }
 
 test "config: resolve carries max-matches-per-file with a default of 25" {
