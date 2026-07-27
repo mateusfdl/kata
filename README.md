@@ -33,6 +33,11 @@ make test             # unit tests
 | `kata new-rule <lang> <id>` | Scaffold a `.kata` template under `$XDG_CONFIG_HOME/kata/rules/<lang>/<id>.kata`. Refuses to overwrite. |
 | `kata --lang=<ts\|tsx\|go> < src` | One-shot: read source on stdin, emit a JSON report. `--filename=<path>` infers the language. |
 
+One-shot mode runs the same pipeline the daemon serves for a single buffer:
+configured rules, ratchet demotion when `ratchet: true`, and match caps. Cross-file
+project rules are the one exception; they need an indexed tree, which only
+`kata daemon --root <dir>` and `kata check` build.
+
 When checking a directory, `kata` honors full gitignore semantics: globs, character
 classes, `**`, negations, anchoring, dir-only patterns, and nested `.gitignore` files
 (deeper files override shallower ones, last matching pattern wins). Scopes are loaded

@@ -17,7 +17,6 @@ const one_shot = @import("cli/one_shot.zig");
 const output = @import("cli/output.zig");
 const query = @import("cli/query.zig");
 
-const Engine = lint.Engine;
 const language = lint.language;
 const daemon = server.daemon;
 const protocol = server.protocol;
@@ -299,7 +298,12 @@ fn runOneShot(c: Command) !u8 {
     const ctx = (try resolveContext(c, one_shot.anchorOf(c.args))) orelse return exit_internal_error;
     defer ctx.deinit();
 
-    return one_shot.run(c.gpa, &ctx.engine, .{
+    return one_shot.run(c.gpa, .{
+        .engine = &ctx.engine,
+        .io = c.io,
+        .ratchet = ctx.resolved.ratchet,
+        .max_matches = ctx.resolved.max_matches_per_file,
+    }, .{
         .args = c.args,
         .stdin = c.stdin,
         .stdout = c.stdout,
@@ -477,10 +481,10 @@ fn resolveSocketPath(
 
 pub fn run(
     allocator: std.mem.Allocator,
-    engine: *Engine,
+    ctx: daemon.Context,
     opts: Options,
 ) !u8 {
-    return one_shot.run(allocator, engine, opts);
+    return one_shot.run(allocator, ctx, opts);
 }
 
 fn printAndExit(stderr: *std.Io.Writer, message: []const u8, code: u8) !u8 {

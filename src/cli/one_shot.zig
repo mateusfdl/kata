@@ -4,10 +4,13 @@ const args_mod = @import("args.zig");
 const exit = @import("exit.zig");
 const output = @import("output.zig");
 const lint = @import("engine");
+const server = @import("../server.zig");
 
 const Engine = lint.Engine;
 const diagnostic = lint.diagnostic;
 const language = lint.language;
+const daemon = server.daemon;
+const protocol = server.protocol;
 
 pub const Options = struct {
     args: []const [:0]const u8,
@@ -20,12 +23,12 @@ const usage_line = "usage: kata --lang=<ts|tsx|go> [--filename=<path>] < source\
 
 pub fn run(
     allocator: std.mem.Allocator,
-    engine: *Engine,
+    ctx: daemon.Context,
     opts: Options,
 ) !u8 {
     const parsed = parseFlags(opts.args) catch return try usageError(opts.stderr);
 
-    if (!try engine.prewarmOrReport("kata", opts.stderr)) return exit.internal_error;
+    if (!try ctx.engine.prewarmOrReport("kata", opts.stderr)) return exit.internal_error;
 
     const lang = switch (language.resolve(parsed.lang_flag, parsed.filename)) {
         .ok => |n| n,
@@ -40,32 +43,26 @@ pub fn run(
     const source = opts.stdin.allocRemaining(arena.allocator(), .unlimited) catch |err|
         return try output.internal(opts.stderr, "read stdin", err, exit.internal_error);
 
-    const diagnostics = engine.lint(arena.allocator(), source, lang, parsed.filename) catch |err|
-        return try output.internal(opts.stderr, "lint", err, exit.internal_error);
+    const response = daemon.handle(ctx, arena.allocator(), .{
+        .language = lang.toString(),
+        .filename = if (parsed.filename.len > 0) parsed.filename else null,
+        .source = source,
+    });
 
-    lint.fingerprint.assign(arena.allocator(), parsed.filename, source, diagnostics) catch |err|
-        return try output.internal(opts.stderr, "fingerprint", err, exit.internal_error);
+    const report = response.report orelse
+        return try output.format(opts.stderr, "kata: {s}\n", .{response.message orelse "lint failed"}, exit.internal_error);
 
-    writeReport(opts.stdout, lang, diagnostics) catch |err|
+    writeReport(opts.stdout, report) catch |err|
         return try output.internal(opts.stderr, "encode report", err, exit.internal_error);
 
-    return if (diagnostic.hasErrors(diagnostics)) exit.violations else exit.clean;
+    return if (report.clean) exit.clean else exit.violations;
 }
 
 fn usageError(stderr: *std.Io.Writer) !u8 {
     return output.message(stderr, usage_line, exit.usage);
 }
 
-fn writeReport(
-    stdout: *std.Io.Writer,
-    lang: language.Name,
-    diagnostics: []const diagnostic.Diagnostic,
-) !void {
-    const report: diagnostic.Report = .{
-        .language = lang.toString(),
-        .diagnostics = diagnostics,
-        .clean = !diagnostic.hasErrors(diagnostics),
-    };
+fn writeReport(stdout: *std.Io.Writer, report: diagnostic.Report) !void {
     try std.json.Stringify.value(report, .{ .whitespace = .indent_2 }, stdout);
     try stdout.writeAll("\n");
     try stdout.flush();

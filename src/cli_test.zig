@@ -7,10 +7,14 @@ const build_options = @import("build_options");
 const check = @import("cli/check.zig");
 
 const diagnostic = @import("engine").diagnostic;
-const Engine = @import("engine").Engine;
+const daemon = @import("server.zig").daemon;
 
 fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
     return test_fixture.Fixture.init(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule);
+}
+
+fn oneShotContext(f: *test_fixture.Fixture) daemon.Context {
+    return .{ .engine = &f.engine, .io = std.testing.io };
 }
 
 const RunResult = struct {
@@ -26,7 +30,7 @@ const RunResult = struct {
 
 fn runCli(
     allocator: std.mem.Allocator,
-    engine: *Engine,
+    ctx: daemon.Context,
     args: []const [:0]const u8,
     stdin_bytes: []const u8,
 ) !RunResult {
@@ -36,7 +40,7 @@ fn runCli(
     var stderr_buf: std.Io.Writer.Allocating = .init(allocator);
     errdefer stderr_buf.deinit();
 
-    const code = try cli.run(allocator, engine, .{
+    const code = try cli.run(allocator, ctx, .{
         .args = args,
         .stdin = &stdin,
         .stdout = &stdout_buf.writer,
@@ -92,7 +96,7 @@ test "cli: clean source exits 0" {
     defer f.deinit();
 
     const args: []const [:0]const u8 = &.{"--lang=ts"};
-    const r = try runCli(gpa, &f.engine, args, "const x: string = \"ok\";");
+    const r = try runCli(gpa, oneShotContext(f), args, "const x: string = \"ok\";");
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(@as(u8, cli.exit_clean), r.code);
@@ -111,7 +115,7 @@ test "cli: violation exits 2" {
     defer f.deinit();
 
     const args: []const [:0]const u8 = &.{"--lang=ts"};
-    const r = try runCli(gpa, &f.engine, args, "const x = (foo[0] as any).bar;");
+    const r = try runCli(gpa, oneShotContext(f), args, "const x = (foo[0] as any).bar;");
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(@as(u8, cli.exit_violations), r.code);
@@ -135,7 +139,7 @@ test "cli: --filename infers language" {
     defer f.deinit();
 
     const args: []const [:0]const u8 = &.{"--filename=/tmp/foo.tsx"};
-    const r = try runCli(gpa, &f.engine, args, "const x = foo as any;");
+    const r = try runCli(gpa, oneShotContext(f), args, "const x = foo as any;");
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(@as(u8, cli.exit_violations), r.code);
@@ -151,7 +155,7 @@ test "cli: missing --lang exits usage (64)" {
     defer f.deinit();
 
     const args: []const [:0]const u8 = &.{};
-    const r = try runCli(gpa, &f.engine, args, "x");
+    const r = try runCli(gpa, oneShotContext(f), args, "x");
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(@as(u8, cli.exit_usage), r.code);
@@ -164,7 +168,7 @@ test "cli: unsupported --lang exits internal (70)" {
     defer f.deinit();
 
     const args: []const [:0]const u8 = &.{"--lang=python"};
-    const r = try runCli(gpa, &f.engine, args, "print('hi')");
+    const r = try runCli(gpa, oneShotContext(f), args, "print('hi')");
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(@as(u8, cli.exit_internal_error), r.code);
@@ -177,11 +181,76 @@ test "cli: unknown extension exits usage (64)" {
     defer f.deinit();
 
     const args: []const [:0]const u8 = &.{"--filename=foo.rs"};
-    const r = try runCli(gpa, &f.engine, args, "fn main() {}");
+    const r = try runCli(gpa, oneShotContext(f), args, "fn main() {}");
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(@as(u8, cli.exit_usage), r.code);
     try std.testing.expect(std.mem.indexOf(u8, r.stderr, "cannot infer language") != null);
+}
+
+test "cli: one-shot caps a flooding rule and stays unclean" {
+    const gpa = std.testing.allocator;
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var ctx = oneShotContext(f);
+    ctx.max_matches = 1;
+
+    const args: []const [:0]const u8 = &.{"--lang=ts"};
+    const r = try runCli(gpa, ctx, args, "const a = v as any;\n" ++
+        "const b = v as any;\n" ++
+        "const c = v as any;\n" ++
+        "const d = v as any;\n" ++
+        "const e = v as any;\n");
+    defer r.deinit(gpa);
+
+    try std.testing.expectEqual(@as(u8, cli.exit_violations), r.code);
+
+    const parsed = try std.json.parseFromSlice(Report, gpa, r.stdout, .{});
+    defer parsed.deinit();
+
+    try std.testing.expect(!parsed.value.clean);
+    try std.testing.expectEqual(@as(usize, 4), parsed.value.diagnostics.len);
+    try std.testing.expectEqual(false, parsed.value.diagnostics[0].capped);
+    try std.testing.expectEqual(true, parsed.value.diagnostics[3].capped);
+    try std.testing.expectEqualStrings(
+        "rule no-as-any fired 5 times in this file; showing 3, suppressed 2; a flood usually means a broken pattern or wrong scope",
+        parsed.value.diagnostics[3].message,
+    );
+}
+
+test "cli: one-shot demotes a ratcheted violation to warn" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const a = x as any;\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const filename = try std.fmt.allocPrint(gpa, "--filename={s}/a.ts", .{dir});
+    defer gpa.free(filename);
+    const filename_z = try gpa.dupeZ(u8, filename);
+    defer gpa.free(filename_z);
+
+    var ctx = oneShotContext(f);
+    ctx.ratchet = true;
+
+    const args: []const [:0]const u8 = &.{filename_z};
+    const r = try runCli(gpa, ctx, args, "const a = x as any;\n");
+    defer r.deinit(gpa);
+
+    const parsed = try std.json.parseFromSlice(Report, gpa, r.stdout, .{});
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), parsed.value.diagnostics.len);
+    try std.testing.expectEqualStrings("warn", parsed.value.diagnostics[0].severity);
+    try std.testing.expectEqual(true, parsed.value.diagnostics[0].demoted);
+    try std.testing.expect(parsed.value.clean);
+    try std.testing.expectEqual(@as(u8, cli.exit_clean), r.code);
 }
 
 test "parseSubcommand: bare command runs the daemon without a root" {
