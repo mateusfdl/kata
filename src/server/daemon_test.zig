@@ -129,6 +129,59 @@ test "daemon: processConnection frames a lint response and keeps serving" {
     try std.testing.expectEqualStrings("as any is not allowed", report.diagnostics[0].message);
 }
 
+test "daemon: answers a client-encoded request over a unix socket" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var path_buf: [256]u8 = undefined;
+    const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const socket_path = try std.fmt.allocPrint(a, "{s}/kata-test.sock", .{dir});
+
+    const address = try std.Io.net.UnixAddress.init(socket_path);
+    var listener = try address.listen(io, .{});
+    defer listener.deinit(io);
+
+    const client_stream = try address.connect(io);
+    defer client_stream.close(io);
+
+    var client_write_buf: [4096]u8 = undefined;
+    var client_writer = client_stream.writer(io, &client_write_buf);
+    try protocol.encode(a, &client_writer.interface, protocol.Request{
+        .language = "ts",
+        .source = "const x = (foo[0] as any).bar;",
+    });
+
+    const served = try listener.accept(io);
+    defer served.close(io);
+
+    var server_read_buf: [4096]u8 = undefined;
+    var server_write_buf: [4096]u8 = undefined;
+    var server_reader = served.reader(io, &server_read_buf);
+    var server_writer = served.writer(io, &server_write_buf);
+
+    const stop = daemon.processConnection(gpa, context(f), &server_reader.interface, &server_writer.interface);
+    try std.testing.expect(!stop);
+
+    var client_read_buf: [4096]u8 = undefined;
+    var client_reader = client_stream.reader(io, &client_read_buf);
+    const parsed = try protocol.decode(protocol.Response, a, &client_reader.interface);
+
+    try std.testing.expectEqual(protocol.Status.ok, parsed.value.status);
+    const report = parsed.value.report.?;
+    try std.testing.expectEqualStrings("ts", report.language);
+    try std.testing.expect(!report.clean);
+    try std.testing.expectEqual(@as(usize, 1), report.diagnostics.len);
+    try std.testing.expectEqualStrings("as any is not allowed", report.diagnostics[0].message);
+}
+
 test "daemon: processConnection stops on a shutdown request" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa);

@@ -295,20 +295,42 @@ fn resolveContext(c: Command, anchor: ?[]const u8) !?*context_mod.Context {
 }
 
 fn runOneShot(c: Command) !u8 {
-    const ctx = (try resolveContext(c, one_shot.anchorOf(c.args))) orelse return exit_internal_error;
+    var arena = std.heap.ArenaAllocator.init(c.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const opts = oneShotOptions(c);
+    const request = switch (try one_shot.prepare(a, opts)) {
+        .ready => |r| r,
+        .failed => |code| return code,
+    };
+
+    if (daemonReport(c, a, request)) |response| return one_shot.report(opts, response);
+
+    const ctx = (try resolveContext(c, request.filename)) orelse return exit_internal_error;
     defer ctx.deinit();
 
-    return one_shot.run(c.gpa, .{
+    return one_shot.serve(.{
         .engine = &ctx.engine,
         .io = c.io,
         .ratchet = ctx.resolved.ratchet,
         .max_matches = ctx.resolved.max_matches_per_file,
-    }, .{
+    }, a, request, opts);
+}
+
+fn oneShotOptions(c: Command) one_shot.Options {
+    return .{
         .args = c.args,
         .stdin = c.stdin,
         .stdout = c.stdout,
         .stderr = c.stderr,
-    });
+    };
+}
+
+fn daemonReport(c: Command, arena: std.mem.Allocator, request: protocol.Request) ?protocol.Response {
+    const socket_path = resolveSocketPath(c) catch return null;
+
+    return server.client.request(c.io, arena, socket_path, request);
 }
 
 fn runNewRule(
@@ -450,15 +472,8 @@ fn runStop(c: Command) !u8 {
     const socket_path = resolveSocketPath(c) catch |err|
         return internalError(c.stderr, "resolve socket path", err);
 
-    const address = std.Io.net.UnixAddress.init(socket_path) catch |err|
-        return internalError(c.stderr, "socket path", err);
-
-    const stream = address.connect(c.io) catch return printAndExit(c.stderr, "no kata daemon running\n", exit_clean);
-    defer stream.close(c.io);
-
-    var write_buf: [512]u8 = undefined;
-    var writer = stream.writer(c.io, &write_buf);
-    try protocol.encode(c.arena, &writer.interface, protocol.Request{ .shutdown = true });
+    if (server.client.request(c.io, c.arena, socket_path, .{ .shutdown = true }) == null)
+        return printAndExit(c.stderr, "no kata daemon running\n", exit_clean);
 
     try c.stdout.writeAll("kata daemon stopped\n");
     try c.stdout.flush();

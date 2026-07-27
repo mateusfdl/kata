@@ -347,10 +347,18 @@ Response:
   "report": { "language", "diagnostics", "clean" }|null, "message": <text>|null }
 ```
 
-Hook clients resolve the same stamped path (version from `kata --version`,
-mtime from the executable), autostart the daemon if the socket is absent, and
-fall back to one-shot mode when neither is possible. No staleness handling is
-needed: after a rebuild the old socket simply no longer matches.
+One-shot mode is the client: `kata --filename=<path> < source` resolves the
+stamped path, sends the request, and prints the daemon's report. If the socket
+is absent, the connection is refused, or the reply is unusable, it silently runs
+the same pipeline in process instead, so a check never fails because the daemon
+is missing, wedged, or mid-upgrade. The only cost of a miss is a cold parse.
+Hook clients therefore need no socket code of their own: spawn `kata`, read the
+report. No staleness handling is needed either, since after a rebuild the old
+socket simply no longer matches.
+
+The daemon owns its own configuration: it resolves the global `rules.yaml` and
+`ratchet` setting once at startup, so a warm reply reflects the daemon's config,
+not the caller's. Restart the daemon after editing the global config.
 
 The daemon replays lint results for unchanged content: per project context it
 keeps an in-memory cache of up to 2048 files keyed by path and content hash,
