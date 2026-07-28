@@ -181,7 +181,8 @@ fn reportFile(
         if (diagnostics.len == 0) c.markClean(io, content_hash, path);
     }
 
-    const rendered = try lint.caps.apply(arena.allocator(), diagnostics, engine.settings, opts.max_matches);
+    const capped = try lint.caps.apply(arena.allocator(), diagnostics, engine.settings, opts.max_matches);
+    const rendered = try lint.caps.collapse(arena.allocator(), capped);
     try reporter.file(path, current, rendered);
 
     var counts: reports.Counts = .{ .files = 1 };

@@ -113,3 +113,94 @@ test "caps: two flooding rules cap independently and a quiet rule is untouched" 
     try std.testing.expectEqual(@as(usize, 2), synthetic);
     try std.testing.expectEqualStrings("quiet", out[8].rule_id);
 }
+
+fn onLine(rule_id: []const u8, message: []const u8, line: u32, column: u32) diagnostic.Diagnostic {
+    return .{
+        .rule_id = rule_id,
+        .language = "ts",
+        .message = message,
+        .range = .{ .start = .{ .line = line, .column = column }, .end = .{ .line = line, .column = column + 3 } },
+    };
+}
+
+test "collapse: three identical messages on one line pass through" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const input: []const diagnostic.Diagnostic = &.{
+        onLine("no-magic", "magic number", 4, 0),
+        onLine("no-magic", "magic number", 4, 10),
+        onLine("no-magic", "magic number", 4, 20),
+    };
+
+    const out = try caps.collapse(arena.allocator(), input);
+
+    try std.testing.expectEqual(@as(usize, 3), out.len);
+    for (out) |d| try std.testing.expectEqualStrings("magic number", d.message);
+}
+
+test "collapse: four identical messages on one line become one with a count" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const input: []const diagnostic.Diagnostic = &.{
+        onLine("no-magic", "magic number", 4, 0),
+        onLine("no-magic", "magic number", 4, 10),
+        onLine("no-magic", "magic number", 4, 20),
+        onLine("no-magic", "magic number", 4, 30),
+    };
+
+    const out = try caps.collapse(arena.allocator(), input);
+
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("magic number; repeated 4 times on this line", out[0].message);
+    try std.testing.expectEqual(@as(u32, 0), out[0].range.start.column);
+}
+
+test "collapse: a different line is never merged" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const input: []const diagnostic.Diagnostic = &.{
+        onLine("no-magic", "magic number", 4, 0),
+        onLine("no-magic", "magic number", 4, 10),
+        onLine("no-magic", "magic number", 4, 20),
+        onLine("no-magic", "magic number", 5, 0),
+        onLine("no-magic", "magic number", 5, 10),
+        onLine("no-magic", "magic number", 5, 20),
+        onLine("no-magic", "magic number", 5, 30),
+    };
+
+    const out = try caps.collapse(arena.allocator(), input);
+
+    try std.testing.expectEqual(@as(usize, 4), out.len);
+    try std.testing.expectEqualStrings("magic number", out[2].message);
+    try std.testing.expectEqualStrings("magic number; repeated 4 times on this line", out[3].message);
+}
+
+test "collapse: a different message or rule on the same line is never merged" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const input: []const diagnostic.Diagnostic = &.{
+        onLine("no-magic", "magic number", 4, 0),
+        onLine("no-magic", "magic number", 4, 10),
+        onLine("no-magic", "other message", 4, 20),
+        onLine("no-magic", "other message", 4, 30),
+        onLine("other-rule", "magic number", 4, 40),
+        onLine("other-rule", "magic number", 4, 50),
+    };
+
+    const out = try caps.collapse(arena.allocator(), input);
+
+    try std.testing.expectEqual(@as(usize, 6), out.len);
+}
+
+test "collapse: an empty stream stays empty" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const out = try caps.collapse(arena.allocator(), &.{});
+
+    try std.testing.expectEqual(@as(usize, 0), out.len);
+}
