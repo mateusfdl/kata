@@ -18,6 +18,9 @@ pub const Context = struct {
     cache: ?*sources.context.Cache = null,
     replay: ?*replay.ReplayCache = null,
     max_matches: u32 = 25,
+    cache_dir: ?[]const u8 = null,
+    cache_enabled: bool = false,
+    rules_hash: [32]u8 = @splat(0),
 };
 
 const IndexVisit = struct {
@@ -227,6 +230,8 @@ pub fn handle(
     var ratchet = ctx.ratchet;
     var replay_cache = ctx.replay;
     var max_matches = ctx.max_matches;
+    var cache_enabled = ctx.cache_enabled;
+    var rules_hash = ctx.rules_hash;
 
     if (ctx.cache) |cache| {
         const per_project = cache.acquire(arena, req.filename) catch
@@ -237,8 +242,18 @@ pub fn handle(
             ratchet = p.resolved.ratchet;
             replay_cache = &p.replay;
             max_matches = p.resolved.max_matches_per_file;
+            cache_enabled = p.resolved.cache;
+            rules_hash = p.rules_hash;
         }
     }
+
+    const disk_cache: ?fs.result_cache.Handle = handle: {
+        if (!cache_enabled) break :handle null;
+        if (ctx.project != null) break :handle null;
+        const dir = ctx.cache_dir orelse break :handle null;
+
+        break :handle .{ .dir = dir, .rules_hash = rules_hash };
+    };
 
     if (ctx.project) |project| {
         project.configure(engine) catch return reply(.fail, null, "project configuration failed");
@@ -257,6 +272,14 @@ pub fn handle(
             }
         }
 
+        if (disk_cache) |cache| {
+            if (req.filename) |path| {
+                if (cache.isClean(ctx.io, content_hash, path))
+                    break :replayed arena.alloc(diagnostic.Diagnostic, 0) catch
+                        return reply(.fail, null, "lint failed");
+            }
+        }
+
         const fresh = if (ctx.project) |project| lint: {
             const path = req.filename orelse break :lint engine.lint(arena, source, lang, null) catch
                 return reply(.fail, null, "lint failed");
@@ -270,6 +293,12 @@ pub fn handle(
 
         if (replay_cache) |rc| {
             if (req.filename) |path| rc.put(path, content_hash, fresh) catch {};
+        }
+
+        if (disk_cache) |cache| {
+            if (req.filename) |path| {
+                if (fresh.len == 0) cache.markClean(ctx.io, content_hash, path);
+            }
         }
 
         break :replayed fresh;

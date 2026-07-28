@@ -4,6 +4,7 @@ const lint = @import("engine");
 const daemon = @import("daemon.zig");
 const protocol = @import("protocol.zig");
 const replay = @import("replay.zig");
+const fs = @import("../fs.zig");
 const test_fixture = @import("../test_fixture.zig");
 const test_frame = @import("../test_frame.zig");
 
@@ -1024,6 +1025,130 @@ test "daemon: project violations appear on a replay hit" {
         try encodeResponse(arena.allocator(), first),
         try encodeResponse(arena.allocator(), second),
     );
+}
+
+fn diskCacheDir(arena: std.mem.Allocator, tmp: *std.testing.TmpDir, buf: []u8) ![]const u8 {
+    const dir = try test_fixture.relativeTmpPath(buf, &tmp.sub_path);
+
+    return std.fmt.allocPrint(arena, "{s}/cache", .{dir});
+}
+
+test "daemon: a disk cache hit answers identically to a fresh lint" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [256]u8 = undefined;
+
+    var ctx = context(f);
+    ctx.cache_dir = try diskCacheDir(a, &tmp, &buf);
+    ctx.cache_enabled = true;
+
+    const request: protocol.Request = .{
+        .language = "ts",
+        .filename = "/proj/clean.ts",
+        .source = "const x: string = \"ok\";",
+    };
+
+    const cold = daemon.handle(ctx, a, request);
+    const warm = daemon.handle(ctx, a, request);
+
+    try std.testing.expect(cold.report.?.clean);
+    try std.testing.expect(warm.report.?.clean);
+    try std.testing.expectEqualStrings(
+        try encodeResponse(a, cold),
+        try encodeResponse(a, warm),
+    );
+}
+
+test "daemon: a changed buffer misses the disk cache" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [256]u8 = undefined;
+
+    var ctx = context(f);
+    ctx.cache_dir = try diskCacheDir(a, &tmp, &buf);
+    ctx.cache_enabled = true;
+
+    const clean = daemon.handle(ctx, a, .{
+        .language = "ts",
+        .filename = "/proj/a.ts",
+        .source = "const x: string = \"ok\";",
+    });
+    const dirty = daemon.handle(ctx, a, .{
+        .language = "ts",
+        .filename = "/proj/a.ts",
+        .source = "const x = (foo[0] as any).bar;",
+    });
+
+    try std.testing.expect(clean.report.?.clean);
+    try std.testing.expect(!dirty.report.?.clean);
+    try std.testing.expectEqual(@as(usize, 1), dirty.report.?.diagnostics.len);
+}
+
+test "daemon: a violating buffer is never marked clean" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [256]u8 = undefined;
+
+    var ctx = context(f);
+    ctx.cache_dir = try diskCacheDir(a, &tmp, &buf);
+    ctx.cache_enabled = true;
+
+    const source = "const x = (foo[0] as any).bar;";
+    _ = daemon.handle(ctx, a, .{ .language = "ts", .filename = "/proj/a.ts", .source = source });
+
+    var content_hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(source, &content_hash, .{});
+    const h: fs.result_cache.Handle = .{ .dir = ctx.cache_dir.?, .rules_hash = ctx.rules_hash };
+
+    try std.testing.expectEqual(false, h.isClean(io, content_hash, "/proj/a.ts"));
+}
+
+test "daemon: the disk cache stays untouched when it is disabled" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [256]u8 = undefined;
+
+    var ctx = context(f);
+    ctx.cache_dir = try diskCacheDir(a, &tmp, &buf);
+
+    const source = "const x: string = \"ok\";";
+    _ = daemon.handle(ctx, a, .{ .language = "ts", .filename = "/proj/a.ts", .source = source });
+
+    var content_hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(source, &content_hash, .{});
+    const h: fs.result_cache.Handle = .{ .dir = ctx.cache_dir.?, .rules_hash = ctx.rules_hash };
+
+    try std.testing.expectEqual(false, h.isClean(io, content_hash, "/proj/a.ts"));
 }
 
 test "daemon: a flooding rule is capped in the response but stays unclean" {

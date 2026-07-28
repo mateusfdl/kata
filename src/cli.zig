@@ -317,7 +317,14 @@ fn runOneShot(c: Command) !u8 {
         .io = c.io,
         .ratchet = ctx.resolved.ratchet,
         .max_matches = ctx.resolved.max_matches_per_file,
+        .cache_dir = resolveCacheDir(c),
+        .cache_enabled = ctx.resolved.cache,
+        .rules_hash = ctx.rules_hash,
     }, a, request, opts);
+}
+
+fn resolveCacheDir(c: Command) ?[]const u8 {
+    return fs.result_cache.dir(c.arena, c.environ) catch null;
 }
 
 fn autostartDaemon(c: Command) void {
@@ -398,6 +405,9 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
         .cache = &cache,
         .replay = &ctx.replay,
         .max_matches = ctx.resolved.max_matches_per_file,
+        .cache_dir = resolveCacheDir(c),
+        .cache_enabled = ctx.resolved.cache,
+        .rules_hash = ctx.rules_hash,
     }, socket_path) catch |err| switch (err) {
         error.AlreadyRunning => return printAndExit(c.stderr, "kata daemon already running\n", exit_clean),
         else => return internalError(c.stderr, "serve", err),
