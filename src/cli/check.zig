@@ -26,28 +26,32 @@ pub const Fixing = struct {
     stderr: *std.Io.Writer,
 };
 
+pub const Options = struct {
+    target: []const u8,
+    project_rules: []const lint.project_rule.ProjectRule = &.{},
+    max_matches: u32 = 25,
+    baseline: ?Baseline = null,
+    fixing: ?Fixing = null,
+};
+
 pub fn run(
     io: std.Io,
     gpa: std.mem.Allocator,
     engine: *Engine,
-    target: []const u8,
-    project_rules: []const lint.project_rule.ProjectRule,
-    max_matches: u32,
-    baseline: ?Baseline,
-    fixing: ?Fixing,
+    opts: Options,
     reporter: *reports.Reporter,
 ) !Outcome {
-    const stat = try fs.source.statTarget(io, target);
-    var project = try lint.Project.init(gpa, engine, project_rules);
+    const stat = try fs.source.statTarget(io, opts.target);
+    var project = try lint.Project.init(gpa, engine, opts.project_rules);
     defer project.deinit();
 
     var counts = switch (stat.kind) {
-        .directory => try checkDir(io, gpa, engine, target, &project, max_matches, baseline, fixing, reporter),
-        .file => try checkFile(io, gpa, engine, target, &project, max_matches, baseline, fixing, reporter),
+        .directory => try checkDir(io, gpa, engine, &project, opts, reporter),
+        .file => try checkFile(io, gpa, engine, &project, opts, reporter),
         else => return error.UnsupportedTarget,
     };
 
-    counts.add(try reportProjectViolations(io, gpa, &project, max_matches, reporter));
+    counts.add(try reportProjectViolations(io, gpa, &project, opts.max_matches, reporter));
 
     try reporter.finish(counts);
 
@@ -58,19 +62,16 @@ fn checkFile(
     io: std.Io,
     gpa: std.mem.Allocator,
     engine: *Engine,
-    target: []const u8,
     project: *lint.Project,
-    max_matches: u32,
-    baseline: ?Baseline,
-    fixing: ?Fixing,
+    opts: Options,
     reporter: *reports.Reporter,
 ) !reports.Counts {
-    const lang = fs.source.languageOf(target) orelse return error.UnsupportedTarget;
+    const lang = fs.source.languageOf(opts.target) orelse return error.UnsupportedTarget;
 
-    const source = try fs.source.read(io, gpa, target);
+    const source = try fs.source.read(io, gpa, opts.target);
     defer gpa.free(source);
 
-    return reportFile(io, gpa, engine, lang, source, target, project, max_matches, baseline, fixing, reporter);
+    return reportFile(io, gpa, engine, lang, source, opts.target, project, opts, reporter);
 }
 
 const DirVisit = struct {
@@ -78,9 +79,7 @@ const DirVisit = struct {
     gpa: std.mem.Allocator,
     engine: *Engine,
     project: *lint.Project,
-    max_matches: u32,
-    baseline: ?Baseline,
-    fixing: ?Fixing,
+    opts: Options,
     reporter: *reports.Reporter,
     counts: *reports.Counts,
 };
@@ -89,11 +88,8 @@ fn checkDir(
     io: std.Io,
     gpa: std.mem.Allocator,
     engine: *Engine,
-    target: []const u8,
     project: *lint.Project,
-    max_matches: u32,
-    baseline: ?Baseline,
-    fixing: ?Fixing,
+    opts: Options,
     reporter: *reports.Reporter,
 ) !reports.Counts {
     var counts: reports.Counts = .{};
@@ -102,20 +98,18 @@ fn checkDir(
         .gpa = gpa,
         .engine = engine,
         .project = project,
-        .max_matches = max_matches,
-        .baseline = baseline,
-        .fixing = fixing,
+        .opts = opts,
         .reporter = reporter,
         .counts = &counts,
     };
 
-    _ = try fs.source.walkFiles(io, gpa, target, visit, visitFile);
+    _ = try fs.source.walkFiles(io, gpa, opts.target, visit, visitFile);
 
     return counts;
 }
 
 fn visitFile(visit: DirVisit, lang: language.Name, source: []const u8, path: []const u8) anyerror!void {
-    visit.counts.add(try reportFile(visit.io, visit.gpa, visit.engine, lang, source, path, visit.project, visit.max_matches, visit.baseline, visit.fixing, visit.reporter));
+    visit.counts.add(try reportFile(visit.io, visit.gpa, visit.engine, lang, source, path, visit.project, visit.opts, visit.reporter));
 }
 
 fn reportFile(
@@ -126,9 +120,7 @@ fn reportFile(
     source: []const u8,
     path: []const u8,
     project: *lint.Project,
-    max_matches: u32,
-    baseline: ?Baseline,
-    fixing: ?Fixing,
+    opts: Options,
     reporter: *reports.Reporter,
 ) !reports.Counts {
     if (try fs.rules.isFixturePath(io, path)) return .{};
@@ -138,7 +130,7 @@ fn reportFile(
 
     var current = source;
     var needs_index = false;
-    const diagnostics = if (fixing) |f| fix: {
+    const diagnostics = if (opts.fixing) |f| fix: {
         if (f.level == .off) break :fix try project.lint(arena.allocator(), current, lang, path);
         needs_index = true;
 
@@ -166,11 +158,11 @@ fn reportFile(
 
     try lint.fingerprint.assign(arena.allocator(), path, current, diagnostics);
 
-    if (baseline) |b| try applyBaseline(io, arena.allocator(), engine, b, lang, current, path, diagnostics);
+    if (opts.baseline) |b| try applyBaseline(io, arena.allocator(), engine, b, lang, current, path, diagnostics);
 
     if (needs_index) try project.replace(current, lang, path);
 
-    const rendered = try lint.caps.apply(arena.allocator(), diagnostics, engine.settings, max_matches);
+    const rendered = try lint.caps.apply(arena.allocator(), diagnostics, engine.settings, opts.max_matches);
     try reporter.file(path, current, rendered);
 
     var counts: reports.Counts = .{ .files = 1 };

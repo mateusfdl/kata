@@ -59,7 +59,7 @@ pub fn run(
     if (!try engine.prewarmOrReport("kata", stderr)) return .usage;
 
     var reporter = reports.reporter(gpa, opts.format, stdout, opts.color);
-    return switch (try check.run(io, gpa, &engine, opts.target, &.{}, 25, null, null, &reporter)) {
+    return switch (try check.run(io, gpa, &engine, .{ .target = opts.target }, &reporter)) {
         .clean => .clean,
         .violations => .matches,
     };
