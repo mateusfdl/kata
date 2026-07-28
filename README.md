@@ -372,7 +372,23 @@ storing the raw fingerprinted diagnostics. A hit skips parsing and matching
 entirely; ratchet demotion, project analysis, and match caps always re-run, so
 a replayed response is byte-identical to a fresh one. The cache dies with the
 daemon and is dropped whenever a project's `.kata` configuration changes; it
-never applies to `kata check`, `kata test`, or `kata query`.
+never applies to `kata test` or `kata query`.
+
+`cache: true` adds a second, on-disk layer that remembers only which files were
+**clean**. Entries are empty files under `$XDG_CACHE_HOME/kata/clean` (else
+`$HOME/.cache/kata/clean`) named by a hash of three things: the resolved rule set
+(binary version, every active rule's text, and every configured severity, fix,
+exclude, and cap), the file content, and the reported path. A hit skips lint for
+that file entirely; a miss lints and records a new entry only when the file has no
+findings. Files with findings are never cached, so a finding can never be replayed
+from disk and can never go stale. Editing a rule or a config value changes the rule
+set hash, which orphans every old entry rather than invalidating anything in place.
+
+The layer is best-effort: an unwritable or missing cache directory degrades to a
+plain lint, never an error. It stays off for `--fix` (which rewrites content), for
+runs with project or fact rules (skipping a file would starve the cross-file
+index), and for `kata test` and `kata query`. Entries are never evicted; delete the
+directory to reclaim the space.
 
 ## Configuration
 
@@ -421,6 +437,8 @@ Schema:
 - `daemon-autostart: true` (top-level, default false) lets a one-shot check
   start the daemon in the background when no live socket is found. The check
   itself still runs in process; the daemon is there for the next call.
+- `cache: true` (top-level, default false) remembers clean files on disk so
+  unchanged files skip linting entirely (see Daemon).
 - Listing the same rule twice for one scope is an error, including a
   `typescript` entry overlapping a `ts` or `tsx` entry for the same id.
 - Entries matching no available rule are ignored.
