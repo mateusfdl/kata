@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const check = @import("check.zig");
+const fs = @import("../fs.zig");
 const reports = @import("../reports.zig");
 const lint = @import("engine");
 const test_fixture = @import("../test_fixture.zig");
@@ -873,4 +874,176 @@ test "check: a flooding rule renders three findings plus a capped summary and st
     try std.testing.expect(std.mem.indexOf(u8, written, "rule no-as-any fired 5 times in this file; showing 3, suppressed 2") != null);
     try std.testing.expect(std.mem.indexOf(u8, written, "\"violations\":5") != null);
     try std.testing.expectEqual(@as(usize, 4), std.mem.count(u8, written, "\"rule_id\":\"no-as-any\""));
+}
+
+fn cacheHandle(arena: std.mem.Allocator, tmp: *std.testing.TmpDir) !fs.result_cache.Handle {
+    var buf: [256]u8 = undefined;
+    const dir = try test_fixture.relativeTmpPath(&buf, &tmp.sub_path);
+
+    return .{
+        .dir = try std.fmt.allocPrint(arena, "{s}/cache", .{dir}),
+        .rules_hash = @splat(7),
+    };
+}
+
+fn jsonRun(gpa: std.mem.Allocator, io: std.Io, engine: *lint.Engine, opts: check.Options) !struct { outcome: check.Outcome, json: []u8 } {
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    errdefer out.deinit();
+
+    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    const outcome = try check.run(io, gpa, engine, opts, &reporter);
+
+    return .{ .outcome = outcome, .json = try out.toOwnedSlice() };
+}
+
+test "check: a cached clean file reports identically on the second run" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "clean.ts", .data = "const ok: string = \"y\";\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const cache = try cacheHandle(arena.allocator(), &tmp);
+
+    const cold = try jsonRun(gpa, io, &f.engine, .{ .target = rel, .cache = cache });
+    defer gpa.free(cold.json);
+    const warm = try jsonRun(gpa, io, &f.engine, .{ .target = rel, .cache = cache });
+    defer gpa.free(warm.json);
+
+    try std.testing.expectEqual(check.Outcome.clean, cold.outcome);
+    try std.testing.expectEqual(check.Outcome.clean, warm.outcome);
+    try std.testing.expectEqualStrings(cold.json, warm.json);
+}
+
+test "check: a violating file is re-linted every run" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "bad.ts", .data = "const x = v as any;\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const cache = try cacheHandle(arena.allocator(), &tmp);
+
+    const cold = try jsonRun(gpa, io, &f.engine, .{ .target = rel, .cache = cache });
+    defer gpa.free(cold.json);
+    const warm = try jsonRun(gpa, io, &f.engine, .{ .target = rel, .cache = cache });
+    defer gpa.free(warm.json);
+
+    try std.testing.expectEqual(check.Outcome.violations, cold.outcome);
+    try std.testing.expectEqual(check.Outcome.violations, warm.outcome);
+    try std.testing.expectEqualStrings(cold.json, warm.json);
+    try std.testing.expect(std.mem.indexOf(u8, warm.json, "as any is not allowed") != null);
+}
+
+test "check: edited content after a clean run is linted again" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const ok: string = \"y\";\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const cache = try cacheHandle(arena.allocator(), &tmp);
+
+    const clean = try jsonRun(gpa, io, &f.engine, .{ .target = rel, .cache = cache });
+    defer gpa.free(clean.json);
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const x = v as any;\n" });
+
+    const dirty = try jsonRun(gpa, io, &f.engine, .{ .target = rel, .cache = cache });
+    defer gpa.free(dirty.json);
+
+    try std.testing.expectEqual(check.Outcome.clean, clean.outcome);
+    try std.testing.expectEqual(check.Outcome.violations, dirty.outcome);
+    try std.testing.expect(std.mem.indexOf(u8, dirty.json, "as any is not allowed") != null);
+}
+
+test "check: a different rules hash ignores cached clean verdicts" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const x = v as any;\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    var cache = try cacheHandle(arena.allocator(), &tmp);
+
+    var content_hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash("const x = v as any;\n", &content_hash, .{});
+    const file_path = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{rel});
+    cache.markClean(io, content_hash, file_path);
+
+    const stale = try jsonRun(gpa, io, &f.engine, .{ .target = rel, .cache = cache });
+    defer gpa.free(stale.json);
+
+    var fresh_rules = cache;
+    fresh_rules.rules_hash = @splat(9);
+    const fresh = try jsonRun(gpa, io, &f.engine, .{ .target = rel, .cache = fresh_rules });
+    defer gpa.free(fresh.json);
+
+    try std.testing.expectEqual(check.Outcome.clean, stale.outcome);
+    try std.testing.expectEqual(check.Outcome.violations, fresh.outcome);
+}
+
+test "check: fixing never consults the cache" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const ok: string = \"y\";\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const cache = try cacheHandle(arena.allocator(), &tmp);
+
+    const warm = try jsonRun(gpa, io, &f.engine, .{ .target = rel, .cache = cache });
+    defer gpa.free(warm.json);
+
+    var err: std.Io.Writer.Allocating = .init(gpa);
+    defer err.deinit();
+    const fixed = try jsonRun(gpa, io, &f.engine, .{
+        .target = rel,
+        .cache = cache,
+        .fixing = .{ .level = .safe, .stderr = &err.writer },
+    });
+    defer gpa.free(fixed.json);
+
+    try std.testing.expectEqual(check.Outcome.clean, warm.outcome);
+    try std.testing.expectEqual(check.Outcome.clean, fixed.outcome);
 }

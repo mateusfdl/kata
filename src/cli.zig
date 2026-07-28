@@ -327,6 +327,12 @@ fn resolveCacheDir(c: Command) ?[]const u8 {
     return fs.result_cache.dir(c.arena, c.environ) catch null;
 }
 
+fn cacheHandle(c: Command, ctx: *const context_mod.Context) ?fs.result_cache.Handle {
+    const dir = resolveCacheDir(c) orelse return null;
+
+    return .{ .dir = dir, .rules_hash = ctx.rules_hash };
+}
+
 fn autostartDaemon(c: Command) void {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const self_path = fs.process.selfPath(c.io, &buf) catch return;
@@ -452,6 +458,7 @@ fn runCheck(c: Command, opts: CheckOptions) !u8 {
         .max_matches = ctx.resolved.max_matches_per_file,
         .baseline = baseline,
         .fixing = fixing,
+        .cache = if (ctx.resolved.cache) cacheHandle(c, ctx) else null,
     }, &reporter) catch |err| switch (err) {
         error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{opts.target}, exit_usage),
         else => return internalError(c.stderr, "check", err),

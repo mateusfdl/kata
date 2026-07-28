@@ -32,6 +32,7 @@ pub const Options = struct {
     max_matches: u32 = 25,
     baseline: ?Baseline = null,
     fixing: ?Fixing = null,
+    cache: ?fs.result_cache.Handle = null,
 };
 
 pub fn run(
@@ -45,9 +46,12 @@ pub fn run(
     var project = try lint.Project.init(gpa, engine, opts.project_rules);
     defer project.deinit();
 
+    var effective = opts;
+    effective.cache = cacheFor(opts, engine);
+
     var counts = switch (stat.kind) {
-        .directory => try checkDir(io, gpa, engine, &project, opts, reporter),
-        .file => try checkFile(io, gpa, engine, &project, opts, reporter),
+        .directory => try checkDir(io, gpa, engine, &project, effective, reporter),
+        .file => try checkFile(io, gpa, engine, &project, effective, reporter),
         else => return error.UnsupportedTarget,
     };
 
@@ -128,6 +132,17 @@ fn reportFile(
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
 
+    var content_hash: [32]u8 = undefined;
+    if (opts.cache) |c| {
+        std.crypto.hash.sha2.Sha256.hash(source, &content_hash, .{});
+
+        if (c.isClean(io, content_hash, path)) {
+            try reporter.file(path, source, &.{});
+
+            return .{ .files = 1 };
+        }
+    }
+
     var current = source;
     var needs_index = false;
     const diagnostics = if (opts.fixing) |f| fix: {
@@ -162,6 +177,10 @@ fn reportFile(
 
     if (needs_index) try project.replace(current, lang, path);
 
+    if (opts.cache) |c| {
+        if (diagnostics.len == 0) c.markClean(io, content_hash, path);
+    }
+
     const rendered = try lint.caps.apply(arena.allocator(), diagnostics, engine.settings, opts.max_matches);
     try reporter.file(path, current, rendered);
 
@@ -170,6 +189,14 @@ fn reportFile(
     tally(&counts, diagnostics);
 
     return counts;
+}
+
+fn cacheFor(opts: Options, engine: *const Engine) ?fs.result_cache.Handle {
+    if (opts.fixing != null) return null;
+    if (opts.project_rules.len > 0) return null;
+    if (engine.factRules().len > 0) return null;
+
+    return opts.cache;
 }
 
 pub fn backdatedRules(
