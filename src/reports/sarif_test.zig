@@ -39,7 +39,7 @@ test "sarif: clean run renders empty results and rules" {
 
     var reporter = sarifReporter(&out);
     try reporter.file("src/app.ts", "const x = 1;\n", &.{});
-    try reporter.finish(.{ .files = 1, .violations = 0, .warnings = 0 });
+    try reporter.finish(.{ .files = 1, .violations = 0, .warnings = 0 }, &.{});
 
     try std.testing.expectEqualStrings(document("", ""), out.written());
 }
@@ -55,7 +55,7 @@ test "sarif: an error and a demoted warning share one descriptor at level error"
 
     var reporter = sarifReporter(&out);
     try reporter.file("src/app.ts", "", &.{ diagnostic(.@"error"), demoted });
-    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 1 });
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 1 }, &.{});
 
     try std.testing.expectEqualStrings(document(
         error_result ++ "," ++
@@ -80,7 +80,7 @@ test "sarif: descriptors keep first-appearance order across files" {
     var reporter = sarifReporter(&out);
     try reporter.file("src/app.ts", "", &.{diagnostic(.@"error")});
     try reporter.file("src/other.ts", "", &.{other});
-    try reporter.finish(.{ .files = 2, .violations = 1, .warnings = 1 });
+    try reporter.finish(.{ .files = 2, .violations = 1, .warnings = 1 }, &.{});
 
     try std.testing.expectEqualStrings(document(
         error_result ++ "," ++
@@ -100,7 +100,7 @@ test "sarif: project violations render as results" {
 
     var reporter = sarifReporter(&out);
     try reporter.project(&.{.{ .path = "src/app.ts", .diagnostic = diagnostic(.@"error") }});
-    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 });
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 }, &.{});
 
     try std.testing.expectEqualStrings(document(
         error_result,
@@ -117,7 +117,7 @@ test "sarif: empty fingerprint omits partialFingerprints" {
 
     var reporter = sarifReporter(&out);
     try reporter.file("src/app.ts", "", &.{d});
-    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 });
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 }, &.{});
 
     try std.testing.expectEqualStrings(document(
         "{\"ruleId\":\"no-console\",\"ruleIndex\":0,\"level\":\"error\"," ++
@@ -141,7 +141,7 @@ test "sarif: safe fixes render as fixes with deleted region and inserted content
 
     var reporter = sarifReporter(&out);
     try reporter.file("src/app.ts", "", &.{d});
-    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 });
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 }, &.{});
 
     try std.testing.expectEqualStrings(document(
         "{\"ruleId\":\"no-console\",\"ruleIndex\":0,\"level\":\"error\"," ++
@@ -169,7 +169,7 @@ test "sarif: a deletion fix omits inserted content" {
 
     var reporter = sarifReporter(&out);
     try reporter.file("src/app.ts", "", &.{d});
-    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 });
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 }, &.{});
 
     try std.testing.expectEqualStrings(document(
         "{\"ruleId\":\"no-console\",\"ruleIndex\":0,\"level\":\"error\"," ++
@@ -201,7 +201,7 @@ test "sarif: unsafe fixes and suggestions render no fixes key" {
 
     var reporter = sarifReporter(&out);
     try reporter.file("src/app.ts", "", &.{d});
-    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 });
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 }, &.{});
 
     try std.testing.expectEqualStrings(document(
         error_result,

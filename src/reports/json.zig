@@ -23,13 +23,20 @@ pub const Json = struct {
         for (violations) |v| try self.entry(v.path, &.{v.diagnostic});
     }
 
-    pub fn finish(self: *Json, counts: reports.Counts) std.Io.Writer.Error!void {
+    pub fn finish(
+        self: *Json,
+        counts: reports.Counts,
+        overflow: []const reports.RuleOverflow,
+    ) std.Io.Writer.Error!void {
         try self.begin();
-        try self.writer.print("],\"summary\":{{\"files\":{d},\"violations\":{d},\"warnings\":{d}}}}}\n", .{
+        try self.writer.print("],\"summary\":{{\"files\":{d},\"violations\":{d},\"warnings\":{d},\"capped_rules\":", .{
             counts.files,
             counts.violations,
             counts.warnings,
         });
+
+        try std.json.Stringify.value(overflow, .{}, self.writer);
+        try self.writer.writeAll("}}\n");
 
         try self.writer.flush();
     }

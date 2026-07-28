@@ -30,10 +30,14 @@ pub const Pretty = struct {
         try fallback.project(violations);
     }
 
-    pub fn finish(self: *Pretty, counts: reports.Counts) std.Io.Writer.Error!void {
+    pub fn finish(
+        self: *Pretty,
+        counts: reports.Counts,
+        overflow: []const reports.RuleOverflow,
+    ) std.Io.Writer.Error!void {
         var fallback = text.Text{ .writer = self.writer };
 
-        try fallback.finish(counts);
+        try fallback.finish(counts, overflow);
     }
 
     fn frame(self: *Pretty, path: []const u8, source: []const u8, d: lint.diagnostic.Diagnostic) std.Io.Writer.Error!void {

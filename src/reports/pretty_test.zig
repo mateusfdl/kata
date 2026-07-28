@@ -337,7 +337,7 @@ test "pretty: finish renders the summary" {
     defer out.deinit();
 
     var reporter: reports.Reporter = .{ .pretty = .{ .writer = &out.writer } };
-    try reporter.finish(.{ .files = 3, .violations = 2, .warnings = 1 });
+    try reporter.finish(.{ .files = 3, .violations = 2, .warnings = 1 }, &.{});
 
     try std.testing.expectEqualStrings("checked 3 files, 2 violations, 1 warnings\n", out.written());
 }

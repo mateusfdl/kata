@@ -26,6 +26,95 @@ pub const Fixing = struct {
     stderr: *std.Io.Writer,
 };
 
+pub const render_budget_per_rule: usize = 200;
+
+pub const RenderBudget = struct {
+    gpa: std.mem.Allocator,
+    per_rule: usize = render_budget_per_rule,
+    entries: std.StringHashMapUnmanaged(Entry) = .empty,
+
+    const Entry = struct {
+        rendered: usize = 0,
+        suppressed: usize = 0,
+        files: usize = 0,
+    };
+
+    pub fn deinit(self: *RenderBudget) void {
+        self.entries.deinit(self.gpa);
+    }
+
+    fn take(self: *RenderBudget, rule_id: []const u8) !bool {
+        const gop = try self.entries.getOrPut(self.gpa, rule_id);
+        if (!gop.found_existing) gop.value_ptr.* = .{};
+
+        if (gop.value_ptr.rendered >= self.per_rule) return false;
+
+        gop.value_ptr.rendered += 1;
+
+        return true;
+    }
+
+    fn recordSuppressed(self: *RenderBudget, rule_id: []const u8, count: usize) !void {
+        if (count == 0) return;
+
+        const gop = try self.entries.getOrPut(self.gpa, rule_id);
+        if (!gop.found_existing) gop.value_ptr.* = .{};
+
+        gop.value_ptr.suppressed += count;
+        gop.value_ptr.files += 1;
+    }
+
+    pub fn overflow(self: *RenderBudget, arena: std.mem.Allocator) ![]const reports.RuleOverflow {
+        var out: std.ArrayList(reports.RuleOverflow) = .empty;
+
+        var it = self.entries.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.suppressed == 0) continue;
+
+            try out.append(arena, .{
+                .rule_id = entry.key_ptr.*,
+                .suppressed = entry.value_ptr.suppressed,
+                .files = entry.value_ptr.files,
+            });
+        }
+
+        const items = try out.toOwnedSlice(arena);
+        std.mem.sort(reports.RuleOverflow, items, {}, lessByRuleId);
+
+        return items;
+    }
+
+    fn lessByRuleId(_: void, a: reports.RuleOverflow, b: reports.RuleOverflow) bool {
+        return std.mem.order(u8, a.rule_id, b.rule_id) == .lt;
+    }
+};
+
+fn withinBudget(
+    arena: std.mem.Allocator,
+    budget: ?*RenderBudget,
+    diagnostics: []const lint.diagnostic.Diagnostic,
+) ![]const lint.diagnostic.Diagnostic {
+    const b = budget orelse return diagnostics;
+
+    var out: std.ArrayList(lint.diagnostic.Diagnostic) = .empty;
+    var suppressed: std.StringHashMapUnmanaged(usize) = .empty;
+
+    for (diagnostics) |d| {
+        if (try b.take(d.rule_id)) {
+            try out.append(arena, d);
+            continue;
+        }
+
+        const gop = try suppressed.getOrPut(arena, d.rule_id);
+        gop.value_ptr.* = if (gop.found_existing) gop.value_ptr.* + 1 else 1;
+    }
+
+    var it = suppressed.iterator();
+    while (it.next()) |entry| try b.recordSuppressed(entry.key_ptr.*, entry.value_ptr.*);
+
+    return out.toOwnedSlice(arena);
+}
+
 pub const Options = struct {
     target: []const u8,
     project_rules: []const lint.project_rule.ProjectRule = &.{},
@@ -33,6 +122,7 @@ pub const Options = struct {
     baseline: ?Baseline = null,
     fixing: ?Fixing = null,
     cache: ?fs.result_cache.Handle = null,
+    budget: ?*RenderBudget = null,
 };
 
 pub fn run(
@@ -46,8 +136,12 @@ pub fn run(
     var project = try lint.Project.init(gpa, engine, opts.project_rules);
     defer project.deinit();
 
+    var budget: RenderBudget = .{ .gpa = gpa };
+    defer budget.deinit();
+
     var effective = opts;
     effective.cache = cacheFor(opts, engine);
+    effective.budget = &budget;
 
     var counts = switch (stat.kind) {
         .directory => try checkDir(io, gpa, engine, &project, effective, reporter),
@@ -55,9 +149,12 @@ pub fn run(
         else => return error.UnsupportedTarget,
     };
 
-    counts.add(try reportProjectViolations(io, gpa, &project, opts.max_matches, reporter));
+    counts.add(try reportProjectViolations(io, gpa, &project, effective, reporter));
 
-    try reporter.finish(counts);
+    var summary_arena = std.heap.ArenaAllocator.init(gpa);
+    defer summary_arena.deinit();
+
+    try reporter.finish(counts, try budget.overflow(summary_arena.allocator()));
 
     return if (counts.violations > 0) .violations else .clean;
 }
@@ -182,7 +279,8 @@ fn reportFile(
     }
 
     const capped = try lint.caps.apply(arena.allocator(), diagnostics, engine.settings, opts.max_matches);
-    const rendered = try lint.caps.collapse(arena.allocator(), capped);
+    const collapsed = try lint.caps.collapse(arena.allocator(), capped);
+    const rendered = try withinBudget(arena.allocator(), opts.budget, collapsed);
     try reporter.file(path, current, rendered);
 
     var counts: reports.Counts = .{ .files = 1 };
@@ -315,7 +413,7 @@ fn reportProjectViolations(
     io: std.Io,
     gpa: std.mem.Allocator,
     project: *const lint.Project,
-    max_matches: u32,
+    opts: Options,
     reporter: *reports.Reporter,
 ) !reports.Counts {
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -332,8 +430,9 @@ fn reportProjectViolations(
         const diagnostics = try arena.allocator().alloc(lint.diagnostic.Diagnostic, end - start);
         for (violations[start..end], diagnostics) |violation, *d| d.* = violation.diagnostic;
         try lint.fingerprint.assign(arena.allocator(), violations[start].path, source, diagnostics);
-        const capped = try lint.caps.apply(arena.allocator(), diagnostics, project.engine.settings, max_matches);
-        for (capped) |d| try rendered.append(arena.allocator(), .{ .path = violations[start].path, .diagnostic = d });
+        const capped = try lint.caps.apply(arena.allocator(), diagnostics, project.engine.settings, opts.max_matches);
+        const within = try withinBudget(arena.allocator(), opts.budget, capped);
+        for (within) |d| try rendered.append(arena.allocator(), .{ .path = violations[start].path, .diagnostic = d });
 
         start = end;
     }

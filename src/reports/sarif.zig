@@ -30,7 +30,12 @@ pub const Sarif = struct {
         for (violations) |v| try self.result(v.path, v.diagnostic);
     }
 
-    pub fn finish(self: *Sarif, counts: reports.Counts) reports.Error!void {
+    pub fn finish(
+        self: *Sarif,
+        counts: reports.Counts,
+        overflow: []const reports.RuleOverflow,
+    ) reports.Error!void {
+        _ = overflow;
         _ = counts;
         try self.begin();
         try self.writer.writeAll("],\"tool\":{\"driver\":{\"name\":\"kata\",\"semanticVersion\":");

@@ -69,7 +69,7 @@ selected by flag (the last format flag wins):
 - `--text`: one line per diagnostic
   (`path:line:col [rule-id] message`), followed by a summary line.
 - `--json`: a single JSON object,
-  `{"files":[{"path":...,"diagnostics":[...]},...],"summary":{"files":N,"violations":N,"warnings":N}}`.
+  `{"files":[{"path":...,"diagnostics":[...]},...],"summary":{"files":N,"violations":N,"warnings":N,"capped_rules":[...]}}`.
   Only files with diagnostics appear under `files`; the diagnostic shape
   matches the one-shot report.
 - `--sarif`: a SARIF 2.1.0 document. Each diagnostic becomes a `result` with
@@ -434,6 +434,22 @@ Schema:
   pattern, and they drown the findings that matter for an agent hook consumer.
   Capping bounds output only: suppressed error-severity findings still count
   toward the exit code and the report summary.
+
+Two further bounds apply to `kata check` and `kata query` rendering, both fixed and
+unconfigurable, because they exist to keep a report readable rather than to express
+policy (the daemon and one-shot mode answer one buffer per call, so a per-run bound
+would mean nothing there):
+
+- More than three byte-identical messages from one rule on one line collapse into
+  one, its message suffixed `; repeated N times on this line`.
+- Each rule renders at most 200 diagnostics per run across all files. Beyond that
+  the rule's remaining findings are dropped from the output and summarized once:
+  `rule <id>: and <N> more in <M> files` in the text and default formats, and a
+  `capped_rules` array of `{rule_id, suppressed, files}` in the JSON summary
+  (always present, empty when nothing overflowed, sorted by rule id). SARIF omits
+  it. As with per-file caps, exit codes and the `violations` and `warnings` counts
+  are computed before any bound applies, so a truncated report never reads as
+  cleaner than the tree is.
 - `daemon-autostart: true` (top-level, default false) lets a one-shot check
   start the daemon in the background when no live socket is found. The check
   itself still runs in process; the daemon is there for the next call.

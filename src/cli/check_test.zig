@@ -1047,3 +1047,99 @@ test "check: fixing never consults the cache" {
     try std.testing.expectEqual(check.Outcome.clean, warm.outcome);
     try std.testing.expectEqual(check.Outcome.clean, fixed.outcome);
 }
+
+test "check: a rule over the per-run budget truncates and reports the overflow" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.initWithSettings(
+        gpa,
+        &.{.ts},
+        "no-as-any",
+        test_fixture.no_as_any_rule,
+        &.{.{ .lang = .ts, .id = "no-as-any", .max_matches = 0 }},
+    );
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(gpa);
+    for (0..120) |i| try body.print(gpa, "const v{d} = x as any;\n", .{i});
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = body.items });
+    try tmp.dir.writeFile(io, .{ .sub_path = "b.ts", .data = body.items });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    const r = try jsonRun(gpa, io, &f.engine, .{ .target = rel });
+    defer gpa.free(r.json);
+
+    try std.testing.expectEqual(check.Outcome.violations, r.outcome);
+    try std.testing.expectEqual(
+        @as(usize, check.render_budget_per_rule),
+        std.mem.count(u8, r.json, "as any is not allowed"),
+    );
+    try std.testing.expect(std.mem.indexOf(u8, r.json, "\"violations\":240") != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        r.json,
+        "\"capped_rules\":[{\"rule_id\":\"no-as-any\",\"suppressed\":40,\"files\":1}]",
+    ) != null);
+}
+
+test "check: a rule under the per-run budget reports no overflow" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-as-any", test_fixture.no_as_any_rule);
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const x = v as any;\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    const r = try jsonRun(gpa, io, &f.engine, .{ .target = rel });
+    defer gpa.free(r.json);
+
+    try std.testing.expect(std.mem.indexOf(u8, r.json, "\"capped_rules\":[]") != null);
+}
+
+test "check: the text report lists per-rule overflow before the summary" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var f = try test_fixture.Fixture.initWithSettings(
+        gpa,
+        &.{.ts},
+        "no-as-any",
+        test_fixture.no_as_any_rule,
+        &.{.{ .lang = .ts, .id = "no-as-any", .max_matches = 0 }},
+    );
+    defer f.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(gpa);
+    for (0..210) |i| try body.print(gpa, "const v{d} = x as any;\n", .{i});
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = body.items });
+
+    var path_buf: [256]u8 = undefined;
+    const rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    var reporter: reports.Reporter = .{ .text = .{ .writer = &out.writer } };
+    _ = try check.run(io, gpa, &f.engine, .{ .target = rel }, &reporter);
+
+    const written = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, written, "rule no-as-any: and 10 more in 1 files\nchecked 1 files, 210 violations, 0 warnings\n") != null);
+}

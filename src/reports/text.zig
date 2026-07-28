@@ -20,7 +20,19 @@ pub const Text = struct {
         for (violations) |v| try self.printDiagnostic(v.path, v.diagnostic);
     }
 
-    pub fn finish(self: *Text, counts: reports.Counts) std.Io.Writer.Error!void {
+    pub fn finish(
+        self: *Text,
+        counts: reports.Counts,
+        overflow: []const reports.RuleOverflow,
+    ) std.Io.Writer.Error!void {
+        for (overflow) |o| {
+            try self.writer.print("rule {s}: and {d} more in {d} files\n", .{
+                o.rule_id,
+                o.suppressed,
+                o.files,
+            });
+        }
+
         try self.writer.print("checked {d} files, {d} violations, {d} warnings\n", .{
             counts.files,
             counts.violations,

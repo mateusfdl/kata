@@ -20,6 +20,12 @@ pub fn reporter(gpa: std.mem.Allocator, format: Format, writer: *std.Io.Writer, 
     };
 }
 
+pub const RuleOverflow = struct {
+    rule_id: []const u8,
+    suppressed: usize,
+    files: usize,
+};
+
 pub const Counts = struct {
     files: usize = 0,
     violations: usize = 0,
@@ -55,9 +61,9 @@ pub const Reporter = union(enum) {
         }
     }
 
-    pub fn finish(self: *Reporter, counts: Counts) Error!void {
+    pub fn finish(self: *Reporter, counts: Counts, overflow: []const RuleOverflow) Error!void {
         switch (self.*) {
-            inline else => |*r| try r.finish(counts),
+            inline else => |*r| try r.finish(counts, overflow),
         }
     }
 };
