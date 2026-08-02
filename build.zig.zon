@@ -1,6 +1,6 @@
 .{
     .name = .kata,
-    .version = "1.10.0",
+    .version = "1.11.0",
     .fingerprint = 0xf590e335ce173336,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
