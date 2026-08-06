@@ -449,7 +449,9 @@ fn runCheck(c: Command, opts: CheckOptions) !u8 {
         baseline = .{ .ref = ref, .prefix = prefix, .dir = dir, .backdated = backdated };
     }
 
-    var reporter = reports.reporter(c.gpa, opts.format, c.stdout, c.color);
+    var reporter = reports.Reporter.init(c.gpa, opts.format, c.stdout, c.color);
+    defer reporter.deinit();
+
     const fixing: ?check.Fixing = if (opts.fix == .off) null else .{ .level = opts.fix, .stderr = c.stderr };
 
     const outcome = check.run(c.io, c.gpa, &ctx.engine, .{

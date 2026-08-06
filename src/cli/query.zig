@@ -58,7 +58,9 @@ pub fn run(
 
     if (!try engine.prewarmOrReport("kata", stderr)) return .usage;
 
-    var reporter = reports.reporter(gpa, opts.format, stdout, opts.color);
+    var reporter = reports.Reporter.init(gpa, opts.format, stdout, opts.color);
+    defer reporter.deinit();
+
     return switch (try check.run(io, gpa, &engine, .{ .target = opts.target }, &reporter)) {
         .clean => .clean,
         .violations => .matches,

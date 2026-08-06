@@ -3,6 +3,12 @@ const std = @import("std");
 const lint = @import("engine");
 const reports = @import("../reports.zig");
 
+const diagnostic_json =
+    "{\"rule_id\":\"no-console\",\"language\":\"ts\",\"message\":\"console is not allowed\"," ++
+    "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
+    "\"severity\":\"error\",\"demoted\":false,\"maturity\":\"stable\",\"fingerprint\":\"\",\"context\":[]," ++
+    "\"fix\":null,\"suggestions\":[],\"capped\":false}";
+
 fn diagnostic(severity: lint.diagnostic.Severity) lint.diagnostic.Diagnostic {
     return .{
         .rule_id = "no-console",
@@ -13,17 +19,15 @@ fn diagnostic(severity: lint.diagnostic.Severity) lint.diagnostic.Diagnostic {
     };
 }
 
-const diagnostic_json =
-    "{\"rule_id\":\"no-console\",\"language\":\"ts\",\"message\":\"console is not allowed\"," ++
-    "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
-    "\"severity\":\"error\",\"demoted\":false,\"maturity\":\"stable\",\"fingerprint\":\"\",\"context\":[]," ++
-    "\"fix\":null,\"suggestions\":[],\"capped\":false}";
+fn jsonReporter(out: *std.Io.Writer.Allocating) reports.Reporter {
+    return .{ .json = reports.Json.init(&out.writer) };
+}
 
 test "json: clean run renders empty files and the summary" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    var reporter = jsonReporter(&out);
     try reporter.file("src/app.ts", "const x = 1;\n", &.{});
     try reporter.finish(.{ .files = 1, .violations = 0, .warnings = 0 }, &.{});
 
@@ -37,7 +41,7 @@ test "json: files with diagnostics render as entries" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    var reporter = jsonReporter(&out);
     try reporter.file("src/clean.ts", "const x = 1;\n", &.{});
     try reporter.file("src/app.ts", "console.log(1);\n", &.{diagnostic(.@"error")});
     try reporter.file("src/other.ts", "console.log(2);\n", &.{diagnostic(.@"error")});
@@ -56,7 +60,7 @@ test "json: project violations render as entries" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    var reporter = jsonReporter(&out);
     try reporter.project(&.{.{ .path = "src/service.ts", .diagnostic = diagnostic(.@"error") }});
     try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 }, &.{});
 
@@ -79,7 +83,7 @@ test "json: populated context renders its complete shape" {
         .range = .{ .start = .{ .line = 1, .column = 2 }, .end = .{ .line = 3, .column = 3 } },
     }};
 
-    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    var reporter = jsonReporter(&out);
     try reporter.file("src/app.ts", "", &.{d});
     try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 }, &.{});
 
@@ -100,7 +104,7 @@ test "json: warn severity serializes as warn" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    var reporter = jsonReporter(&out);
     try reporter.file("src/app.ts", "console.log(1);\n", &.{diagnostic(.warn)});
     try reporter.finish(.{ .files = 1, .violations = 0, .warnings = 1 }, &.{});
 
@@ -114,11 +118,27 @@ test "json: experimental maturity serializes as experimental" {
     var d = diagnostic(.@"error");
     d.maturity = .experimental;
 
-    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    var reporter = jsonReporter(&out);
     try reporter.file("src/app.ts", "console.log(1);\n", &.{d});
     try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 }, &.{});
 
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"maturity\":\"experimental\"") != null);
+}
+
+test "json: output remains valid when values need escaping" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    var d = diagnostic(.@"error");
+    d.rule_id = "quotes-\"-and-newline-\n";
+    d.message = "message with \"quotes\" and\na newline";
+
+    var reporter = jsonReporter(&out);
+    try reporter.file("src/quoted-\"path.ts", "", &.{d});
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 }, &.{});
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, out.written(), .{});
+    defer parsed.deinit();
 }
 
 test "json: populated fix and suggestions render their complete shape" {
@@ -137,7 +157,7 @@ test "json: populated fix and suggestions render their complete shape" {
         .replacement = "unknown",
     }};
 
-    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    var reporter = jsonReporter(&out);
     try reporter.file("src/app.ts", "", &.{d});
     try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 }, &.{});
 

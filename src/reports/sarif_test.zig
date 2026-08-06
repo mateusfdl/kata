@@ -4,6 +4,13 @@ const build_options = @import("build_options");
 const lint = @import("engine");
 const reports = @import("../reports.zig");
 
+const error_result =
+    "{\"ruleId\":\"no-console\",\"ruleIndex\":0,\"level\":\"error\"," ++
+    "\"message\":{\"text\":\"console is not allowed\"}," ++
+    "\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"src/app.ts\"}," ++
+    "\"region\":{\"startLine\":5,\"startColumn\":3,\"endLine\":5,\"endColumn\":10}}}]," ++
+    "\"partialFingerprints\":{\"kataFingerprint/v1\":\"aaaa1111\"}}";
+
 fn diagnostic(severity: lint.diagnostic.Severity) lint.diagnostic.Diagnostic {
     return .{
         .rule_id = "no-console",
@@ -16,7 +23,7 @@ fn diagnostic(severity: lint.diagnostic.Severity) lint.diagnostic.Diagnostic {
 }
 
 fn sarifReporter(out: *std.Io.Writer.Allocating) reports.Reporter {
-    return .{ .sarif = .{ .writer = &out.writer, .gpa = std.testing.allocator } };
+    return .{ .sarif = reports.Sarif.init(std.testing.allocator, &out.writer) };
 }
 
 fn document(comptime results: []const u8, comptime rules: []const u8) []const u8 {
@@ -26,12 +33,16 @@ fn document(comptime results: []const u8, comptime rules: []const u8) []const u8
         "\"rules\":[" ++ rules ++ "]}}}]}\n";
 }
 
-const error_result =
-    "{\"ruleId\":\"no-console\",\"ruleIndex\":0,\"level\":\"error\"," ++
-    "\"message\":{\"text\":\"console is not allowed\"}," ++
-    "\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"src/app.ts\"}," ++
-    "\"region\":{\"startLine\":5,\"startColumn\":3,\"endLine\":5,\"endColumn\":10}}}]," ++
-    "\"partialFingerprints\":{\"kataFingerprint/v1\":\"aaaa1111\"}}";
+test "sarif: deinit releases unfinished rule storage and is idempotent" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    var reporter = sarifReporter(&out);
+    try reporter.file("src/app.ts", "", &.{diagnostic(.@"error")});
+
+    reporter.deinit();
+    reporter.deinit();
+}
 
 test "sarif: clean run renders empty results and rules" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -126,6 +137,22 @@ test "sarif: empty fingerprint omits partialFingerprints" {
             "\"region\":{\"startLine\":5,\"startColumn\":3,\"endLine\":5,\"endColumn\":10}}}]}",
         "{\"id\":\"no-console\",\"defaultConfiguration\":{\"level\":\"error\"}}",
     ), out.written());
+}
+
+test "sarif: output remains valid when values need escaping" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    var d = diagnostic(.@"error");
+    d.rule_id = "quotes-\"-and-newline-\n";
+    d.message = "message with \"quotes\" and\na newline";
+
+    var reporter = sarifReporter(&out);
+    try reporter.file("src/quoted-\"path.ts", "", &.{d});
+    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 }, &.{});
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, out.written(), .{});
+    defer parsed.deinit();
 }
 
 test "sarif: safe fixes render as fixes with deleted region and inserted content" {

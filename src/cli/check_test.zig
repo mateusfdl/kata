@@ -476,7 +476,7 @@ test "check: json diagnostics carry fingerprints for file and project rules" {
             .deny = "**/infra/**",
         } },
     }};
-    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    var reporter: reports.Reporter = .{ .json = reports.Json.init(&out.writer) };
     const outcome = try check.run(io, gpa, &f.engine, .{ .target = rel, .project_rules = &rules }, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
@@ -865,7 +865,7 @@ test "check: a flooding rule renders three findings plus a capped summary and st
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
 
-    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    var reporter: reports.Reporter = .{ .json = reports.Json.init(&out.writer) };
     const outcome = try check.run(io, gpa, &f.engine, .{ .target = rel, .max_matches = 1 }, &reporter);
 
     try std.testing.expectEqual(check.Outcome.violations, outcome);
@@ -890,7 +890,7 @@ fn jsonRun(gpa: std.mem.Allocator, io: std.Io, engine: *lint.Engine, opts: check
     var out: std.Io.Writer.Allocating = .init(gpa);
     errdefer out.deinit();
 
-    var reporter: reports.Reporter = .{ .json = .{ .writer = &out.writer } };
+    var reporter: reports.Reporter = .{ .json = reports.Json.init(&out.writer) };
     const outcome = try check.run(io, gpa, engine, opts, &reporter);
 
     return .{ .outcome = outcome, .json = try out.toOwnedSlice() };
