@@ -107,13 +107,22 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     wireKataModule(test_module, engine_module, dsl_module, path_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
+    // Test artifacts share one install directory. Distinct names keep each
+    // debugger target addressable without replacing another test binary.
     const unit_tests = b.addTest(.{
+        .name = "kata-test",
         .root_module = test_module,
+        .use_llvm = true,
     });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run all unit tests");
     test_step.dependOn(&run_unit_tests.step);
+
+    // Project tests need this build graph for named modules and linked grammars.
+    // Install stable debugger paths separately so the normal test step stays run-only.
+    const test_bin_step = b.step("test-bin", "Install unit test binaries into zig-out/bin for debugging");
+    test_bin_step.dependOn(&b.addInstallArtifact(unit_tests, .{}).step);
 
     const engine_test_module = b.createModule(.{
         .root_source_file = b.path("src/engine/tests.zig"),
@@ -123,9 +132,12 @@ pub fn build(b: *std.Build) void {
     });
     wireEngineModule(engine_test_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
     const engine_unit_tests = b.addTest(.{
+        .name = "engine-test",
         .root_module = engine_test_module,
+        .use_llvm = true,
     });
     test_step.dependOn(&b.addRunArtifact(engine_unit_tests).step);
+    test_bin_step.dependOn(&b.addInstallArtifact(engine_unit_tests, .{}).step);
 
     const dsl_test_module = b.createModule(.{
         .root_source_file = b.path("src/dsl/tests.zig"),
@@ -135,9 +147,12 @@ pub fn build(b: *std.Build) void {
     });
     wireDslModule(dsl_test_module, engine_module, mvzr_module, node_kinds_module);
     const dsl_unit_tests = b.addTest(.{
+        .name = "dsl-test",
         .root_module = dsl_test_module,
+        .use_llvm = true,
     });
     test_step.dependOn(&b.addRunArtifact(dsl_unit_tests).step);
+    test_bin_step.dependOn(&b.addInstallArtifact(dsl_unit_tests, .{}).step);
 
     const run_rule_tests = b.addRunArtifact(exe);
     run_rule_tests.addArg("test");
