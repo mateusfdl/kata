@@ -29,10 +29,9 @@ const Setup = struct {
     err: std.Io.Writer.Allocating,
     arena: std.heap.ArenaAllocator,
 
-    fn init(io: std.Io, rule_file: []const u8, rule_body: []const u8, fixture_name: []const u8, fixture_body: []const u8) !*Setup {
+    fn init(io: std.Io, rule_file: []const u8, rule_body: []const u8, fixture_name: []const u8, fixture_body: []const u8) !Setup {
         const gpa = std.testing.allocator;
-        const self = try gpa.create(Setup);
-        self.* = .{
+        var self: Setup = .{
             .tmp = std.testing.tmpDir(.{}),
             .rules_dir = undefined,
             .out = .init(gpa),
@@ -53,12 +52,10 @@ const Setup = struct {
     }
 
     fn deinit(self: *Setup) void {
-        const gpa = std.testing.allocator;
         self.out.deinit();
         self.err.deinit();
         self.tmp.cleanup();
         self.arena.deinit();
-        gpa.destroy(self);
     }
 };
 

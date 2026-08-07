@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const args_mod = @import("args.zig");
 const check = @import("check.zig");
 const dsl = @import("dsl");
 const lint = @import("engine");
@@ -8,7 +9,18 @@ const reports = @import("../reports.zig");
 const Engine = lint.Engine;
 const language = lint.language;
 
-pub const Outcome = enum { clean, matches, usage };
+pub const Outcome = enum {
+    clean,
+    matches,
+    usage,
+
+    fn usageError(stderr: *std.Io.Writer, comptime fmt: []const u8, args: anytype) !Outcome {
+        try stderr.print(fmt, args);
+        try stderr.flush();
+
+        return .usage;
+    }
+};
 
 pub const Options = struct {
     text: []const u8 = "",
@@ -17,65 +29,75 @@ pub const Options = struct {
     format: reports.Format = .pretty,
     color: bool = false,
     invalid_arg: ?[]const u8 = null,
+
+    const flag_parser = args_mod.parser(&.{
+        .{ .name = "lang", .kind = .arg },
+        .{ .name = "json", .kind = .boolean },
+        .{ .name = "text", .kind = .boolean },
+        .{ .name = "sarif", .kind = .boolean },
+    });
+
+    pub fn parse(args: []const [:0]const u8) Options {
+        const parsed = flag_parser.parse(args);
+        const positionals = parsed.positionals();
+
+        var opts: Options = .{};
+        if (parsed.flags.lang) |lang| opts.lang = lang;
+        opts.format = reports.Format.lastFlag(parsed.flags.json, parsed.flags.text, parsed.flags.sarif);
+        if (positionals.len > 0) opts.text = positionals[0];
+        if (positionals.len > 1) opts.target = positionals[1];
+        opts.invalid_arg = parsed.unknown orelse if (positionals.len > 2) positionals[2] else null;
+
+        return opts;
+    }
+
+    pub fn run(
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        opts: Options,
+        stdout: *std.Io.Writer,
+        stderr: *std.Io.Writer,
+    ) !Outcome {
+        if (opts.invalid_arg) |arg|
+            return Outcome.usageError(stderr, "kata query: unexpected argument \"{s}\" (is the query quoted?)\n", .{arg});
+        if (opts.text.len == 0)
+            return Outcome.usageError(stderr, usage_line, .{});
+        if (opts.lang.len == 0)
+            return Outcome.usageError(stderr, "kata query: --lang is required (expected " ++ language.supported_list ++ ")\n", .{});
+        var langs_buf: [language.max_langs_per_dir]language.Name = undefined;
+        var langs_len: usize = 0;
+        var it = std.mem.splitScalar(u8, opts.lang, ',');
+        while (it.next()) |token| {
+            const lang = language.Name.fromString(token) orelse
+                return Outcome.usageError(stderr, "kata query: unsupported language: \"{s}\" (expected " ++ language.supported_list ++ ")\n", .{token});
+            if (std.mem.indexOfScalar(language.Name, langs_buf[0..langs_len], lang) != null) continue;
+            langs_buf[langs_len] = lang;
+            langs_len += 1;
+        }
+
+        var rule_set: lint.RuleSet = .{ .allocator = gpa };
+        defer rule_set.deinit();
+        for (langs_buf[0..langs_len]) |lang| {
+            try rule_set.append(lang, .{ .id = rule_id, .source = opts.text });
+        }
+
+        var engine = Engine.init(gpa, &rule_set, dsl.engine_compiler.ruleCompiler(), &.{});
+        defer engine.deinit();
+
+        if (!try engine.prewarmOrReport("kata", stderr)) return .usage;
+
+        var reporter = reports.Reporter.init(gpa, opts.format, stdout, opts.color);
+        defer reporter.deinit();
+
+        return switch (try check.run(io, gpa, &engine, .{ .target = opts.target }, &reporter)) {
+            .clean => .clean,
+            .violations => .matches,
+        };
+    }
 };
 
-pub const usage_line = "usage: kata query '<kata rule>' [path] --lang=<ts|tsx|go>\n";
+pub const run = Options.run;
+
+const usage_line = "usage: kata query '<kata rule>' [path] --lang=<ts|tsx|go>\n";
 
 const rule_id = "query";
-
-pub fn run(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    opts: Options,
-    stdout: *std.Io.Writer,
-    stderr: *std.Io.Writer,
-) !Outcome {
-    if (opts.invalid_arg) |arg|
-        return usageError(stderr, "kata query: unexpected argument \"{s}\" (is the query quoted?)\n", .{arg});
-    if (opts.text.len == 0)
-        return usageError(stderr, usage_line, .{});
-    if (opts.lang.len == 0)
-        return usageError(stderr, "kata query: --lang is required (expected " ++ language.supported_list ++ ")\n", .{});
-    var langs_buf: [language.max_langs_per_dir]language.Name = undefined;
-    var langs_len: usize = 0;
-    var it = std.mem.splitScalar(u8, opts.lang, ',');
-    while (it.next()) |token| {
-        const lang = language.Name.fromString(token) orelse
-            return usageError(stderr, "kata query: unsupported language: \"{s}\" (expected " ++ language.supported_list ++ ")\n", .{token});
-        if (containsLang(langs_buf[0..langs_len], lang)) continue;
-        langs_buf[langs_len] = lang;
-        langs_len += 1;
-    }
-
-    var rule_set: lint.RuleSet = .{ .allocator = gpa };
-    defer rule_set.deinit();
-    for (langs_buf[0..langs_len]) |lang| {
-        try rule_set.append(lang, .{ .id = rule_id, .source = opts.text });
-    }
-
-    var engine = Engine.init(gpa, &rule_set, dsl.engine_compiler.ruleCompiler(), &.{});
-    defer engine.deinit();
-
-    if (!try engine.prewarmOrReport("kata", stderr)) return .usage;
-
-    var reporter = reports.Reporter.init(gpa, opts.format, stdout, opts.color);
-    defer reporter.deinit();
-
-    return switch (try check.run(io, gpa, &engine, .{ .target = opts.target }, &reporter)) {
-        .clean => .clean,
-        .violations => .matches,
-    };
-}
-
-fn containsLang(langs: []const language.Name, lang: language.Name) bool {
-    for (langs) |l| {
-        if (l == lang) return true;
-    }
-    return false;
-}
-
-fn usageError(stderr: *std.Io.Writer, comptime fmt: []const u8, args: anytype) !Outcome {
-    try stderr.print(fmt, args);
-    try stderr.flush();
-    return .usage;
-}

@@ -6,17 +6,6 @@ const reports = @import("../reports.zig");
 const lint = @import("engine");
 const test_fixture = @import("../test_fixture.zig");
 
-fn runGit(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, argv: []const []const u8) !void {
-    const result = std.process.run(gpa, io, .{ .argv = argv, .cwd = .{ .dir = dir } }) catch |err| switch (err) {
-        error.FileNotFound => return error.SkipZigTest,
-
-        else => return err,
-    };
-    defer gpa.free(result.stdout);
-    defer gpa.free(result.stderr);
-    try std.testing.expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
-}
-
 const TreeFile = struct {
     path: []const u8,
     data: []const u8,
@@ -31,9 +20,9 @@ fn commitTree(gpa: std.mem.Allocator, io: std.Io, tmp: *std.testing.TmpDir, file
         }
         try tmp.dir.writeFile(io, .{ .sub_path = file.path, .data = file.data });
     }
-    try runGit(gpa, io, tmp.dir, &.{ "git", "init", "-q" });
-    try runGit(gpa, io, tmp.dir, &.{ "git", "add", "." });
-    try runGit(gpa, io, tmp.dir, &.{
+    try test_fixture.runGit(gpa, io, tmp.dir, &.{ "git", "init", "-q" });
+    try test_fixture.runGit(gpa, io, tmp.dir, &.{ "git", "add", "." });
+    try test_fixture.runGit(gpa, io, tmp.dir, &.{
         "git",                  "-c",                   "user.name=kata",
         "-c",                   "user.email=kata@test", "-c",
         "commit.gpgsign=false", "commit",               "-q",

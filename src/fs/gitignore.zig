@@ -27,6 +27,7 @@ pub const Stack = struct {
 
     pub fn pushScope(stack: *Stack, dir_path: []const u8, bytes: []const u8) error{OutOfMemory}!void {
         const duped = try stack.arena.dupe(u8, dir_path);
+
         try stack.scopes.append(stack.arena, try Scope.parse(stack.arena, duped, bytes));
     }
 
@@ -38,11 +39,15 @@ pub const Stack = struct {
         while (stack.scopes.items.len > 0) {
             const top = stack.scopes.items[stack.scopes.items.len - 1];
             if (top.dir_path.len == 0 or relativeTo(entry_path, top.dir_path) != null) break;
+
             _ = stack.scopes.pop();
         }
+
         while (stack.excluded.items.len > 0) {
             const top = stack.excluded.items[stack.excluded.items.len - 1];
+
             if (relativeTo(entry_path, top) != null) break;
+
             _ = stack.excluded.pop();
         }
     }
@@ -57,6 +62,7 @@ pub const Stack = struct {
             i -= 1;
             const scope = stack.scopes.items[i];
             const rel = relativeTo(rel_path, scope.dir_path) orelse continue;
+
             if (scope.match(rel, is_dir)) |verdict| return verdict;
         }
 
@@ -89,9 +95,17 @@ fn anchoredCouldMatchUnder(segments: []const []const u8, rel: []const u8) bool {
     var parts = std.mem.splitScalar(u8, rel, '/');
     var i: usize = 0;
     while (parts.next()) |part| {
-        if (i >= segments.len) return false;
-        if (std.mem.eql(u8, segments[i], "**")) return true;
-        if (!matchSegment(segments[i], part)) return false;
+        if (i >= segments.len) {
+            return false;
+        }
+
+        if (std.mem.eql(u8, segments[i], "**")) {
+            return true;
+        }
+
+        if (!matchSegment(segments[i], part)) {
+            return false;
+        }
         i += 1;
     }
 

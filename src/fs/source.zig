@@ -28,6 +28,7 @@ pub fn walkFiles(
 
     var stack = try gitignore.Stack.init(arena);
     const prefix = try loadAncestorScopes(io, &stack, arena, target);
+
     if (dir.readFileAlloc(io, gitignore_file, arena, .limited(max_gitignore_bytes))) |bytes| {
         try stack.pushScope(prefix, bytes);
     } else |err| switch (err) {
@@ -44,6 +45,7 @@ pub fn walkFiles(
         try full_path.appendSlice(arena, prefix);
         try full_path.append(arena, '/');
     }
+
     const prefix_len = full_path.items.len;
 
     var files: usize = 0;
@@ -66,10 +68,13 @@ pub fn walkFiles(
                     try walker.enter(io, entry);
                 },
             }
+
             continue;
         }
         if (entry.kind != .file) continue;
+
         if (stack.decide(full, false) == .ignored) continue;
+
         const lang = languageOf(entry.basename) orelse continue;
 
         const source = entry.dir.readFileAlloc(io, entry.basename, gpa, .limited(max_file_bytes)) catch continue;
@@ -79,6 +84,7 @@ pub fn walkFiles(
         defer gpa.free(indexed_path);
 
         files += 1;
+
         try visit(context, lang, source, indexed_path);
     }
 
@@ -103,7 +109,9 @@ pub fn readOptional(io: std.Io, allocator: std.mem.Allocator, file_path: []const
 
 pub fn indexPath(gpa: std.mem.Allocator, target: []const u8, sub_path: []const u8) ![]u8 {
     const trimmed = std.mem.trimEnd(u8, target, "/");
-    if (trimmed.len == 0 or std.mem.eql(u8, trimmed, ".")) return gpa.dupe(u8, sub_path);
+    if (trimmed.len == 0 or std.mem.eql(u8, trimmed, ".")) {
+        return gpa.dupe(u8, sub_path);
+    }
     const base = if (std.mem.startsWith(u8, trimmed, "./")) trimmed[2..] else trimmed;
 
     return paths.join(gpa, base, sub_path);
@@ -175,5 +183,6 @@ fn pushAncestorScope(
     const dir_path = if (rel.len == 0) root else try paths.join(arena, root, rel);
     const gitignore_path = try paths.join(arena, dir_path, gitignore_file);
     const bytes = try file.readOptionalAlloc(io, arena, gitignore_path, max_gitignore_bytes) orelse return;
+
     try stack.pushScope(rel, bytes);
 }

@@ -17,7 +17,6 @@ const one_shot = @import("cli/one_shot.zig");
 const output = @import("cli/output.zig");
 const query = @import("cli/query.zig");
 
-const language = lint.language;
 const daemon = server.daemon;
 const protocol = server.protocol;
 const config = sources.config;
@@ -26,21 +25,12 @@ const loader_mod = sources.loader;
 
 const io_buffer_size: usize = 8192;
 
-pub const exit_clean = exit.clean;
-pub const exit_violations = exit.violations;
-pub const exit_usage = exit.usage;
-pub const exit_internal_error = exit.internal_error;
-
-pub const Command = struct {
+const Command = struct {
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     io: std.Io,
     resolver: *context_mod.Resolver,
     environ: *std.process.Environ.Map,
-    args: []const [:0]const u8,
-    user_rules_dir: ?[]const u8 = null,
-    color: bool = false,
-    stdin: *std.Io.Reader,
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
 };
@@ -50,6 +40,32 @@ pub const CheckOptions = struct {
     format: reports.Format = .pretty,
     baseline: ?[]const u8 = null,
     fix: check.FixLevel = .off,
+    invalid_arg: ?[]const u8 = null,
+    missing_value: ?[]const u8 = null,
+
+    const flag_parser = args_mod.parser(&.{
+        .{ .name = "baseline", .kind = .arg },
+        .{ .name = "json", .kind = .boolean },
+        .{ .name = "text", .kind = .boolean },
+        .{ .name = "sarif", .kind = .boolean },
+        .{ .name = "fix", .kind = .boolean },
+        .{ .name = "fix-unsafe", .kind = .boolean },
+    });
+
+    pub fn parse(args: []const [:0]const u8) CheckOptions {
+        const parsed = flag_parser.parse(args);
+        const positionals = parsed.positionals();
+
+        var opts: CheckOptions = .{ .target = "." };
+        opts.baseline = parsed.flags.baseline;
+        opts.format = reports.Format.lastFlag(parsed.flags.json, parsed.flags.text, parsed.flags.sarif);
+        opts.fix = if (parsed.flags.@"fix-unsafe" > parsed.flags.fix) .unsafe else if (parsed.flags.fix != 0) .safe else .off;
+        opts.missing_value = parsed.missing;
+        if (positionals.len > 0) opts.target = positionals[0];
+        opts.invalid_arg = parsed.unknown orelse if (positionals.len > 1) positionals[1] else null;
+
+        return opts;
+    }
 };
 
 pub const Subcommand = union(enum) {
@@ -63,118 +79,57 @@ pub const Subcommand = union(enum) {
     new_rule,
     one_shot,
     unknown: []const u8,
+    invalid_arg: []const u8,
+    missing_value: []const u8,
 };
 
-pub const Options = one_shot.Options;
+const ConfiguredCommand = union(enum) {
+    daemon: ?[]const u8,
+    check: CheckOptions,
+    facts: []const u8,
+    one_shot: []const [:0]const u8,
+};
 
 pub fn parseSubcommand(args: []const [:0]const u8) Subcommand {
     if (args.len == 0) return .{ .daemon = null };
 
     const cmd = args[0];
     if (std.mem.eql(u8, cmd, "--version")) return .version;
-    if (args_mod.isFlag(cmd)) return .one_shot;
+    if (args_mod.Spec.isFlag(cmd)) return .one_shot;
 
-    return switch (args_mod.CommandName.parse(cmd) orelse return .{ .unknown = cmd }) {
-        .daemon => .{ .daemon = rootFlag(args[1..]) },
-        .check => .{ .check = parseCheckArgs(args[1..]) },
-        .facts => .{ .facts = args_mod.firstPositional(args[1..]) orelse "" },
-        .@"test" => .{ .rule_test = args_mod.firstPositional(args[1..]) orelse "" },
-        .query => .{ .query = parseQueryArgs(args[1..]) },
-        .stop => .stop,
+    return switch (std.meta.stringToEnum(args_mod.CommandName, cmd) orelse return .{ .unknown = cmd }) {
+        .daemon => switch (DaemonArgs.parse(args[1..])) {
+            .root => |root| .{ .daemon = root },
+            .invalid => |arg| .{ .invalid_arg = arg },
+            .missing_root_value => .{ .missing_value = "--root" },
+        },
+        .check => .{ .check = CheckOptions.parse(args[1..]) },
+        .facts => facts: {
+            const parsed = positional_parser.parse(args[1..]);
+            if (parsed.unknown) |arg| break :facts .{ .invalid_arg = arg };
+            const positionals = parsed.positionals();
+            if (positionals.len == 0) break :facts .{ .facts = "" };
+            if (positionals.len > 1) break :facts .{ .invalid_arg = positionals[1] };
+            break :facts .{ .facts = positionals[0] };
+        },
+        .@"test" => rule_test: {
+            const parsed = positional_parser.parse(args[1..]);
+            if (parsed.unknown) |arg| break :rule_test .{ .invalid_arg = arg };
+            const positionals = parsed.positionals();
+            if (positionals.len == 0) break :rule_test .{ .rule_test = "" };
+            if (positionals.len > 1) break :rule_test .{ .invalid_arg = positionals[1] };
+            break :rule_test .{ .rule_test = positionals[0] };
+        },
+        .query => .{ .query = query.Options.parse(args[1..]) },
+        .stop => if (args.len > 1) .{ .invalid_arg = args[1] } else .stop,
         .@"new-rule" => .new_rule,
     };
 }
 
-fn parseCheckArgs(args: []const [:0]const u8) CheckOptions {
-    var opts: CheckOptions = .{ .target = "." };
-    var seen_target = false;
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const a = args[i];
-        switch (args_mod.valueFor(args, &i, .baseline)) {
-            .found => |value| {
-                opts.baseline = value;
-                continue;
-            },
-            .missing => continue,
-            .absent => {},
-        }
-
-        if (formatFlag(a)) |f| {
-            opts.format = f;
-            continue;
-        }
-
-        if (std.mem.eql(u8, a, "--fix")) {
-            opts.fix = .safe;
-            continue;
-        }
-
-        if (std.mem.eql(u8, a, "--fix-unsafe")) {
-            opts.fix = .unsafe;
-            continue;
-        }
-
-        if (args_mod.isFlag(a)) continue;
-
-        if (!seen_target) {
-            opts.target = a;
-            seen_target = true;
-        }
-    }
-
-    return opts;
-}
+const positional_parser = args_mod.parser(&.{});
 
 pub fn baselineRef(flag: ?[]const u8, environ: *std.process.Environ.Map) ?[]const u8 {
     return flag orelse environ.get(args_mod.env_baseline);
-}
-
-fn formatFlag(arg: []const u8) ?reports.Format {
-    if (std.mem.eql(u8, arg, "--json")) return .json;
-    if (std.mem.eql(u8, arg, "--text")) return .text;
-    if (std.mem.eql(u8, arg, "--sarif")) return .sarif;
-
-    return null;
-}
-
-fn parseQueryArgs(args: []const [:0]const u8) query.Options {
-    var q: query.Options = .{};
-    var positionals: usize = 0;
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const a = args[i];
-        switch (args_mod.valueFor(args, &i, .lang)) {
-            .found => |value| {
-                q.lang = value;
-                continue;
-            },
-            .missing => continue,
-            .absent => {},
-        }
-
-        if (formatFlag(a)) |f| {
-            q.format = f;
-            continue;
-        }
-
-        if (args_mod.isFlag(a)) {
-            if (q.invalid_arg == null) q.invalid_arg = a;
-            continue;
-        }
-
-        positionals += 1;
-
-        switch (positionals) {
-            1 => q.text = a,
-            2 => q.target = a,
-            else => if (q.invalid_arg == null) {
-                q.invalid_arg = a;
-            },
-        }
-    }
-
-    return q;
 }
 
 pub fn main(init: std.process.Init) u8 {
@@ -182,36 +137,64 @@ pub fn main(init: std.process.Init) u8 {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    var stdin_buf: [io_buffer_size]u8 = undefined;
     var stdout_buf: [io_buffer_size]u8 = undefined;
     var stderr_buf: [io_buffer_size]u8 = undefined;
-    var stdin_reader = std.Io.File.stdin().reader(io, &stdin_buf);
     var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
     var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buf);
+    const stdout = &stdout_writer.interface;
     const stderr = &stderr_writer.interface;
 
     const argv = init.minimal.args.toSlice(arena) catch |err| return die(stderr, "read args", err);
     const user_args = if (argv.len > 0) argv[1..] else argv;
-    const user_dir = resolveUserRulesDir(arena, init.environ_map) catch |err| return die(stderr, "resolve user rules dir", err);
-
     const subcommand = parseSubcommand(user_args);
-    if (subcommand == .new_rule) {
-        return runNewRule(arena, io, user_args, user_dir, &stdout_writer.interface, stderr) catch |err|
-            die(stderr, "new-rule", err);
-    }
+    const configured: ConfiguredCommand = switch (subcommand) {
+        .version => return runVersion(stdout) catch |err| die(stderr, "kata", err),
+        .query => |opts| return runQuery(io, gpa, opts, stdout, stderr) catch |err| die(stderr, "kata", err),
+        .stop => return runStop(io, arena, init.environ_map, stdout, stderr) catch |err| die(stderr, "kata", err),
+        .rule_test => |dir| return runRuleTest(io, gpa, arena, dir, stdout, stderr) catch |err| die(stderr, "kata", err),
+        .new_rule => {
+            const user_dir = resolveUserRulesDir(arena, init.environ_map) catch |err|
+                return die(stderr, "resolve user rules dir", err);
+            return new_rule.run(arena, io, .{
+                .args = user_args,
+                .user_rules_dir = user_dir,
+                .stdout = stdout,
+                .stderr = stderr,
+            }) catch |err| die(stderr, "new-rule", err);
+        },
+        .unknown => |cmd| return runUnknown(stderr, cmd) catch |err| die(stderr, "kata", err),
+        .invalid_arg => |arg| return printfAndExit(stderr, "kata: unexpected argument \"{s}\"\n", .{arg}, exit.usage) catch |err|
+            die(stderr, "kata", err),
+        .missing_value => |flag| return printfAndExit(stderr, "kata: \"{s}\" requires a value\n", .{flag}, exit.usage) catch |err|
+            die(stderr, "kata", err),
+        .daemon => |root| .{ .daemon = root },
+        .check => |opts| check: {
+            if (opts.invalid_arg) |arg|
+                return printfAndExit(stderr, "kata check: unexpected argument \"{s}\"\n", .{arg}, exit.usage) catch |err|
+                    die(stderr, "kata", err);
+            if (opts.missing_value) |flag|
+                return printfAndExit(stderr, "kata check: \"{s}\" requires a value\n", .{flag}, exit.usage) catch |err|
+                    die(stderr, "kata", err);
+            break :check .{ .check = opts };
+        },
+        .facts => |target| facts_command: {
+            if (target.len == 0)
+                return printAndExit(stderr, "usage: kata facts <file>\n", exit.usage) catch |err| die(stderr, "kata", err);
+            break :facts_command .{ .facts = target };
+        },
+        .one_shot => .{ .one_shot = user_args },
+    };
 
+    const user_dir = resolveUserRulesDir(arena, init.environ_map) catch |err| return die(stderr, "resolve user rules dir", err);
     var diag: config.Diagnostic = .{};
-    var cfg_opt: ?config.Config = if (subcommand == .rule_test)
-        null
-    else
-        config.loadFromDisk(gpa, io, init.environ_map, &diag) catch |err| return dieConfig(stderr, diag, err);
-    defer if (cfg_opt) |*cfg| cfg.deinit();
+    var cfg = config.loadFromDisk(gpa, io, init.environ_map, &diag) catch |err| return dieConfig(stderr, diag, err);
+    defer if (cfg) |*value| value.deinit();
 
     var resolver: context_mod.Resolver = .{
         .gpa = gpa,
         .io = io,
         .user_rules_dir = user_dir,
-        .global_config = if (cfg_opt) |*cfg| cfg else null,
+        .global_config = if (cfg) |*value| value else null,
     };
 
     return dispatchSubcommand(.{
@@ -220,48 +203,44 @@ pub fn main(init: std.process.Init) u8 {
         .io = io,
         .resolver = &resolver,
         .environ = init.environ_map,
-        .args = user_args,
-        .user_rules_dir = user_dir,
-        .color = std.Io.File.stdout().supportsAnsiEscapeCodes(io) catch false,
-        .stdin = &stdin_reader.interface,
-        .stdout = &stdout_writer.interface,
+        .stdout = stdout,
         .stderr = stderr,
-    }, subcommand) catch |err| die(stderr, "kata", err);
+    }, configured) catch |err| die(stderr, "kata", err);
 }
 
-fn runVersion(c: Command) !u8 {
-    try c.stdout.print("{s}\n", .{build_options.version});
-    try c.stdout.flush();
+fn runVersion(stdout: *std.Io.Writer) !u8 {
+    try stdout.print("{s}\n", .{build_options.version});
+    try stdout.flush();
 
-    return exit_clean;
+    return exit.clean;
 }
 
-fn rootFlag(args: []const [:0]const u8) ?[]const u8 {
-    var i: usize = 0;
+const DaemonArgs = union(enum) {
+    root: ?[]const u8,
+    invalid: []const u8,
+    missing_root_value,
 
-    while (i < args.len) : (i += 1) {
-        switch (args_mod.valueFor(args, &i, .root)) {
-            .found => |value| return value,
-            .missing => return null,
-            .absent => {},
-        }
+    const flag_parser = args_mod.parser(&.{
+        .{ .name = "root", .kind = .arg },
+    });
+
+    pub fn parse(args: []const [:0]const u8) DaemonArgs {
+        const parsed = flag_parser.parse(args);
+        if (parsed.missing != null) return .missing_root_value;
+        if (parsed.unknown) |arg| return .{ .invalid = arg };
+        const positionals = parsed.positionals();
+        if (positionals.len > 0) return .{ .invalid = positionals[0] };
+
+        return .{ .root = parsed.flags.root };
     }
+};
 
-    return null;
-}
-
-fn dispatchSubcommand(c: Command, subcommand: Subcommand) !u8 {
+fn dispatchSubcommand(c: Command, subcommand: ConfiguredCommand) !u8 {
     return switch (subcommand) {
-        .version => runVersion(c),
         .daemon => |root| runDaemon(c, root),
         .check => |opts| runCheck(c, opts),
         .facts => |target| runFacts(c, target),
-        .rule_test => |dir| runRuleTest(c, dir),
-        .query => |q| runQuery(c, q),
-        .stop => runStop(c),
-        .new_rule => runNewRule(c.arena, c.io, c.args, c.user_rules_dir, c.stdout, c.stderr),
-        .one_shot => runOneShot(c),
-        .unknown => |cmd| runUnknown(c, cmd),
+        .one_shot => |args| runOneShot(c, args),
     };
 }
 
@@ -294,12 +273,20 @@ fn resolveContext(c: Command, anchor: ?[]const u8) !?*context_mod.Context {
     return ctx;
 }
 
-fn runOneShot(c: Command) !u8 {
+fn runOneShot(c: Command, args: []const [:0]const u8) !u8 {
     var arena = std.heap.ArenaAllocator.init(c.gpa);
     defer arena.deinit();
     const a = arena.allocator();
 
-    const opts = oneShotOptions(c);
+    var stdin_buf: [io_buffer_size]u8 = undefined;
+    var stdin_reader = std.Io.File.stdin().reader(c.io, &stdin_buf);
+
+    const opts: one_shot.Options = .{
+        .args = args,
+        .stdin = &stdin_reader.interface,
+        .stdout = c.stdout,
+        .stderr = c.stderr,
+    };
     const request = switch (try one_shot.prepare(a, opts)) {
         .ready => |r| r,
         .failed => |code| return code,
@@ -307,7 +294,7 @@ fn runOneShot(c: Command) !u8 {
 
     if (daemonReport(c, a, request)) |response| return one_shot.report(opts, response);
 
-    const ctx = (try resolveContext(c, request.filename)) orelse return exit_internal_error;
+    const ctx = (try resolveContext(c, request.filename)) orelse return exit.internal_error;
     defer ctx.deinit();
 
     if (ctx.resolved.daemon_autostart) autostartDaemon(c);
@@ -317,7 +304,7 @@ fn runOneShot(c: Command) !u8 {
         .io = c.io,
         .ratchet = ctx.resolved.ratchet,
         .max_matches = ctx.resolved.max_matches_per_file,
-        .cache_dir = resolveCacheDir(c),
+        .cache_dir = if (ctx.resolved.cache) resolveCacheDir(c) else null,
         .cache_enabled = ctx.resolved.cache,
         .rules_hash = ctx.rules_hash,
     }, a, request, opts);
@@ -340,51 +327,26 @@ fn autostartDaemon(c: Command) void {
     fs.process.spawnDetached(c.io, &.{ self_path, "daemon" });
 }
 
-fn oneShotOptions(c: Command) one_shot.Options {
-    return .{
-        .args = c.args,
-        .stdin = c.stdin,
-        .stdout = c.stdout,
-        .stderr = c.stderr,
-    };
-}
-
 fn daemonReport(c: Command, arena: std.mem.Allocator, request: protocol.Request) ?protocol.Response {
-    const socket_path = resolveSocketPath(c) catch return null;
+    const socket_path = resolveSocketPath(c.io, c.arena, c.environ) catch return null;
 
     return server.client.request(c.io, arena, socket_path, request);
 }
 
-fn runNewRule(
-    arena: std.mem.Allocator,
-    io: std.Io,
-    command_args: []const [:0]const u8,
-    user_rules_dir: ?[]const u8,
-    stdout: *std.Io.Writer,
-    stderr: *std.Io.Writer,
-) !u8 {
-    return new_rule.run(arena, io, .{
-        .args = command_args,
-        .user_rules_dir = user_rules_dir,
-        .stdout = stdout,
-        .stderr = stderr,
-    });
-}
-
-fn runUnknown(c: Command, cmd: []const u8) !u8 {
-    try c.stderr.print("unknown subcommand: \"{s}\"\n", .{cmd});
-    try c.stderr.writeAll("usage: kata [daemon [--root <dir>] | check <path> | facts <file> | test <rules-dir> | query <rule> [path] --lang=<lang> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
-    try c.stderr.flush();
-    return exit_usage;
+fn runUnknown(stderr: *std.Io.Writer, cmd: []const u8) !u8 {
+    try stderr.print("unknown subcommand: \"{s}\"\n", .{cmd});
+    try stderr.writeAll("usage: kata [daemon [--root <dir>] | check <path> | facts <file> | test <rules-dir> | query <rule> [path] --lang=<lang> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
+    try stderr.flush();
+    return exit.usage;
 }
 
 fn runDaemon(c: Command, root: ?[]const u8) !u8 {
-    const ctx = (try resolveContext(c, null)) orelse return exit_internal_error;
+    const ctx = (try resolveContext(c, null)) orelse return exit.internal_error;
     defer ctx.deinit();
 
-    if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
+    if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit.internal_error;
 
-    const socket_path = resolveSocketPath(c) catch |err|
+    const socket_path = resolveSocketPath(c.io, c.arena, c.environ) catch |err|
         return internalError(c.stderr, "resolve socket path", err);
 
     var project_state: ?lint.Project = null;
@@ -392,7 +354,7 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
 
     if (root) |r| {
         if (ctx.resolved.project_rules.len == 0 and ctx.engine.factRules().len == 0)
-            return printAndExit(c.stderr, "kata daemon --root requires project rules in rules.yaml or rules/project\n", exit_usage);
+            return printAndExit(c.stderr, "kata daemon --root requires project rules in rules.yaml or rules/project\n", exit.usage);
 
         project_state = lint.Project.init(c.gpa, &ctx.engine, ctx.resolved.project_rules) catch |err|
             return internalError(c.stderr, "initialize project analysis", err);
@@ -411,33 +373,33 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
         .cache = &cache,
         .replay = &ctx.replay,
         .max_matches = ctx.resolved.max_matches_per_file,
-        .cache_dir = resolveCacheDir(c),
+        .cache_dir = if (ctx.resolved.cache) resolveCacheDir(c) else null,
         .cache_enabled = ctx.resolved.cache,
         .rules_hash = ctx.rules_hash,
     }, socket_path) catch |err| switch (err) {
-        error.AlreadyRunning => return printAndExit(c.stderr, "kata daemon already running\n", exit_clean),
+        error.AlreadyRunning => return printAndExit(c.stderr, "kata daemon already running\n", exit.clean),
         else => return internalError(c.stderr, "serve", err),
     };
 
-    return exit_clean;
+    return exit.clean;
 }
 
 fn runCheck(c: Command, opts: CheckOptions) !u8 {
-    const ctx = (try resolveContext(c, opts.target)) orelse return exit_internal_error;
+    const ctx = (try resolveContext(c, opts.target)) orelse return exit.internal_error;
 
     defer ctx.deinit();
-    if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit_internal_error;
+    if (!try ctx.engine.prewarmOrReport("kata", c.stderr)) return exit.internal_error;
 
     var baseline: ?check.Baseline = null;
     if (baselineRef(opts.baseline, c.environ)) |ref| {
         const dir = std.Io.Dir.cwd();
         fs.git.verifyRef(c.io, c.gpa, dir, ref) catch |err| switch (err) {
-            error.UnknownRef => return printfAndExit(c.stderr, "unknown baseline ref \"{s}\"\n", .{ref}, exit_usage),
-            error.NotAWorkTree => return printAndExit(c.stderr, "kata check --baseline requires a git work tree\n", exit_usage),
+            error.UnknownRef => return printfAndExit(c.stderr, "unknown baseline ref \"{s}\"\n", .{ref}, exit.usage),
+            error.NotAWorkTree => return printAndExit(c.stderr, "kata check --baseline requires a git work tree\n", exit.usage),
             else => return internalError(c.stderr, "verify baseline ref", err),
         };
         const prefix = fs.git.repoPrefix(c.io, c.arena, dir) catch |err| switch (err) {
-            error.NotAWorkTree => return printAndExit(c.stderr, "kata check --baseline requires a git work tree\n", exit_usage),
+            error.NotAWorkTree => return printAndExit(c.stderr, "kata check --baseline requires a git work tree\n", exit.usage),
             else => return internalError(c.stderr, "resolve repo prefix", err),
         };
         const backdated = check.backdatedRules(c.io, c.arena, .{
@@ -449,7 +411,8 @@ fn runCheck(c: Command, opts: CheckOptions) !u8 {
         baseline = .{ .ref = ref, .prefix = prefix, .dir = dir, .backdated = backdated };
     }
 
-    var reporter = reports.Reporter.init(c.gpa, opts.format, c.stdout, c.color);
+    const color = opts.format == .pretty and (std.Io.File.stdout().supportsAnsiEscapeCodes(c.io) catch false);
+    var reporter = reports.Reporter.init(c.gpa, opts.format, c.stdout, color);
     defer reporter.deinit();
 
     const fixing: ?check.Fixing = if (opts.fix == .off) null else .{ .level = opts.fix, .stderr = c.stderr };
@@ -462,78 +425,102 @@ fn runCheck(c: Command, opts: CheckOptions) !u8 {
         .fixing = fixing,
         .cache = if (ctx.resolved.cache) cacheHandle(c, ctx) else null,
     }, &reporter) catch |err| switch (err) {
-        error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{opts.target}, exit_usage),
+        error.UnsupportedTarget => return printfAndExit(c.stderr, "cannot infer language from \"{s}\"\n", .{opts.target}, exit.usage),
         else => return internalError(c.stderr, "check", err),
     };
 
     return switch (outcome) {
-        .clean => exit_clean,
-        .violations => exit_violations,
+        .clean => exit.clean,
+        .violations => exit.violations,
     };
 }
 
 fn runFacts(c: Command, target: []const u8) !u8 {
-    if (target.len == 0) return printAndExit(c.stderr, "usage: kata facts <file>\n", exit_usage);
-
-    const ctx = (try resolveContext(c, target)) orelse return exit_internal_error;
+    const ctx = (try resolveContext(c, target)) orelse return exit.internal_error;
     defer ctx.deinit();
 
     return facts.run(c.io, c.gpa, &ctx.engine, target, c.stdout, c.stderr);
 }
 
-fn runQuery(c: Command, q: query.Options) !u8 {
+fn runQuery(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    q: query.Options,
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+) !u8 {
     var opts = q;
-    opts.color = c.color;
+    opts.color = opts.format == .pretty and (std.Io.File.stdout().supportsAnsiEscapeCodes(io) catch false);
 
-    return switch (try query.run(c.io, c.gpa, opts, c.stdout, c.stderr)) {
-        .clean => exit_clean,
-        .matches => exit_violations,
-        .usage => exit_usage,
+    return switch (try query.run(io, gpa, opts, stdout, stderr)) {
+        .clean => exit.clean,
+        .matches => exit.violations,
+        .usage => exit.usage,
     };
 }
 
-fn runRuleTest(c: Command, dir: []const u8) !u8 {
-    if (dir.len == 0) return printAndExit(c.stderr, "usage: kata test <rules-dir>\n", exit_usage);
+fn runRuleTest(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    dir: []const u8,
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+) !u8 {
+    if (dir.len == 0) return printAndExit(stderr, "usage: kata test <rules-dir>\n", exit.usage);
 
-    return switch (try harness.run(c.io, c.gpa, c.arena, dir, c.stdout, c.stderr)) {
-        .pass => exit_clean,
-        .failures => exit_violations,
-        .invalid => exit_internal_error,
+    return switch (try harness.run(io, gpa, arena, dir, stdout, stderr)) {
+        .pass => exit.clean,
+        .failures => exit.violations,
+        .invalid => exit.internal_error,
     };
 }
 
-fn runStop(c: Command) !u8 {
-    const socket_path = resolveSocketPath(c) catch |err|
-        return internalError(c.stderr, "resolve socket path", err);
+fn runStop(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    environ: *std.process.Environ.Map,
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+) !u8 {
+    const socket_path = resolveSocketPath(io, arena, environ) catch |err|
+        return internalError(stderr, "resolve socket path", err);
 
-    if (server.client.request(c.io, c.arena, socket_path, .{ .shutdown = true }) == null)
-        return printAndExit(c.stderr, "no kata daemon running\n", exit_clean);
+    if (server.client.request(io, arena, socket_path, .{ .shutdown = true }) == null)
+        return printAndExit(stderr, "no kata daemon running\n", exit.clean);
 
-    try c.stdout.writeAll("kata daemon stopped\n");
-    try c.stdout.flush();
+    try stdout.writeAll("kata daemon stopped\n");
+    try stdout.flush();
 
-    return exit_clean;
+    return exit.clean;
+}
+
+pub fn socketPath(
+    arena: std.mem.Allocator,
+    runtime_dir: ?[]const u8,
+    binary_mtime: i64,
+) ![]const u8 {
+    return std.fmt.allocPrint(arena, "{s}/kata-{s}-{d}.sock", .{
+        runtime_dir orelse "/tmp",
+        build_options.version,
+        binary_mtime,
+    });
 }
 
 fn resolveSocketPath(
-    c: Command,
+    io: std.Io,
+    arena: std.mem.Allocator,
+    environ: *std.process.Environ.Map,
 ) ![]const u8 {
-    const binary_mtime = try daemon.binaryMtime(c.io);
+    if (environ.get(args_mod.env_socket)) |override| return override;
 
-    return args_mod.socketPath(
-        c.arena,
-        c.environ.get(args_mod.env_socket),
-        c.environ.get(args_mod.env_runtime_dir),
+    const binary_mtime = try daemon.binaryMtime(io);
+
+    return socketPath(
+        arena,
+        environ.get(args_mod.env_runtime_dir),
         binary_mtime,
     );
-}
-
-pub fn run(
-    allocator: std.mem.Allocator,
-    ctx: daemon.Context,
-    opts: Options,
-) !u8 {
-    return one_shot.run(allocator, ctx, opts);
 }
 
 fn printAndExit(stderr: *std.Io.Writer, message: []const u8, code: u8) !u8 {
@@ -545,13 +532,13 @@ fn printfAndExit(stderr: *std.Io.Writer, comptime fmt: []const u8, args: anytype
 }
 
 fn internalError(stderr: *std.Io.Writer, context: []const u8, err: anyerror) !u8 {
-    return output.internal(stderr, context, err, exit_internal_error);
+    return output.internal(stderr, context, err, exit.internal_error);
 }
 
 fn die(stderr: *std.Io.Writer, context: []const u8, err: anyerror) u8 {
-    _ = output.internal(stderr, context, err, exit_internal_error) catch {};
+    _ = output.internal(stderr, context, err, exit.internal_error) catch {};
 
-    return exit_internal_error;
+    return exit.internal_error;
 }
 
 fn resolveUserRulesDir(arena: std.mem.Allocator, environ: *const std.process.Environ.Map) !?[]const u8 {
@@ -590,5 +577,5 @@ fn dieConfig(stderr: *std.Io.Writer, diag: config.Diagnostic, err: anyerror) u8 
 
     stderr.flush() catch {};
 
-    return exit_internal_error;
+    return exit.internal_error;
 }

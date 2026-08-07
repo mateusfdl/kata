@@ -1,28 +1,13 @@
 const std = @import("std");
 
 const git = @import("git.zig");
-
-fn runGit(
-    gpa: std.mem.Allocator,
-    io: std.Io,
-    dir: std.Io.Dir,
-    argv: []const []const u8,
-) !void {
-    const result = std.process.run(gpa, io, .{ .argv = argv, .cwd = .{ .dir = dir } }) catch |err| switch (err) {
-        error.FileNotFound => return error.SkipZigTest,
-
-        else => return err,
-    };
-    defer gpa.free(result.stdout);
-    defer gpa.free(result.stderr);
-    try std.testing.expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
-}
+const test_fixture = @import("../test_fixture.zig");
 
 fn initRepoWithCommit(gpa: std.mem.Allocator, io: std.Io, tmp: *std.testing.TmpDir) !void {
     try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const a = 1;\n" });
-    try runGit(gpa, io, tmp.dir, &.{ "git", "init", "-q" });
-    try runGit(gpa, io, tmp.dir, &.{ "git", "add", "." });
-    try runGit(gpa, io, tmp.dir, &.{
+    try test_fixture.runGit(gpa, io, tmp.dir, &.{ "git", "init", "-q" });
+    try test_fixture.runGit(gpa, io, tmp.dir, &.{ "git", "add", "." });
+    try test_fixture.runGit(gpa, io, tmp.dir, &.{
         "git",                  "-c",                   "user.name=kata",
         "-c",                   "user.email=kata@test", "-c",
         "commit.gpgsign=false", "commit",               "-q",
@@ -95,7 +80,7 @@ test "git: outside a work tree errors NotAWorkTree" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try runGit(gpa, io, tmp.dir, &.{ "git", "--version" });
+    try test_fixture.runGit(gpa, io, tmp.dir, &.{ "git", "--version" });
     try tmp.dir.writeFile(io, .{ .sub_path = ".git", .data = "gitdir: /nonexistent\n" });
 
     try std.testing.expectError(error.NotAWorkTree, git.verifyRef(io, gpa, tmp.dir, "HEAD"));

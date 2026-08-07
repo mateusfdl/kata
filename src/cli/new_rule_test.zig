@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const exit = @import("exit.zig");
 const new_rule = @import("new_rule.zig");
 const test_fixture = @import("../test_fixture.zig");
 
@@ -53,7 +54,7 @@ test "new-rule: writes the kata template at the expected path" {
     var captured = try runOnce(arena.allocator(), rules_dir, &.{ "new-rule", "ts", "no-throw-literal" });
     defer captured.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u8, new_rule.exit_clean), captured.code);
+    try std.testing.expectEqual(@as(u8, exit.clean), captured.code);
     try std.testing.expect(std.mem.indexOf(u8, captured.stdout, "ts/no-throw-literal.kata") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured.stdout, "add 'no-throw-literal:' under 'rules: ts:' in rules.yaml to activate it") != null);
 
@@ -82,7 +83,7 @@ test "new-rule: refuses to overwrite an existing rule" {
 
     var first = try runOnce(arena.allocator(), rules_dir, &.{ "new-rule", "ts", "no-throw-literal" });
     defer first.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(u8, new_rule.exit_clean), first.code);
+    try std.testing.expectEqual(@as(u8, exit.clean), first.code);
 
     const original = try tmp.dir.readFileAlloc(
         std.testing.io,
@@ -94,7 +95,7 @@ test "new-rule: refuses to overwrite an existing rule" {
 
     var second = try runOnce(arena.allocator(), rules_dir, &.{ "new-rule", "ts", "no-throw-literal" });
     defer second.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(u8, new_rule.exit_usage), second.code);
+    try std.testing.expectEqual(@as(u8, exit.usage), second.code);
     try std.testing.expect(std.mem.indexOf(u8, second.stderr, "path already exists") != null);
 
     const after = try tmp.dir.readFileAlloc(
@@ -120,7 +121,7 @@ test "new-rule: rejects unknown languages without writing a file" {
     var captured = try runOnce(arena.allocator(), rules_dir, &.{ "new-rule", "rust", "no-unsafe" });
     defer captured.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u8, new_rule.exit_usage), captured.code);
+    try std.testing.expectEqual(@as(u8, exit.usage), captured.code);
     try std.testing.expect(std.mem.indexOf(u8, captured.stderr, "unknown language") != null);
 
     const opened = tmp.dir.openDir(std.testing.io, "rust", .{});
@@ -134,7 +135,7 @@ test "new-rule: rejects invalid rule ids" {
     var captured = try runOnce(arena.allocator(), "/tmp/unused", &.{ "new-rule", "ts", "no.dots" });
     defer captured.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u8, new_rule.exit_usage), captured.code);
+    try std.testing.expectEqual(@as(u8, exit.usage), captured.code);
     try std.testing.expect(std.mem.indexOf(u8, captured.stderr, "invalid rule id") != null);
 }
 
@@ -145,7 +146,7 @@ test "new-rule: requires three positional args" {
     var captured = try runOnce(arena.allocator(), "/tmp/unused", &.{ "new-rule", "ts" });
     defer captured.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u8, new_rule.exit_usage), captured.code);
+    try std.testing.expectEqual(@as(u8, exit.usage), captured.code);
     try std.testing.expect(std.mem.indexOf(u8, captured.stderr, "usage:") != null);
 }
 
@@ -156,7 +157,7 @@ test "new-rule: fails clearly when no user rules dir is resolvable" {
     var captured = try runOnce(arena.allocator(), null, &.{ "new-rule", "ts", "no-foo" });
     defer captured.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u8, new_rule.exit_usage), captured.code);
+    try std.testing.expectEqual(@as(u8, exit.usage), captured.code);
     try std.testing.expect(std.mem.indexOf(u8, captured.stderr, "XDG_CONFIG_HOME") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured.stderr, "HOME") != null);
 }

@@ -5,6 +5,8 @@ const test_fixture = @import("test_fixture.zig");
 const args_mod = @import("cli/args.zig");
 const build_options = @import("build_options");
 const check = @import("cli/check.zig");
+const exit = @import("cli/exit.zig");
+const one_shot = @import("cli/one_shot.zig");
 
 const diagnostic = @import("engine").diagnostic;
 const daemon = @import("server.zig").daemon;
@@ -40,7 +42,7 @@ fn runCli(
     var stderr_buf: std.Io.Writer.Allocating = .init(allocator);
     errdefer stderr_buf.deinit();
 
-    const code = try cli.run(allocator, ctx, .{
+    const code = try one_shot.run(allocator, ctx, .{
         .args = args,
         .stdin = &stdin,
         .stdout = &stdout_buf.writer,
@@ -99,7 +101,7 @@ test "cli: clean source exits 0" {
     const r = try runCli(gpa, oneShotContext(f), args, "const x: string = \"ok\";");
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(@as(u8, cli.exit_clean), r.code);
+    try std.testing.expectEqual(@as(u8, exit.clean), r.code);
 
     const parsed = try std.json.parseFromSlice(Report, gpa, r.stdout, .{});
     defer parsed.deinit();
@@ -118,7 +120,7 @@ test "cli: violation exits 2" {
     const r = try runCli(gpa, oneShotContext(f), args, "const x = (foo[0] as any).bar;");
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(@as(u8, cli.exit_violations), r.code);
+    try std.testing.expectEqual(@as(u8, exit.violations), r.code);
 
     const parsed = try std.json.parseFromSlice(Report, gpa, r.stdout, .{});
     defer parsed.deinit();
@@ -142,7 +144,7 @@ test "cli: --filename infers language" {
     const r = try runCli(gpa, oneShotContext(f), args, "const x = foo as any;");
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(@as(u8, cli.exit_violations), r.code);
+    try std.testing.expectEqual(@as(u8, exit.violations), r.code);
 
     const parsed = try std.json.parseFromSlice(Report, gpa, r.stdout, .{});
     defer parsed.deinit();
@@ -158,7 +160,7 @@ test "cli: missing --lang exits usage (64)" {
     const r = try runCli(gpa, oneShotContext(f), args, "x");
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(@as(u8, cli.exit_usage), r.code);
+    try std.testing.expectEqual(@as(u8, exit.usage), r.code);
     try std.testing.expect(std.mem.indexOf(u8, r.stderr, "missing --lang") != null);
 }
 
@@ -171,7 +173,7 @@ test "cli: unsupported --lang exits internal (70)" {
     const r = try runCli(gpa, oneShotContext(f), args, "print('hi')");
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(@as(u8, cli.exit_internal_error), r.code);
+    try std.testing.expectEqual(@as(u8, exit.internal_error), r.code);
     try std.testing.expect(std.mem.indexOf(u8, r.stderr, "unsupported language") != null);
 }
 
@@ -184,7 +186,7 @@ test "cli: unknown extension exits usage (64)" {
     const r = try runCli(gpa, oneShotContext(f), args, "fn main() {}");
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(@as(u8, cli.exit_usage), r.code);
+    try std.testing.expectEqual(@as(u8, exit.usage), r.code);
     try std.testing.expect(std.mem.indexOf(u8, r.stderr, "cannot infer language") != null);
 }
 
@@ -204,7 +206,7 @@ test "cli: one-shot caps a flooding rule and stays unclean" {
         "const e = v as any;\n");
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(@as(u8, cli.exit_violations), r.code);
+    try std.testing.expectEqual(@as(u8, exit.violations), r.code);
 
     const parsed = try std.json.parseFromSlice(Report, gpa, r.stdout, .{});
     defer parsed.deinit();
@@ -250,7 +252,7 @@ test "cli: one-shot demotes a ratcheted violation to warn" {
     try std.testing.expectEqualStrings("warn", parsed.value.diagnostics[0].severity);
     try std.testing.expectEqual(true, parsed.value.diagnostics[0].demoted);
     try std.testing.expect(parsed.value.clean);
-    try std.testing.expectEqual(@as(u8, cli.exit_clean), r.code);
+    try std.testing.expectEqual(@as(u8, exit.clean), r.code);
 }
 
 test "parseSubcommand: bare command runs the daemon without a root" {
@@ -444,20 +446,11 @@ test "parseSubcommand: check without fix flags applies nothing" {
     try std.testing.expectEqual(check.FixLevel.off, sub.check.fix);
 }
 
-test "socketPath: KATA_SOCKET override wins verbatim" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-
-    const path = try args_mod.socketPath(arena.allocator(), "/custom/kata.sock", "/run/user/1000", 42);
-
-    try std.testing.expectEqualStrings("/custom/kata.sock", path);
-}
-
 test "socketPath: runtime dir yields a version and mtime stamped name" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const path = try args_mod.socketPath(arena.allocator(), null, "/run/user/1000", 42);
+    const path = try cli.socketPath(arena.allocator(), "/run/user/1000", 42);
     const expected = try std.fmt.allocPrint(arena.allocator(), "/run/user/1000/kata-{s}-42.sock", .{build_options.version});
 
     try std.testing.expectEqualStrings(expected, path);
@@ -467,7 +460,7 @@ test "socketPath: falls back to /tmp with the same stamped name" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const path = try args_mod.socketPath(arena.allocator(), null, null, 42);
+    const path = try cli.socketPath(arena.allocator(), null, 42);
     const expected = try std.fmt.allocPrint(arena.allocator(), "/tmp/kata-{s}-42.sock", .{build_options.version});
 
     try std.testing.expectEqualStrings(expected, path);
@@ -477,8 +470,8 @@ test "socketPath: different binary mtimes yield different paths" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const first = try args_mod.socketPath(arena.allocator(), null, null, 1);
-    const second = try args_mod.socketPath(arena.allocator(), null, null, 2);
+    const first = try cli.socketPath(arena.allocator(), null, 1);
+    const second = try cli.socketPath(arena.allocator(), null, 2);
 
     try std.testing.expect(!std.mem.eql(u8, first, second));
 }
@@ -486,4 +479,85 @@ test "socketPath: different binary mtimes yield different paths" {
 test "parseSubcommand: '--version' selects the version command" {
     const sub = cli.parseSubcommand(&.{"--version"});
     try std.testing.expectEqual(cli.Subcommand.version, sub);
+}
+
+test "parseSubcommand: 'check' flags an unknown flag" {
+    const sub = cli.parseSubcommand(&.{ "check", "--format", "json", "src/" });
+    try std.testing.expectEqualStrings("--format", sub.check.invalid_arg.?);
+}
+
+test "parseSubcommand: 'check' flags an extra positional" {
+    const sub = cli.parseSubcommand(&.{ "check", "a.ts", "b.ts" });
+    try std.testing.expectEqualStrings("b.ts", sub.check.invalid_arg.?);
+    try std.testing.expectEqualStrings("a.ts", sub.check.target);
+}
+
+test "parseSubcommand: 'check --baseline' without a value is flagged" {
+    const sub = cli.parseSubcommand(&.{ "check", "--baseline" });
+    try std.testing.expectEqualStrings("--baseline", sub.check.missing_value.?);
+}
+
+test "parseSubcommand: 'check --baseline' refuses a flag as value" {
+    const sub = cli.parseSubcommand(&.{ "check", "--baseline", "--json", "src/" });
+    try std.testing.expectEqualStrings("--baseline", sub.check.missing_value.?);
+    try std.testing.expectEqual(reports.Format.json, sub.check.format);
+    try std.testing.expectEqualStrings("src/", sub.check.target);
+}
+
+test "parseSubcommand: 'facts' flags a flag instead of treating its value as target" {
+    const sub = cli.parseSubcommand(&.{ "facts", "--lang", "ts" });
+    try std.testing.expectEqualStrings("--lang", sub.invalid_arg);
+}
+
+test "parseSubcommand: 'facts' flags an extra positional" {
+    const sub = cli.parseSubcommand(&.{ "facts", "a.ts", "b.ts" });
+    try std.testing.expectEqualStrings("b.ts", sub.invalid_arg);
+}
+
+test "parseSubcommand: 'test' flags a stray flag" {
+    const sub = cli.parseSubcommand(&.{ "test", "--verbose" });
+    try std.testing.expectEqualStrings("--verbose", sub.invalid_arg);
+}
+
+test "parseSubcommand: 'daemon --root' without a value is flagged" {
+    const sub = cli.parseSubcommand(&.{ "daemon", "--root" });
+    try std.testing.expectEqualStrings("--root", sub.missing_value);
+}
+
+test "parseSubcommand: 'daemon' flags an unknown flag" {
+    const sub = cli.parseSubcommand(&.{ "daemon", "--bogus" });
+    try std.testing.expectEqualStrings("--bogus", sub.invalid_arg);
+}
+
+test "parseSubcommand: 'daemon' flags a stray positional" {
+    const sub = cli.parseSubcommand(&.{ "daemon", "extra" });
+    try std.testing.expectEqualStrings("extra", sub.invalid_arg);
+}
+
+test "parseSubcommand: 'stop' flags a stray argument" {
+    const sub = cli.parseSubcommand(&.{ "stop", "now" });
+    try std.testing.expectEqualStrings("now", sub.invalid_arg);
+}
+
+test "parser: '--flag=' yields an empty value" {
+    const lang_parser = args_mod.parser(&.{.{ .name = "lang", .kind = .arg }});
+    const args: []const [:0]const u8 = &.{"--lang="};
+
+    const parsed = lang_parser.parse(args);
+
+    try std.testing.expectEqualStrings("", parsed.flags.lang.?);
+}
+
+test "parser: a separate value that looks like a flag reports missing" {
+    const lang_parser = args_mod.parser(&.{
+        .{ .name = "lang", .kind = .arg },
+        .{ .name = "json", .kind = .boolean },
+    });
+    const args: []const [:0]const u8 = &.{ "--lang", "--json" };
+
+    const parsed = lang_parser.parse(args);
+
+    try std.testing.expectEqualStrings("--lang", parsed.missing.?);
+    try std.testing.expectEqual(@as(?[:0]const u8, null), parsed.flags.lang);
+    try std.testing.expectEqual(@as(usize, 2), parsed.flags.json);
 }

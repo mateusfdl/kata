@@ -32,6 +32,17 @@ pub fn relativeTmpPath(buf: []u8, sub_path: []const u8) ![]u8 {
     return std.fmt.bufPrint(buf, ".zig-cache/tmp/{s}", .{sub_path});
 }
 
+pub fn runGit(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, argv: []const []const u8) !void {
+    const result = std.process.run(gpa, io, .{ .argv = argv, .cwd = .{ .dir = dir } }) catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+
+        else => return err,
+    };
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    try std.testing.expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+}
+
 pub const Fixture = struct {
     allocator: std.mem.Allocator,
     rule_set: loader.RuleSet,
