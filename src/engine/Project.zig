@@ -47,9 +47,19 @@ pub const Project = struct {
         lang: language.Name,
         path: []const u8,
     ) !void {
+        // Avoid parsing and retaining facts when no configured rule can use the
+        // project index. Once enabled, tracking remains active across configure.
         if (!self.tracks_files) return;
 
         try self.index.put(try self.engine.extractFacts(self.index.allocator, source, lang, path));
+    }
+
+    pub fn remove(self: *Project, path: []const u8) bool {
+        // Removal mirrors replace for long-lived projects such as the daemon.
+        // Returning false distinguishes an untracked or unknown file.
+        if (!self.tracks_files) return false;
+
+        return self.index.remove(path);
     }
 
     pub fn lint(

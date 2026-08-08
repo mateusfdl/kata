@@ -227,3 +227,42 @@ test "facts: project index replaces entries by path" {
     try std.testing.expectEqualStrings("C", c.classes[0].name);
     try std.testing.expectEqual(@as(?*const facts.FileFacts, null), index.get("src/missing.ts"));
 }
+
+test "facts: project index removes an existing entry" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    try index.put(try f.engine.extractFacts(gpa, "class A {}", .ts, "src/a.ts"));
+
+    try std.testing.expectEqual(true, index.remove("src/a.ts"));
+    try std.testing.expectEqual(@as(?*const facts.FileFacts, null), index.get("src/a.ts"));
+}
+
+test "facts: project index reports a missing removal" {
+    const gpa = std.testing.allocator;
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    try std.testing.expectEqual(false, index.remove("src/missing.ts"));
+}
+
+test "facts: project index reinserts an entry after removal" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    try index.put(try f.engine.extractFacts(gpa, "class A {}", .ts, "src/a.ts"));
+    try std.testing.expectEqual(true, index.remove("src/a.ts"));
+    try index.put(try f.engine.extractFacts(gpa, "class B {}", .ts, "src/a.ts"));
+
+    const file = index.get("src/a.ts").?;
+    try std.testing.expectEqual(@as(usize, 1), file.classes.len);
+    try std.testing.expectEqualStrings("B", file.classes[0].name);
+}

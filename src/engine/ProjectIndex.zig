@@ -23,8 +23,9 @@ pub const ProjectIndex = struct {
         const gop = try self.files.getOrPut(self.allocator, owned.path);
 
         if (gop.found_existing) {
-            // the existing key's bytes live in the old facts' arena, so the
-            // key must be swapped to the new path before the old arena dies.
+            // The existing key borrows the old facts arena. Replace both key
+            // and value before destroying that arena, or the map retains a
+            // dangling key even though its hash is unchanged.
             var old = gop.value_ptr.*;
             gop.key_ptr.* = owned.path;
             gop.value_ptr.* = owned;
@@ -40,5 +41,14 @@ pub const ProjectIndex = struct {
 
     pub fn get(self: *const ProjectIndex, path: []const u8) ?*const facts.FileFacts {
         return self.files.getPtr(path);
+    }
+
+    pub fn remove(self: *ProjectIndex, path: []const u8) bool {
+        // fetchRemove detaches the borrowed key before deinit frees the facts
+        // arena that owns both the key bytes and all indexed values.
+        var removed = self.files.fetchRemove(path) orelse return false;
+        removed.value.deinit();
+
+        return true;
     }
 };
