@@ -51,6 +51,11 @@ pub const Suggestion = struct {
     replacement: []const u8,
 };
 
+pub const RuleScope = enum {
+    language,
+    project,
+};
+
 pub const Diagnostic = struct {
     rule_id: []const u8,
     language: []const u8,
@@ -64,6 +69,25 @@ pub const Diagnostic = struct {
     fix: ?Fix = null,
     suggestions: []const Suggestion = &.{},
     capped: bool = false,
+    rule_scope: RuleScope = .language,
+
+    pub fn jsonStringify(self: Diagnostic, stringify: anytype) !void {
+        // rule_scope is internal cap metadata and is not part of the wire format.
+        try stringify.write(.{
+            .rule_id = self.rule_id,
+            .language = self.language,
+            .message = self.message,
+            .range = self.range,
+            .severity = self.severity,
+            .demoted = self.demoted,
+            .maturity = self.maturity,
+            .fingerprint = self.fingerprint,
+            .context = self.context,
+            .fix = self.fix,
+            .suggestions = self.suggestions,
+            .capped = self.capped,
+        });
+    }
 };
 
 pub const Report = struct {

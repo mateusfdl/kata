@@ -242,6 +242,7 @@ fn evaluateFact(
         .diagnostic = .{
             .rule_id = r.id,
             .language = ctx.file.lang.toString(),
+            .rule_scope = .project,
             .severity = r.severity,
             .maturity = r.maturity,
             .message = try renderMessage(allocator, r.message, ctx, fact),

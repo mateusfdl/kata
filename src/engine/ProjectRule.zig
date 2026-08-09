@@ -143,6 +143,7 @@ fn restrictedCallsInFile(
             .diagnostic = .{
                 .rule_id = rule_id,
                 .language = file.lang.toString(),
+                .rule_scope = .project,
                 .message = try std.fmt.allocPrint(
                     allocator,
                     "call to {s}.{s} is restricted to *{s} callers",
@@ -191,6 +192,7 @@ fn importBoundaryInFile(
             .diagnostic = .{
                 .rule_id = rule_id,
                 .language = file.lang.toString(),
+                .rule_scope = .project,
                 .message = try std.fmt.allocPrint(
                     allocator,
                     "import \"{s}\" is denied from {s}",
