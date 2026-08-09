@@ -70,13 +70,21 @@ pub fn build(b: *std.Build) void {
     });
     node_kinds_module.addImport("tree_sitter", tree_sitter_module);
 
+    // Zig treats separate module instances as separate type identities. Share one
+    // instance so utility types can cross engine, DSL, CLI, and test boundaries.
+    const shared_module = b.createModule(.{
+        .root_source_file = b.path("src/shared.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const engine_module = b.createModule(.{
         .root_source_file = b.path("src/engine/engine.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    wireEngineModule(engine_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
+    wireEngineModule(engine_module, shared_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
 
     const dsl_module = b.createModule(.{
         .root_source_file = b.path("src/dsl/dsl.zig"),
@@ -84,7 +92,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    wireDslModule(dsl_module, engine_module, mvzr_module, node_kinds_module);
+    wireDslModule(dsl_module, engine_module, shared_module, mvzr_module, node_kinds_module);
 
     const exe_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -93,7 +101,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .strip = strip,
     });
-    wireKataModule(exe_module, engine_module, dsl_module, path_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
+    wireKataModule(exe_module, engine_module, dsl_module, shared_module, path_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
     const exe = b.addExecutable(.{
         .name = "kata",
         .root_module = exe_module,
@@ -106,7 +114,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    wireKataModule(test_module, engine_module, dsl_module, path_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
+    wireKataModule(test_module, engine_module, dsl_module, shared_module, path_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
     // Test artifacts share one install directory. Distinct names keep each
     // debugger target addressable without replacing another test binary.
     const unit_tests = b.addTest(.{
@@ -130,7 +138,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    wireEngineModule(engine_test_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
+    wireEngineModule(engine_test_module, shared_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
     const engine_unit_tests = b.addTest(.{
         .name = "engine-test",
         .root_module = engine_test_module,
@@ -145,7 +153,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    wireDslModule(dsl_test_module, engine_module, mvzr_module, node_kinds_module);
+    wireDslModule(dsl_test_module, engine_module, shared_module, mvzr_module, node_kinds_module);
     const dsl_unit_tests = b.addTest(.{
         .name = "dsl-test",
         .root_module = dsl_test_module,
@@ -153,6 +161,18 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(dsl_unit_tests).step);
     test_bin_step.dependOn(&b.addInstallArtifact(dsl_unit_tests, .{}).step);
+
+    const shared_unit_tests = b.addTest(.{
+        .name = "shared-test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/shared_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        .use_llvm = true,
+    });
+    test_step.dependOn(&b.addRunArtifact(shared_unit_tests).step);
+    test_bin_step.dependOn(&b.addInstallArtifact(shared_unit_tests, .{}).step);
 
     const run_rule_tests = b.addRunArtifact(exe);
     run_rule_tests.addArg("test");
@@ -179,16 +199,19 @@ pub fn build(b: *std.Build) void {
     const run_bench = b.addRunArtifact(bench_exe);
     const bench_step = b.step("bench", "Run engine performance benchmarks");
     bench_step.dependOn(&run_bench.step);
+
 }
 
 fn wireEngineModule(
     module: *std.Build.Module,
+    shared_module: *std.Build.Module,
     path_module: *std.Build.Module,
     tree_sitter_module: *std.Build.Module,
     mvzr_module: *std.Build.Module,
     node_kinds_module: *std.Build.Module,
     libs: []const *std.Build.Step.Compile,
 ) void {
+    module.addImport("shared", shared_module);
     module.addImport("path", path_module);
     module.addImport("tree_sitter", tree_sitter_module);
     module.addImport("mvzr", mvzr_module);
@@ -199,10 +222,12 @@ fn wireEngineModule(
 fn wireDslModule(
     module: *std.Build.Module,
     engine_module: *std.Build.Module,
+    shared_module: *std.Build.Module,
     mvzr_module: *std.Build.Module,
     node_kinds_module: *std.Build.Module,
 ) void {
     module.addImport("engine", engine_module);
+    module.addImport("shared", shared_module);
     module.addImport("mvzr", mvzr_module);
     module.addImport("node_kinds", node_kinds_module);
 }
@@ -211,6 +236,7 @@ fn wireKataModule(
     module: *std.Build.Module,
     engine_module: *std.Build.Module,
     dsl_module: *std.Build.Module,
+    shared_module: *std.Build.Module,
     path_module: *std.Build.Module,
     mvzr_module: *std.Build.Module,
     embedded_rules_zig: std.Build.LazyPath,
@@ -219,6 +245,7 @@ fn wireKataModule(
 ) void {
     module.addImport("engine", engine_module);
     module.addImport("dsl", dsl_module);
+    module.addImport("shared", shared_module);
     module.addImport("path", path_module);
     module.addImport("mvzr", mvzr_module);
     module.addAnonymousImport("embedded_rules", .{ .root_source_file = embedded_rules_zig });
