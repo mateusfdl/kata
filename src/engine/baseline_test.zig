@@ -160,3 +160,49 @@ test "baseline: each baseline finding demotes at most one error" {
     try std.testing.expectEqual(diagnostic.Severity.@"error", diagnostics[1].severity);
     try std.testing.expectEqual(false, diagnostics[1].demoted);
 }
+
+test "baseline: competing exact keys use the first current finding" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var diagnostics = [_]diagnostic.Diagnostic{
+        finding("rule", .@"error", "exact", 0, 0, 0, 3),
+        finding("rule", .@"error", "exact", 0, 4, 0, 7),
+    };
+    const before = [_]diagnostic.Diagnostic{finding("rule", .@"error", "exact", 0, 4, 0, 7)};
+
+    const demoted = try baseline.demote(arena_state.allocator(), "one two", &diagnostics, "one two", &before);
+
+    try std.testing.expectEqual(@as(usize, 1), demoted);
+    try std.testing.expectEqual(diagnostic.Severity.warn, diagnostics[0].severity);
+    try std.testing.expectEqual(true, diagnostics[0].demoted);
+    try std.testing.expectEqual(diagnostic.Severity.@"error", diagnostics[1].severity);
+    try std.testing.expectEqual(false, diagnostics[1].demoted);
+}
+
+test "baseline: block groups become unique after exact stages" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    const source = "function f() { alpha(); beta(); }";
+    var diagnostics = [_]diagnostic.Diagnostic{
+        finding("rule", .@"error", "exact", 0, 15, 0, 20),
+        finding("rule", .@"error", "current", 0, 24, 0, 28),
+    };
+    diagnostics[0].context = &function_context;
+    diagnostics[1].context = &function_context;
+    var before = [_]diagnostic.Diagnostic{
+        finding("rule", .@"error", "exact", 0, 15, 0, 22),
+        finding("rule", .@"error", "baseline", 0, 23, 0, 30),
+    };
+    before[0].context = &function_context;
+    before[1].context = &function_context;
+
+    const demoted = try baseline.demote(arena_state.allocator(), source, &diagnostics, source, &before);
+
+    try std.testing.expectEqual(@as(usize, 2), demoted);
+    try std.testing.expectEqual(diagnostic.Severity.warn, diagnostics[0].severity);
+    try std.testing.expectEqual(true, diagnostics[0].demoted);
+    try std.testing.expectEqual(diagnostic.Severity.warn, diagnostics[1].severity);
+    try std.testing.expectEqual(true, diagnostics[1].demoted);
+}
