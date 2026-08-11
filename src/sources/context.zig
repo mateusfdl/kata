@@ -140,7 +140,7 @@ pub const Resolver = struct {
             .lifecycle = table,
             .rules_hash = rules_hash.compute(&rule_set, resolved),
             .engine = undefined,
-            .replay = server_replay.ReplayCache.init(self.gpa, server_replay.default_capacity),
+            .replay = try server_replay.ReplayCache.init(self.gpa, server_replay.default_capacity),
         };
 
         ctx.engine = Engine.init(self.gpa, &ctx.rule_set, dsl.engine_compiler.ruleCompiler(), resolved.settings);

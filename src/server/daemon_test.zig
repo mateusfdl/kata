@@ -909,7 +909,7 @@ test "daemon: replay returns an identical response for unchanged content" {
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    var cache = replay.ReplayCache.init(gpa, 4);
+    var cache = try replay.ReplayCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = context(f);
     ctx.replay = &cache;
@@ -937,7 +937,7 @@ test "daemon: replay re-lints when content changes" {
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    var cache = replay.ReplayCache.init(gpa, 4);
+    var cache = try replay.ReplayCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = context(f);
     ctx.replay = &cache;
@@ -953,6 +953,36 @@ test "daemon: replay re-lints when content changes" {
 
     try std.testing.expectEqual(@as(usize, 1), first.report.?.diagnostics.len);
     try std.testing.expectEqual(@as(usize, 2), second.report.?.diagnostics.len);
+}
+
+test "daemon: replay keeps explicit languages separate for one path" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var cache = try replay.ReplayCache.init(gpa, 16);
+    defer cache.deinit();
+    var ctx = context(f);
+    ctx.replay = &cache;
+
+    const source = "const x = (foo[0] as any).bar;";
+    const typescript = daemon.handle(ctx, arena.allocator(), .{
+        .filename = "/proj/input",
+        .language = "ts",
+        .source = source,
+    });
+    const go = daemon.handle(ctx, arena.allocator(), .{
+        .filename = "/proj/input",
+        .language = "go",
+        .source = source,
+    });
+
+    try std.testing.expectEqual(@as(usize, 1), typescript.report.?.diagnostics.len);
+    try std.testing.expectEqualStrings("ts", typescript.report.?.language);
+    try std.testing.expectEqual(@as(usize, 0), go.report.?.diagnostics.len);
+    try std.testing.expectEqualStrings("go", go.report.?.language);
 }
 
 test "daemon: ratchet demotion repeats on replayed diagnostics" {
@@ -971,7 +1001,7 @@ test "daemon: ratchet demotion repeats on replayed diagnostics" {
     const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
 
-    var cache = replay.ReplayCache.init(gpa, 4);
+    var cache = try replay.ReplayCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = ratchetContext(f, io);
     ctx.replay = &cache;
@@ -1005,7 +1035,7 @@ test "daemon: project violations appear on a replay hit" {
     defer state.deinit();
     try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
 
-    var cache = replay.ReplayCache.init(gpa, 4);
+    var cache = try replay.ReplayCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = context(f);
     ctx.project = &state;

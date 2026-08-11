@@ -265,7 +265,7 @@ pub fn handle(
     const diagnostics = replayed: {
         if (replay_cache) |rc| {
             if (req.filename) |path| {
-                if (rc.get(path, content_hash)) |cached| {
+                if (rc.get(path, lang, content_hash)) |cached| {
                     break :replayed arena.dupe(diagnostic.Diagnostic, cached) catch
                         return reply(.fail, null, "lint failed");
                 }
@@ -292,7 +292,9 @@ pub fn handle(
             return reply(.fail, null, "fingerprint failed");
 
         if (replay_cache) |rc| {
-            if (req.filename) |path| rc.put(path, content_hash, fresh) catch {};
+            // Replay is an optimization. Allocation failure must not turn a
+            // successful lint into a failed request.
+            if (req.filename) |path| rc.put(path, lang, content_hash, fresh) catch {};
         }
 
         if (disk_cache) |cache| {
