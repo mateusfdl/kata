@@ -1,9 +1,11 @@
 const std = @import("std");
 const node_kinds = @import("node_kinds");
 
+const containing_interval = @import("shared").containing_interval;
 const diagnostic = @import("../diagnostic.zig");
 const facts = @import("../facts.zig");
 const family = @import("family.zig");
+const interval = @import("shared").interval;
 const metric = @import("../metric.zig");
 const query = @import("../query.zig");
 const Node = @import("../node.zig").Node;
@@ -12,6 +14,8 @@ const kinds = node_kinds.ts_family;
 const fields = family.FieldFns(kinds.Field);
 const kind_fns = family.KindFns(kinds.Kind, &kinds.anon_names, kinds.anon_base);
 const metric_table = family.MetricTable(kinds.Kind, kinds.kind_count, classifyMetric);
+const ByteInterval = interval.Type(u32, .half_open);
+const ClassSelector = containing_interval.Selector(facts.ClassDef, ByteInterval, classInterval);
 
 pub const adapter: family.Adapter = .{
     .supertypes = &kinds.supertypes,
@@ -151,20 +155,18 @@ fn resolveContainers(classes: []const facts.ClassDef, methods: []facts.MethodDef
     }
 
     for (calls) |*c| {
-        c.container = innermostClassName(classes, c.start, c.start) orelse "";
+        std.debug.assert(c.start < std.math.maxInt(u32));
+        c.container = innermostClassName(classes, c.start, c.start + 1) orelse "";
     }
 }
 
 fn innermostClassName(classes: []const facts.ClassDef, start: u32, end: u32) ?[]const u8 {
-    var best: ?usize = null;
+    const index = ClassSelector.innermost(classes, .init(start, end)) orelse return null;
+    return classes[index].name;
+}
 
-    for (classes, 0..) |cl, i| {
-        if (cl.start > start or end > cl.end) continue;
-        if (cl.start == start and cl.end == end) continue;
-        if (best == null or classes[best.?].start < cl.start) best = i;
-    }
-
-    return if (best) |i| classes[i].name else null;
+fn classInterval(class: facts.ClassDef) ByteInterval {
+    return .init(class.start, class.end);
 }
 
 fn contextKind(id: u16) ?diagnostic.ContextKind {

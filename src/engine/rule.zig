@@ -6,6 +6,7 @@ const dispatch = @import("dispatch.zig");
 const expr = @import("expr.zig");
 const glob = @import("glob.zig");
 const language = @import("language.zig");
+const OwnedArena = @import("shared").owned_arena.OwnedArena;
 const query = @import("query.zig");
 
 pub const match_capture = "match";
@@ -170,13 +171,11 @@ pub const CompiledPattern = struct {
 pub const CompiledRule = struct {
     patterns: []CompiledPattern,
     needs_measures: bool,
-    arena: *std.heap.ArenaAllocator,
-    allocator: std.mem.Allocator,
+    arena: *OwnedArena,
     dispatch: dispatch.Table = .empty,
 
     pub fn deinit(self: *CompiledRule) void {
         self.arena.deinit();
-        self.allocator.destroy(self.arena);
     }
 };
 

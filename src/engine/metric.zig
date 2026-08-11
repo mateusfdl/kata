@@ -1,7 +1,10 @@
 const std = @import("std");
 
 const family_mod = @import("family/family.zig");
+const OpenSpanStack = @import("open_span_stack.zig").OpenSpanStack;
 const Node = @import("node.zig").Node;
+
+const ByteInterval = OpenSpanStack.Interval;
 
 pub const MetricKind = enum {
     function,
@@ -14,17 +17,46 @@ pub const MetricKind = enum {
     bool_op,
 };
 
-/// spans sorted parent-before-child plus, for every span, the index of the
-/// innermost function span that strictly contains it (null when the span sits
-/// outside any captured function). the owner and depth passes rely on the
-/// parent-before-child order.
-const Analysis = struct {
+pub const Measures = struct {
+    complexity: u32,
+    nesting: u32,
+};
+
+/// Analysis owns its slices until deinit.
+pub const Analysis = struct {
+    allocator: std.mem.Allocator,
     spans: []const Span,
     owners: []const ?usize,
+    root_start: u32,
+    root_end: u32,
 
-    fn deinit(self: Analysis, allocator: std.mem.Allocator) void {
-        allocator.free(self.owners);
-        allocator.free(self.spans);
+    pub fn deinit(self: *Analysis) void {
+        self.allocator.free(self.owners);
+        self.allocator.free(self.spans);
+        self.* = undefined;
+    }
+
+    pub fn measures(self: *const Analysis) std.mem.Allocator.Error!Measures {
+        var complexity: u32 = 1;
+        for (self.spans, self.owners) |span, owner| {
+            if (!isComplexityPoint(span.kind)) continue;
+            if (!ownedByRoot(self.spans, owner, self.root_start, self.root_end)) continue;
+            complexity += 1;
+        }
+
+        const keys = try self.allocator.alloc(?usize, self.spans.len);
+        defer self.allocator.free(keys);
+        for (keys, self.owners) |*key, owner| {
+            key.* = if (ownedByRoot(self.spans, owner, self.root_start, self.root_end)) 0 else null;
+        }
+
+        const depths = try nestingDepths(self.allocator, self.spans, keys);
+        defer self.allocator.free(depths);
+
+        var nesting: u32 = 0;
+        for (depths) |depth| nesting = @max(nesting, depth);
+
+        return .{ .complexity = complexity, .nesting = nesting };
     }
 };
 
@@ -85,7 +117,7 @@ const Span = struct {
     end: u32,
 };
 
-fn analyze(
+pub fn analyze(
     allocator: std.mem.Allocator,
     compiled: *const Compiled,
     root: Node,
@@ -98,42 +130,37 @@ fn analyze(
     errdefer allocator.free(spans);
     const owners = try computeOwners(allocator, spans);
 
-    return .{ .spans = spans, .owners = owners };
+    return .{
+        .allocator = allocator,
+        .spans = spans,
+        .owners = owners,
+        .root_start = root.startByte(),
+        .root_end = root.endByte(),
+    };
 }
 
-/// single stack pass: spans arrive parent-before-child, so the functions still
-/// open at a span's start are exactly the functions containing it.
 fn computeOwners(allocator: std.mem.Allocator, spans: []const Span) std.mem.Allocator.Error![]?usize {
     const owners = try allocator.alloc(?usize, spans.len);
     errdefer allocator.free(owners);
 
-    var stack: std.ArrayList(usize) = .empty;
-    defer stack.deinit(allocator);
+    var open_spans = try OpenSpanStack.init(allocator, spans.len);
+    defer open_spans.deinit();
 
     for (spans, 0..) |span, i| {
-        popEnded(&stack, spans, span);
-        owners[i] = innermostOpen(spans, stack.items, span);
-        if (span.kind == .function) try stack.append(allocator, i);
+        open_spans.prepare(spanInterval(span));
+        owners[i] = innermostOpen(spans, open_spans.items(), span);
+        if (span.kind == .function) open_spans.push(i, spanInterval(span));
     }
 
     return owners;
 }
 
-/// a span that extends past the top of the stack cannot be contained by it;
-/// syntax spans never partially overlap, so the top has ended and is done.
-fn popEnded(stack: *std.ArrayList(usize), spans: []const Span, span: Span) void {
-    while (stack.items.len > 0 and span.end > spans[stack.items[stack.items.len - 1]].end) {
-        _ = stack.pop();
-    }
-}
-
-fn innermostOpen(spans: []const Span, stack: []const usize, span: Span) ?usize {
-    var i = stack.len;
+fn innermostOpen(spans: []const Span, open_spans: []const OpenSpanStack.Entry, span: Span) ?usize {
+    var i = open_spans.len;
     while (i > 0) {
         i -= 1;
-        // containsSpan rejects an identical range: that entry is the span
-        // itself (the query root is captured too), not a container of it.
-        if (containsSpan(spans[stack[i]], span)) return stack[i];
+        const index = open_spans[i].index;
+        if (containsSpan(spans[index], span)) return index;
     }
     return null;
 }
@@ -143,17 +170,10 @@ pub fn complexityOf(
     compiled: *const Compiled,
     node: Node,
 ) std.mem.Allocator.Error!u32 {
-    const analysis = try analyze(allocator, compiled, node);
-    defer analysis.deinit(allocator);
+    var analysis = try analyze(allocator, compiled, node);
+    defer analysis.deinit();
 
-    var cc: u32 = 1;
-    for (analysis.spans, analysis.owners) |p, owner| {
-        if (!isComplexityPoint(p.kind)) continue;
-        if (!ownedByRoot(analysis.spans, owner, node)) continue;
-        cc += 1;
-    }
-
-    return cc;
+    return (try analysis.measures()).complexity;
 }
 
 pub fn nestingOf(
@@ -161,33 +181,19 @@ pub fn nestingOf(
     compiled: *const Compiled,
     node: Node,
 ) std.mem.Allocator.Error!u32 {
-    const analysis = try analyze(allocator, compiled, node);
-    defer analysis.deinit(allocator);
+    var analysis = try analyze(allocator, compiled, node);
+    defer analysis.deinit();
 
-    // collapse ownership to one class: constructs belonging to `node` share a
-    // key, constructs inside nested functions drop out entirely.
-    const keys = try allocator.alloc(?usize, analysis.spans.len);
-    defer allocator.free(keys);
-    for (keys, analysis.owners) |*key, owner| {
-        key.* = if (ownedByRoot(analysis.spans, owner, node)) 0 else null;
-    }
-
-    const depths = try nestingDepths(allocator, analysis.spans, keys);
-    defer allocator.free(depths);
-
-    var deepest: u32 = 0;
-    for (depths) |depth| deepest = @max(deepest, depth);
-
-    return deepest;
+    return (try analysis.measures()).nesting;
 }
 
 /// a span collected under `node` belongs to `node` itself when no captured
 /// function strictly contains it, or when the innermost one is `node` (the
 /// query root is captured too, so it shows up as a function span).
-fn ownedByRoot(spans: []const Span, owner: ?usize, node: Node) bool {
+fn ownedByRoot(spans: []const Span, owner: ?usize, root_start: u32, root_end: u32) bool {
     const fi = owner orelse return true;
     const f = spans[fi];
-    return f.start == node.startByte() and f.end == node.endByte();
+    return f.start == root_start and f.end == root_end;
 }
 
 pub fn positionOf(node: Node) ?u32 {
@@ -252,8 +258,11 @@ fn collectSpans(
 }
 
 fn containsSpan(outer: Span, inner: Span) bool {
-    if (outer.start == inner.start and outer.end == inner.end) return false;
-    return outer.start <= inner.start and inner.end <= outer.end;
+    return spanInterval(outer).strictlyContains(spanInterval(inner));
+}
+
+fn spanInterval(span: Span) ByteInterval {
+    return .init(span.start, span.end);
 }
 
 /// depth of every nesting construct: 1 + the number of enclosing levels that
@@ -273,19 +282,20 @@ fn nestingDepths(
 
     @memset(depths, 0);
 
-    var stack: std.ArrayList(usize) = .empty;
-    defer stack.deinit(allocator);
+    var open_spans = try OpenSpanStack.init(allocator, spans.len);
+    defer open_spans.deinit();
     var levels: std.ArrayList(Container) = .empty;
     defer levels.deinit(allocator);
 
     for (spans, 0..) |span, i| {
-        popEnded(&stack, spans, span);
+        open_spans.prepare(spanInterval(span));
 
         if (!isNestingConstruct(span.kind)) continue;
         const key = keys[i] orelse continue;
 
         levels.clearRetainingCapacity();
-        for (stack.items) |pi| {
+        for (open_spans.items()) |open_span| {
+            const pi = open_span.index;
             const p_key = keys[pi] orelse continue;
             if (p_key != key) continue;
 
@@ -299,7 +309,7 @@ fn nestingDepths(
 
         depths[i] = @intCast(levels.items.len + 1);
 
-        try stack.append(allocator, i);
+        open_spans.push(i, spanInterval(span));
     }
 
     return depths;

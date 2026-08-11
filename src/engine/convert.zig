@@ -3,6 +3,8 @@ const ts = @import("tree_sitter");
 
 const ast = @import("ast.zig");
 const family_mod = @import("family/family.zig");
+const line_index = @import("line_index.zig");
+const stack = @import("shared").stack;
 
 /// clone a finished tree-sitter CST rooted at `root` into a flat kata `Ast`.
 /// The  walk is an iterative pre-order DFS (depth-safe hopefully), and it
@@ -18,19 +20,34 @@ pub fn build(
     source: []const u8,
     gpa: std.mem.Allocator,
 ) !ast.Ast {
-    var nodes: std.ArrayList(ast.StoredNode) = .empty;
+    const descendant_count: usize = @intCast(root.descendantCount());
+    std.debug.assert(descendant_count > 0);
+    std.debug.assert(descendant_count <= std.math.maxInt(ast.NodeIndex));
+
+    var nodes = try std.ArrayList(ast.StoredNode).initCapacity(gpa, descendant_count);
     errdefer nodes.deinit(gpa);
 
-    var stack: std.ArrayList(ast.NodeIndex) = .empty;
-    defer stack.deinit(gpa);
+    var parents = try stack.ValueStackType(ast.NodeIndex).init(gpa, descendant_count);
+    defer parents.deinit();
+    std.debug.assert(parents.capacity() == descendant_count);
 
     var cursor = root.walk();
     defer cursor.destroy();
 
     outer: while (true) {
         const n = cursor.node();
+        std.debug.assert(nodes.items.len < descendant_count);
+        std.debug.assert(n.startByte() <= n.endByte());
+        std.debug.assert(n.endByte() <= source.len);
         const index: ast.NodeIndex = @intCast(nodes.items.len);
-        const parent = if (stack.items.len == 0) ast.no_parent else stack.getLast();
+        const parent = if (parents.empty()) ast.no_parent else parents.peek();
+        std.debug.assert((index == 0) == (parent == ast.no_parent));
+        if (parent != ast.no_parent) {
+            std.debug.assert(parent < index);
+            const parent_node = nodes.items[parent];
+            std.debug.assert(parent_node.start_byte <= n.startByte());
+            std.debug.assert(n.endByte() <= parent_node.end_byte);
+        }
         try nodes.append(gpa, .{
             .kind = remap(kind_remap, n.kindId()),
             .field_id = remap(field_remap, cursor.fieldId()),
@@ -42,7 +59,7 @@ pub fn build(
         });
 
         if (cursor.gotoFirstChild()) {
-            try stack.append(gpa, index);
+            parents.push(index);
 
             continue;
         }
@@ -50,19 +67,32 @@ pub fn build(
         nodes.items[index].subtree_end = @intCast(nodes.items.len);
         while (!cursor.gotoNextSibling()) {
             if (!cursor.gotoParent()) break :outer;
-            const done = stack.pop().?;
+            const done = parents.pop();
 
+            std.debug.assert(done < nodes.items.len);
             nodes.items[done].subtree_end = @intCast(nodes.items.len);
         }
     }
 
-    const line_starts = try buildLineStarts(source, gpa);
-    errdefer gpa.free(line_starts);
+    std.debug.assert(parents.empty());
+    std.debug.assert(nodes.items.len == descendant_count);
+    std.debug.assert(nodes.items[0].subtree_end == descendant_count);
+    for (nodes.items, 0..) |node, node_index| {
+        std.debug.assert(node_index < node.subtree_end);
+        std.debug.assert(node.subtree_end <= descendant_count);
+        if (node.parent != ast.no_parent) {
+            std.debug.assert(node.parent < node_index);
+            std.debug.assert(node.subtree_end <= nodes.items[node.parent].subtree_end);
+        }
+    }
+
+    var index = try line_index.LineIndex.init(gpa, source);
+    errdefer index.deinit(gpa);
 
     return .{
         .family = fam,
         .nodes = try nodes.toOwnedSlice(gpa),
-        .line_starts = line_starts,
+        .line_starts = index.release(),
     };
 }
 
@@ -70,16 +100,4 @@ pub fn build(
 /// funnels to kata id 0 .unknown/.none instead of getting hit back by outbounding it huh
 fn remap(table: []const u16, id: u16) u16 {
     return if (id < table.len) table[id] else 0;
-}
-
-fn buildLineStarts(source: []const u8, gpa: std.mem.Allocator) ![]u32 {
-    var starts: std.ArrayList(u32) = .empty;
-    errdefer starts.deinit(gpa);
-
-    try starts.append(gpa, 0);
-    for (source, 0..) |c, i| {
-        if (c == '\n') try starts.append(gpa, @intCast(i + 1));
-    }
-
-    return starts.toOwnedSlice(gpa);
 }

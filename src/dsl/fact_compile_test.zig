@@ -7,6 +7,7 @@ const fact_compile = @import("fact_compile.zig");
 const diagnostic = @import("engine").diagnostic;
 const fact_rule = @import("engine").fact_rule;
 const rule = @import("engine").rule;
+const ScratchMemory = @import("shared").scratch_memory.ScratchMemory;
 
 fn parseDsl(arena: std.mem.Allocator, source: []const u8) !ast.File {
     var diag: dsl_parser.Diagnostic = .{};
@@ -75,6 +76,32 @@ test "fact compile: compiles the repository isolation rule" {
     try std.testing.expectEqualStrings(".", compiled.message[2].literal);
     try std.testing.expectEqual(fact_rule.Field.method, compiled.message[3].operand.field);
     try std.testing.expectEqualStrings(" is restricted to repository callers", compiled.message[4].literal);
+}
+
+test "fact compile: compiled output survives parse scratch reset" {
+    const gpa = std.testing.allocator;
+    var output = std.heap.ArenaAllocator.init(gpa);
+    defer output.deinit();
+    var scratch = ScratchMemory.init(gpa);
+    defer scratch.deinit();
+    var diag: rule.Diagnostic = .{};
+    const raws = [_]rule.RawRule{.{
+        .id = "repository-isolation",
+        .source = repository_isolation_kata,
+        .origin = .project,
+    }};
+
+    const compiled = try fact_compile.compileRaws(output.allocator(), scratch.allocator(), &raws, &diag);
+    const generation = scratch.generation();
+    scratch.reset();
+    std.debug.assert(scratch.generation() == generation + 1);
+    const overwritten = try scratch.allocator().alloc(u8, repository_isolation_kata.len * 8);
+    @memset(overwritten, 0xa5);
+
+    try std.testing.expectEqual(@as(usize, 1), compiled.len);
+    try std.testing.expectEqualStrings("repository-isolation", compiled[0].id);
+    try std.testing.expectEqualStrings("Repository", compiled[0].predicates[0].args[1].literal);
+    try std.testing.expectEqualStrings("call to ", compiled[0].message[0].literal);
 }
 
 const import_boundary_kata =

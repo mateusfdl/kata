@@ -27,11 +27,12 @@ fn compileLang(
 }
 
 fn compileFacts(
-    allocator: std.mem.Allocator,
+    output_allocator: std.mem.Allocator,
+    scratch_allocator: std.mem.Allocator,
     raws: []const rule.RawRule,
     diag: *rule.Diagnostic,
 ) CompileError![]const fact_rule.CompiledFactRule {
-    return fact_compile.compileRaws(allocator, raws, diag) catch |err| switch (err) {
+    return fact_compile.compileRaws(output_allocator, scratch_allocator, raws, diag) catch |err| switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         else => error.CompileFailed,
     };

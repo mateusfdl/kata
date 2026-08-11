@@ -36,11 +36,13 @@ fn fakeCompileLang(
 }
 
 fn fakeCompileFacts(
-    allocator: std.mem.Allocator,
+    output_allocator: std.mem.Allocator,
+    scratch_allocator: std.mem.Allocator,
     raws: []const rule.RawRule,
     diag: *rule.Diagnostic,
 ) rule_compiler.CompileError![]const fact_rule.CompiledFactRule {
-    _ = allocator;
+    _ = output_allocator;
+    _ = scratch_allocator;
     _ = raws;
     _ = diag;
     return &.{};

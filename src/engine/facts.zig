@@ -1,9 +1,12 @@
 const std = @import("std");
 
 const diagnostic = @import("diagnostic.zig");
-const fs_path = @import("path");
+const dispatch = @import("dispatch.zig");
 const family_mod = @import("family/family.zig");
 const language = @import("language.zig");
+const lexical_path = @import("shared").lexical_path;
+const MatchWorkspace = @import("match_workspace.zig").MatchWorkspace;
+const OwnedArena = @import("shared").owned_arena.OwnedArena;
 const query = @import("query.zig");
 const Node = @import("node.zig").Node;
 
@@ -45,7 +48,7 @@ pub const Import = struct {
 };
 
 pub const FileFacts = struct {
-    arena: *std.heap.ArenaAllocator,
+    arena: *OwnedArena,
     path: []const u8,
     lang: language.Name,
     classes: []const ClassDef,
@@ -55,10 +58,7 @@ pub const FileFacts = struct {
     imports: []const Import,
 
     pub fn deinit(self: *FileFacts) void {
-        const child = self.arena.child_allocator;
         self.arena.deinit();
-
-        child.destroy(self.arena);
     }
 };
 
@@ -93,10 +93,10 @@ const ExtractionSink = struct {
     source: []const u8,
     constructor_prefix: ?[]const u8,
     lists: *Lists,
-    done: bool = false,
 
-    pub fn emit(self: *ExtractionSink, bindings: []const ?Node) std.mem.Allocator.Error!void {
+    pub fn emit(self: *ExtractionSink, bindings: []const ?Node) std.mem.Allocator.Error!query.ScanControl {
         try assemble(self.arena, self.source, .{ .nodes = bindings }, self.constructor_prefix, self.lists);
+        return .continue_scan;
     }
 };
 
@@ -125,71 +125,46 @@ pub fn resolveImportSource(
     if (!family_mod.of(fam).relative_import_specifiers) return specifier;
     if (!isRelativeSpecifier(specifier)) return specifier;
 
-    return resolveRelative(allocator, importer_path, specifier);
+    return lexical_path.resolveRelativeToFile(allocator, importer_path, specifier);
 }
 
 fn isRelativeSpecifier(specifier: []const u8) bool {
     return std.mem.startsWith(u8, specifier, "./") or std.mem.startsWith(u8, specifier, "../");
 }
 
-fn resolveRelative(
-    allocator: std.mem.Allocator,
-    importer_path: []const u8,
-    specifier: []const u8,
-) std.mem.Allocator.Error!?[]const u8 {
-    var segments: std.ArrayList([]const u8) = .empty;
-    defer segments.deinit(allocator);
-
-    const dir = fs_path.parentDir(importer_path);
-    var dir_it = std.mem.tokenizeScalar(u8, dir, '/');
-    while (dir_it.next()) |segment| try segments.append(allocator, segment);
-
-    var spec_it = std.mem.tokenizeScalar(u8, specifier, '/');
-    while (spec_it.next()) |segment| {
-        if (std.mem.eql(u8, segment, ".")) continue;
-
-        if (std.mem.eql(u8, segment, "..")) {
-            if (segments.pop() == null) return null;
-
-            continue;
-        }
-
-        try segments.append(allocator, segment);
-    }
-
-    return try std.mem.join(allocator, "/", segments.items);
-}
-
 pub fn extract(
     gpa: std.mem.Allocator,
+    index: dispatch.PatternIndex,
     root: Node,
     source: []const u8,
     path: []const u8,
     lang: language.Name,
 ) !FileFacts {
-    const arena_ptr = try gpa.create(std.heap.ArenaAllocator);
-    errdefer gpa.destroy(arena_ptr);
-
-    arena_ptr.* = std.heap.ArenaAllocator.init(gpa);
-    errdefer arena_ptr.deinit();
-
-    const arena = arena_ptr.allocator();
+    const owned_arena = try OwnedArena.create(gpa);
+    errdefer owned_arena.deinit();
+    const arena = owned_arena.allocator();
 
     var lists: Lists = .{};
 
-    var scratch = std.heap.ArenaAllocator.init(gpa);
-    defer scratch.deinit();
-
     const adapter = family_mod.of(lang.family());
-    for (adapter.fact_patterns) |*pattern| {
-        _ = scratch.reset(.retain_capacity);
-        var sink: ExtractionSink = .{
-            .arena = arena,
-            .source = source,
-            .constructor_prefix = adapter.constructor_prefix,
-            .lists = &lists,
-        };
-        try query.stream(scratch.allocator(), pattern, role_count, root, &sink);
+
+    var workspace = MatchWorkspace.init(gpa);
+    defer workspace.deinit();
+    try workspace.ensureCapacity(role_count);
+
+    var nodes = root.preorder();
+    while (nodes.next()) |candidate| {
+        for (index.get(candidate.kindId())) |pattern_index| {
+            std.debug.assert(pattern_index < adapter.fact_patterns.len);
+            const pattern = &adapter.fact_patterns[pattern_index];
+            var sink: ExtractionSink = .{
+                .arena = arena,
+                .source = source,
+                .constructor_prefix = adapter.constructor_prefix,
+                .lists = &lists,
+            };
+            try query.streamAtWithWorkspace(&workspace, pattern, role_count, candidate, &sink);
+        }
     }
 
     sortByStart(ClassDef, lists.classes.items);
@@ -200,8 +175,8 @@ pub fn extract(
 
     adapter.resolveContainers(lists.classes.items, lists.methods.items, lists.calls.items);
 
-    return .{
-        .arena = arena_ptr,
+    const result: FileFacts = .{
+        .arena = owned_arena,
         .path = try arena.dupe(u8, path),
         .lang = lang,
         .classes = lists.classes.items,
@@ -210,6 +185,8 @@ pub fn extract(
         .calls = lists.calls.items,
         .imports = lists.imports.items,
     };
+    owned_arena.makeStatic();
+    return result;
 }
 
 pub fn cap(role: Role) query.CaptureId {

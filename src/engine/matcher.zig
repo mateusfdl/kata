@@ -3,44 +3,21 @@ const std = @import("std");
 const expr = @import("expr.zig");
 const family_mod = @import("family/family.zig");
 const glob = @import("glob.zig");
+const interval = @import("shared").interval;
+const MatchWorkspace = @import("match_workspace.zig").MatchWorkspace;
 const metric = @import("metric.zig");
+const MetricCache = @import("metric_cache.zig").MetricCache;
 const query = @import("query.zig");
 const rule = @import("rule.zig");
 const Node = @import("node.zig").Node;
+
+const ByteInterval = interval.Type(u32, .half_open);
 
 pub const MetricContext = struct {
     allocator: std.mem.Allocator,
     compiled: *const metric.Compiled,
     fam: family_mod.Family,
     cache: ?*MetricCache = null,
-};
-
-const MetricKey = struct {
-    node_index: u32,
-    measure: expr.Measure,
-};
-
-pub const MetricCache = struct {
-    entries: [8]Entry = undefined,
-    len: usize = 0,
-
-    const Entry = struct {
-        key: MetricKey,
-        value: u32,
-    };
-
-    fn get(self: MetricCache, key: MetricKey) ?u32 {
-        for (self.entries[0..self.len]) |entry| {
-            if (entry.key.node_index == key.node_index and entry.key.measure == key.measure) return entry.value;
-        }
-        return null;
-    }
-
-    fn put(self: *MetricCache, key: MetricKey, value: u32) void {
-        if (self.len == self.entries.len) return;
-        self.entries[self.len] = .{ .key = key, .value = value };
-        self.len += 1;
-    }
 };
 
 pub const EvalContext = struct {
@@ -55,10 +32,10 @@ const CountingSink = struct {
     subject: Node,
     ctx: EvalContext,
     total: u32 = 0,
-    done: bool = false,
 
-    pub fn emit(self: *CountingSink, bindings: []const ?Node) std.mem.Allocator.Error!void {
+    pub fn emit(self: *CountingSink, bindings: []const ?Node) std.mem.Allocator.Error!query.ScanControl {
         if (try nestedMatchPasses(self.matcher, .{ .nodes = bindings }, self.subject, self.ctx)) self.total += 1;
+        return .continue_scan;
     }
 };
 
@@ -84,17 +61,23 @@ const NodeMeasures = struct {
     }
 
     fn expensiveMeasure(self: NodeMeasures, kind: expr.Measure, node: Node) Error!u32 {
-        const key: MetricKey = .{ .node_index = node.index, .measure = kind };
         if (self.ctx.cache) |cache| {
-            if (cache.get(key)) |cached| return cached;
+            return switch (kind) {
+                .complexity => try cache.complexity(self.ctx.allocator, self.ctx.compiled, node),
+                .nesting => try cache.nesting(self.ctx.allocator, self.ctx.compiled, node),
+                else => unreachable,
+            };
         }
-        const value = switch (kind) {
-            .complexity => try metric.complexityOf(self.ctx.allocator, self.ctx.compiled, node),
-            .nesting => try metric.nestingOf(self.ctx.allocator, self.ctx.compiled, node),
+
+        var analysis = try metric.analyze(self.ctx.allocator, self.ctx.compiled, node);
+        defer analysis.deinit();
+        const measures = try analysis.measures();
+
+        return switch (kind) {
+            .complexity => measures.complexity,
+            .nesting => measures.nesting,
             else => unreachable,
         };
-        if (self.ctx.cache) |cache| cache.put(key, value);
-        return value;
     }
 
     fn numericText(self: NodeMeasures, node: Node) ?u32 {
@@ -190,7 +173,10 @@ fn evalHas(
     const subject = subjectNode(pred.args, match) orelse return false;
 
     var sink: ExistentialSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx };
-    try query.stream(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, subject, &sink);
+    // A sink can run a nested predicate before this scan returns. Each active scan needs a separate workspace.
+    var workspace = MatchWorkspace.init(ctx.allocator);
+    defer workspace.deinit();
+    try query.streamWithWorkspace(&workspace, &pred.matcher.pattern, pred.matcher.capture_count, subject, &sink);
 
     return sink.found != negate;
 }
@@ -200,12 +186,11 @@ const ExistentialSink = struct {
     subject: Node,
     ctx: EvalContext,
     found: bool = false,
-    done: bool = false,
 
-    pub fn emit(self: *ExistentialSink, bindings: []const ?Node) std.mem.Allocator.Error!void {
-        if (!try nestedMatchPasses(self.matcher, .{ .nodes = bindings }, self.subject, self.ctx)) return;
+    pub fn emit(self: *ExistentialSink, bindings: []const ?Node) std.mem.Allocator.Error!query.ScanControl {
+        if (!try nestedMatchPasses(self.matcher, .{ .nodes = bindings }, self.subject, self.ctx)) return .continue_scan;
         self.found = true;
-        self.done = true;
+        return .stop;
     }
 };
 
@@ -216,10 +201,12 @@ fn evalInside(
     negate: bool,
 ) std.mem.Allocator.Error!bool {
     const subject = subjectNode(pred.args, match) orelse return false;
+    var workspace = MatchWorkspace.init(ctx.allocator);
+    defer workspace.deinit();
     var current = subject.parent();
     while (current) |candidate| : (current = candidate.parent()) {
         var sink: EnclosingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx, .require_strict = true };
-        try query.streamAt(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, candidate, &sink);
+        try query.streamAtWithWorkspace(&workspace, &pred.matcher.pattern, pred.matcher.capture_count, candidate, &sink);
         if (sink.found) return !negate;
         if (std.mem.indexOfScalar(u16, pred.until_kinds, candidate.kindId()) != null) break;
     }
@@ -237,7 +224,9 @@ fn evalParent(
     const parent = subject.parent() orelse return negate;
 
     var sink: EnclosingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx };
-    try query.streamAt(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, parent, &sink);
+    var workspace = MatchWorkspace.init(ctx.allocator);
+    defer workspace.deinit();
+    try query.streamAtWithWorkspace(&workspace, &pred.matcher.pattern, pred.matcher.capture_count, parent, &sink);
 
     return sink.found != negate;
 }
@@ -248,16 +237,15 @@ const EnclosingSink = struct {
     ctx: EvalContext,
     require_strict: bool = false,
     found: bool = false,
-    done: bool = false,
 
-    pub fn emit(self: *EnclosingSink, bindings: []const ?Node) std.mem.Allocator.Error!void {
+    pub fn emit(self: *EnclosingSink, bindings: []const ?Node) std.mem.Allocator.Error!query.ScanControl {
         const nested_match: query.Match = .{ .nodes = bindings };
-        const candidate = nested_match.get(self.matcher.root_capture_id) orelse return;
-        if (self.require_strict and !strictlyContains(candidate, self.subject)) return;
-        if (!try evaluate(self.matcher.predicates, nested_match, self.ctx)) return;
+        const candidate = nested_match.get(self.matcher.root_capture_id) orelse return .continue_scan;
+        if (self.require_strict and !strictlyContains(candidate, self.subject)) return .continue_scan;
+        if (!try evaluate(self.matcher.predicates, nested_match, self.ctx)) return .continue_scan;
 
         self.found = true;
-        self.done = true;
+        return .stop;
     }
 };
 
@@ -272,12 +260,14 @@ fn evalSequence(
 ) std.mem.Allocator.Error!bool {
     const subject = subjectNode(pred.args, match) orelse return false;
     const parent = subject.parent() orelse return negate;
+    var workspace = MatchWorkspace.init(ctx.allocator);
+    defer workspace.deinit();
 
     var siblings = parent.namedChildren();
     while (siblings.next()) |candidate| {
         if (!inDirection(direction, subject, candidate)) continue;
         if (sameRange(candidate, subject)) continue;
-        if (try candidateMatches(pred.matcher, candidate, ctx)) return !negate;
+        if (try candidateMatches(&workspace, pred.matcher, candidate, ctx)) return !negate;
     }
 
     return negate;
@@ -298,13 +288,16 @@ fn evalBetween(
     const parent = bounds.left.parent() orelse return false;
     const right_parent = bounds.right.parent() orelse return false;
     if (!parent.eql(right_parent)) return false;
+    var workspace = MatchWorkspace.init(ctx.allocator);
+    defer workspace.deinit();
 
     var siblings = parent.namedChildren();
     while (siblings.next()) |candidate| {
-        if (candidate.startByte() < bounds.left.endByte()) continue;
-        if (candidate.endByte() > bounds.right.startByte()) continue;
+        if (bounds.left.endByte() > bounds.right.startByte()) return negate;
+        const between = ByteInterval.init(bounds.left.endByte(), bounds.right.startByte());
+        if (!between.containsInterval(nodeInterval(candidate))) continue;
         if (sameRange(candidate, bounds.left) or sameRange(candidate, bounds.right)) continue;
-        if (try candidateMatches(pred.matcher, candidate, ctx)) return !negate;
+        if (try candidateMatches(&workspace, pred.matcher, candidate, ctx)) return !negate;
     }
 
     return negate;
@@ -331,18 +324,19 @@ fn captureNode(operand: rule.PredicateOperand, match: query.Match) ?Node {
 
 fn inDirection(direction: Direction, subject: Node, candidate: Node) bool {
     return switch (direction) {
-        .follows => candidate.startByte() >= subject.endByte(),
-        .precedes => candidate.endByte() <= subject.startByte(),
+        .follows => nodeInterval(subject).endsBefore(nodeInterval(candidate)),
+        .precedes => nodeInterval(candidate).endsBefore(nodeInterval(subject)),
     };
 }
 
 fn candidateMatches(
+    workspace: *MatchWorkspace,
     nested: *const rule.NestedMatcher,
     candidate: Node,
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
     var sink: EnclosingSink = .{ .matcher = nested, .subject = candidate, .ctx = ctx };
-    try query.streamAt(ctx.allocator, &nested.pattern, nested.capture_count, candidate, &sink);
+    try query.streamAtWithWorkspace(workspace, &nested.pattern, nested.capture_count, candidate, &sink);
 
     return sink.found;
 }
@@ -355,7 +349,9 @@ fn evalCount(
     const subject = subjectNode(pred.args, match) orelse return false;
 
     var sink: CountingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx };
-    try query.stream(ctx.allocator, &pred.matcher.pattern, pred.matcher.capture_count, subject, &sink);
+    var workspace = MatchWorkspace.init(ctx.allocator);
+    defer workspace.deinit();
+    try query.streamWithWorkspace(&workspace, &pred.matcher.pattern, pred.matcher.capture_count, subject, &sink);
 
     return compareCount(pred.compare.op, sink.total, pred.compare.value);
 }
@@ -382,13 +378,15 @@ fn subjectNode(args: []const rule.PredicateOperand, match: query.Match) ?Node {
 }
 
 fn strictlyContains(enclosing: Node, node: Node) bool {
-    if (sameRange(enclosing, node)) return false;
-
-    return enclosing.startByte() <= node.startByte() and node.endByte() <= enclosing.endByte();
+    return nodeInterval(enclosing).strictlyContains(nodeInterval(node));
 }
 
 fn sameRange(a: Node, b: Node) bool {
-    return a.startByte() == b.startByte() and a.endByte() == b.endByte();
+    return nodeInterval(a).eql(nodeInterval(b));
+}
+
+fn nodeInterval(node: Node) ByteInterval {
+    return .init(node.startByte(), node.endByte());
 }
 
 fn compareCount(op: expr.Compare, left: u32, right: u32) bool {

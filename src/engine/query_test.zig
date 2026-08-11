@@ -237,7 +237,7 @@ test "query: a repeated capture keeps its first binding" {
     try std.testing.expectEqualStrings("a", matches[0].get(0).?.text(src).?);
 }
 
-test "query: stream stops enumeration when the sink is done" {
+test "query: stream stops enumeration when the sink requests it" {
     const src = "a; b; c;";
     var t = test_tree.build(std.testing.allocator, .ts, src);
     defer t.deinit(std.testing.allocator);
@@ -246,12 +246,65 @@ test "query: stream stops enumeration when the sink is done" {
 
     const FirstOnly = struct {
         emits: usize = 0,
-        done: bool = false,
 
-        pub fn emit(self: *@This(), bindings: []const ?Node) std.mem.Allocator.Error!void {
+        pub fn emit(self: *@This(), bindings: []const ?Node) std.mem.Allocator.Error!query.ScanControl {
             _ = bindings;
             self.emits += 1;
-            self.done = true;
+            return .stop;
+        }
+    };
+    var sink: FirstOnly = .{};
+    try query.stream(std.testing.allocator, &pattern, 1, t.root(), &sink);
+
+    try std.testing.expectEqual(@as(usize, 1), sink.emits);
+}
+
+test "query: stop exits alternation before the next branch" {
+    const src = "a;";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{
+        .kind = .{ .alternation = &.{
+            .{ .kind = .{ .symbol = t.sym("identifier") } },
+            .{ .kind = .{ .symbol = t.sym("identifier") } },
+        } },
+        .capture = 0,
+    };
+    const FirstOnly = struct {
+        emits: usize = 0,
+
+        pub fn emit(self: *@This(), bindings: []const ?Node) std.mem.Allocator.Error!query.ScanControl {
+            _ = bindings;
+            self.emits += 1;
+            return .stop;
+        }
+    };
+    var sink: FirstOnly = .{};
+    try query.stream(std.testing.allocator, &pattern, 1, t.root(), &sink);
+
+    try std.testing.expectEqual(@as(usize, 1), sink.emits);
+}
+
+test "query: stop exits child enumeration before the next child" {
+    const src = "class C { foo() {} bar() {} }";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{
+        .kind = .{ .symbol = t.sym("class_body") },
+        .fields = &.{.{
+            .relation = .child,
+            .pattern = .{ .kind = .{ .symbol = t.sym("method_definition") }, .capture = 0 },
+        }},
+    };
+    const FirstOnly = struct {
+        emits: usize = 0,
+
+        pub fn emit(self: *@This(), bindings: []const ?Node) std.mem.Allocator.Error!query.ScanControl {
+            _ = bindings;
+            self.emits += 1;
+            return .stop;
         }
     };
     var sink: FirstOnly = .{};
@@ -269,11 +322,11 @@ test "query: streamAt only offers the anchored node" {
 
     const Counter = struct {
         emits: usize = 0,
-        done: bool = false,
 
-        pub fn emit(self: *@This(), bindings: []const ?Node) std.mem.Allocator.Error!void {
+        pub fn emit(self: *@This(), bindings: []const ?Node) std.mem.Allocator.Error!query.ScanControl {
             _ = bindings;
             self.emits += 1;
+            return .continue_scan;
         }
     };
 

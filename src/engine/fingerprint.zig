@@ -1,6 +1,8 @@
 const std = @import("std");
 
 const diagnostic = @import("diagnostic.zig");
+const line_index = @import("line_index.zig");
+const ScratchMemory = @import("shared").scratch_memory.ScratchMemory;
 
 pub fn normalize(allocator: std.mem.Allocator, span: []const u8) ![]const u8 {
     var normalized: std.ArrayList(u8) = .empty;
@@ -41,7 +43,7 @@ pub fn assign(
     source: []const u8,
     diagnostics: []diagnostic.Diagnostic,
 ) !void {
-    var scratch = std.heap.ArenaAllocator.init(allocator);
+    var scratch = ScratchMemory.init(allocator);
     defer scratch.deinit();
     const arena = scratch.allocator();
 
@@ -115,18 +117,13 @@ pub fn byteSpans(
     source: []const u8,
     ranges: []const diagnostic.Range,
 ) ![]const Span {
-    var line_offsets: std.ArrayList(usize) = .empty;
-    try line_offsets.append(arena, 0);
-    for (source, 0..) |byte, index| {
-        if (byte == '\n') try line_offsets.append(arena, index + 1);
-    }
+    var index = try line_index.LineIndex.init(arena, source);
+    defer index.deinit(arena);
 
     const bounds = try arena.alloc(Span, ranges.len);
     for (ranges, bounds) |range, *b| {
-        const start = byteOffset(source.len, line_offsets.items, range.start);
-        var end = byteOffset(source.len, line_offsets.items, range.end);
-        if (end < start) end = start;
-        b.* = .{ .start = start, .end = end };
+        const byte_range = index.byteRange(source.len, range);
+        b.* = .{ .start = byte_range.start, .end = byte_range.end };
     }
 
     return bounds;
@@ -151,12 +148,6 @@ fn normalizeBounds(
     const spans = try arena.alloc([]const u8, bounds.len);
     for (bounds, spans) |bound, *span| span.* = try normalize(arena, source[bound.start..bound.end]);
     return spans;
-}
-
-fn byteOffset(source_len: usize, line_offsets: []const usize, position: diagnostic.Position) usize {
-    if (position.line >= line_offsets.len) return source_len;
-
-    return @min(line_offsets[position.line] + position.column, source_len);
 }
 
 fn comesBefore(a: anytype, b: @TypeOf(a)) bool {

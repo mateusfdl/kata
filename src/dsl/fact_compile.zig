@@ -59,16 +59,17 @@ const Subject = struct {
 };
 
 pub fn compileRaws(
-    arena: std.mem.Allocator,
+    output_allocator: std.mem.Allocator,
+    scratch_allocator: std.mem.Allocator,
     raws: []const rule.RawRule,
     diag: *rule.Diagnostic,
 ) RawError![]fact_rule.CompiledFactRule {
     var rules: std.ArrayList(ast.Rule) = .empty;
     for (raws) |raw| {
-        try rules.appendSlice(arena, try parseRaw(arena, raw, diag));
+        try rules.appendSlice(scratch_allocator, try parseRaw(scratch_allocator, raw, diag));
     }
 
-    return compile(arena, .{ .rules = rules.items }, diag);
+    return compile(output_allocator, .{ .rules = rules.items }, diag);
 }
 
 fn parseRaw(

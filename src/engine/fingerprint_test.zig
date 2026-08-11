@@ -79,6 +79,20 @@ test "fingerprint: normalizedSpans slices multi-line spans and clamps ranges" {
     try std.testing.expectEqualStrings("", spans[2]);
 }
 
+test "fingerprint: normalizedSpans clamps columns at the selected line end" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const diagnostics = [_]diagnostic.Diagnostic{
+        finding("rule", 0, 1, 0, 99),
+        finding("rule", 1, 2, 1, 99),
+    };
+    const spans = try fingerprint.normalizedSpans(arena.allocator(), "ab\ncdef\nz", &diagnostics);
+
+    try std.testing.expectEqualStrings("b", spans[0]);
+    try std.testing.expectEqualStrings("ef", spans[1]);
+}
+
 test "fingerprint: assign distinguishes duplicate spans in source order" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

@@ -1,11 +1,17 @@
 const std = @import("std");
 
+const match_workspace = @import("match_workspace.zig");
 const node = @import("node.zig");
 
+const MatchWorkspace = match_workspace.MatchWorkspace;
 const Node = node.Node;
 const Error = std.mem.Allocator.Error;
 
 pub const CaptureId = u16;
+pub const ScanControl = enum {
+    continue_scan,
+    stop,
+};
 
 /// the kind gate for a pattern node. `symbol` and `anonymous` both match a node
 /// by its kata kind id (u16); the two variants differ only so lowering can
@@ -58,11 +64,11 @@ pub const Match = struct {
 const Collector = struct {
     arena: std.mem.Allocator,
     matches: std.ArrayList(Match) = .empty,
-    done: bool = false,
 
-    fn emit(self: *Collector, bindings: []const ?Node) Error!void {
+    fn emit(self: *Collector, bindings: []const ?Node) Error!ScanControl {
         const owned = try self.arena.dupe(?Node, bindings);
         try self.matches.append(self.arena, .{ .nodes = owned });
+        return .continue_scan;
     }
 };
 
@@ -106,19 +112,14 @@ pub fn runAt(
     n: Node,
 ) Error![]Match {
     var collector: Collector = .{ .arena = arena };
-    const bindings = try arena.alloc(?Node, capture_count);
-    defer arena.free(bindings);
-    @memset(bindings, null);
-    const emit: Cont = .emit;
-    try matchNode(pattern, n, bindings, &emit, &collector);
+    try streamAt(arena, pattern, capture_count, n, &collector);
     return collector.matches.toOwnedSlice(arena);
 }
 
 /// run `pattern` like `run`, but hand each match to `sink.emit` as it is found
 /// instead of materializing a slice. the match handed to `emit` views the live
-/// binding scratch and is only valid during that call. the sink stops the
-/// enumeration by setting its `done` flag. `scratch` only backs the binding
-/// slots and is released before returning.
+/// binding scratch and is only valid during that call. `scratch` only backs the
+/// binding slots and is released before returning.
 pub fn stream(
     scratch: std.mem.Allocator,
     pattern: *const Pattern,
@@ -126,10 +127,9 @@ pub fn stream(
     root: Node,
     sink: anytype,
 ) Error!void {
-    const bindings = try scratch.alloc(?Node, capture_count);
-    defer scratch.free(bindings);
-    @memset(bindings, null);
-    try walk(pattern, root, bindings, sink);
+    var workspace = MatchWorkspace.init(scratch);
+    defer workspace.deinit();
+    try streamWithWorkspace(&workspace, pattern, capture_count, root, sink);
 }
 
 pub fn streamAt(
@@ -139,20 +139,46 @@ pub fn streamAt(
     n: Node,
     sink: anytype,
 ) Error!void {
-    const bindings = try scratch.alloc(?Node, capture_count);
-    defer scratch.free(bindings);
-    @memset(bindings, null);
-    const emit: Cont = .emit;
-    try matchNode(pattern, n, bindings, &emit, sink);
+    var workspace = MatchWorkspace.init(scratch);
+    defer workspace.deinit();
+    try streamAtWithWorkspace(&workspace, pattern, capture_count, n, sink);
 }
 
-fn walk(pattern: *const Pattern, n: Node, scratch: []?Node, collector: anytype) Error!void {
+pub fn streamWithWorkspace(
+    workspace: *MatchWorkspace,
+    pattern: *const Pattern,
+    capture_count: usize,
+    root: Node,
+    sink: anytype,
+) Error!void {
+    // The sink borrows active bindings and may not start a scan with this same
+    // workspace. A reentrant scan would reset bindings still in use by emit.
+    try workspace.reset(capture_count);
+    _ = try walk(pattern, root, workspace.active(), sink);
+}
+
+pub fn streamAtWithWorkspace(
+    workspace: *MatchWorkspace,
+    pattern: *const Pattern,
+    capture_count: usize,
+    n: Node,
+    sink: anytype,
+) Error!void {
+    // Anchored dispatch shares the same borrowing and reentrancy contract as
+    // streamWithWorkspace, but offers only n as a root candidate.
+    try workspace.reset(capture_count);
+    const emit: Cont = .emit;
+    _ = try matchNode(pattern, n, workspace.active(), &emit, sink);
+}
+
+fn walk(pattern: *const Pattern, n: Node, scratch: []?Node, collector: anytype) Error!ScanControl {
     var nodes = n.preorder();
     while (nodes.next()) |candidate| {
         const emit: Cont = .emit;
-        try matchNode(pattern, candidate, scratch, &emit, collector);
-        if (collector.done) return;
+        const control = try matchNode(pattern, candidate, scratch, &emit, collector);
+        if (control == .stop) return .stop;
     }
+    return .continue_scan;
 }
 
 fn matchNode(
@@ -161,9 +187,7 @@ fn matchNode(
     bindings: []?Node,
     cont: *const Cont,
     collector: anytype,
-) Error!void {
-    if (collector.done) return;
-
+) Error!ScanControl {
     if (pattern.kind == .alternation) {
         var saved: ?Node = undefined;
         if (pattern.capture) |c| {
@@ -175,13 +199,14 @@ fn matchNode(
         };
 
         for (pattern.kind.alternation) |*branch| {
-            try matchNode(branch, n, bindings, cont, collector);
+            const control = try matchNode(branch, n, bindings, cont, collector);
+            if (control == .stop) return .stop;
         }
 
-        return;
+        return .continue_scan;
     }
 
-    if (!kindMatches(pattern, n)) return;
+    if (!kindMatches(pattern, n)) return .continue_scan;
 
     var saved: ?Node = undefined;
     if (pattern.capture) |c| {
@@ -194,10 +219,10 @@ fn matchNode(
     };
 
     for (pattern.absent_fields) |field_id| {
-        if (n.childByFieldId(field_id) != null) return;
+        if (n.childByFieldId(field_id) != null) return .continue_scan;
     }
 
-    try matchFields(pattern.fields, 0, n, 0, bindings, cont, collector);
+    return matchFields(pattern.fields, 0, n, 0, bindings, cont, collector);
 }
 
 /// `min_child` is the lowest named-child index the next unanchored child may
@@ -212,28 +237,30 @@ fn matchFields(
     bindings: []?Node,
     next: *const Cont,
     collector: anytype,
-) Error!void {
+) Error!ScanControl {
     if (index == fields.len) return invoke(next, bindings, collector);
 
     const field = &fields[index];
 
     switch (field.relation) {
         .field => |field_id| {
-            const child = parent.childByFieldId(field_id) orelse return;
+            const child = parent.childByFieldId(field_id) orelse return .continue_scan;
             const cont = fieldsCont(fields, index, parent, min_child, next);
-            try matchNode(&field.pattern, child, bindings, &cont, collector);
+            return matchNode(&field.pattern, child, bindings, &cont, collector);
         },
         .child => {
             var children = parent.namedChildren();
             var k: u32 = min_child;
             var skipped: u32 = 0;
-            while (skipped < min_child) : (skipped += 1) _ = children.next() orelse return;
+            while (skipped < min_child) : (skipped += 1) _ = children.next() orelse return .continue_scan;
             while (children.next()) |child| : (k += 1) {
                 const cont = fieldsCont(fields, index, parent, k + 1, next);
-                try matchNode(&field.pattern, child, bindings, &cont, collector);
+                const control = try matchNode(&field.pattern, child, bindings, &cont, collector);
+                if (control == .stop) return .stop;
             }
+            return .continue_scan;
         },
-        .children => try matchChildren(&field.pattern, parent, index, fields, min_child, bindings, next, collector),
+        .children => return matchChildren(&field.pattern, parent, index, fields, min_child, bindings, next, collector),
     }
 }
 
@@ -259,7 +286,7 @@ fn matchChildren(
     bindings: []?Node,
     next: *const Cont,
     collector: anytype,
-) Error!void {
+) Error!ScanControl {
     var fired = false;
     var children = parent.namedChildren();
     var k: u32 = min_child;
@@ -268,22 +295,23 @@ fn matchChildren(
     while (children.next()) |child| : (k += 1) {
         var cont = fieldsCont(fields, index, parent, k + 1, next);
         cont.fields.fired = &fired;
-        try matchNode(pattern, child, bindings, &cont, collector);
-        if (fired) return;
+        const control = try matchNode(pattern, child, bindings, &cont, collector);
+        if (control == .stop) return .stop;
+        if (fired) return .continue_scan;
     }
 
     return matchFields(fields, index + 1, parent, min_child, bindings, next, collector);
 }
 
-fn invoke(cont: *const Cont, bindings: []?Node, collector: anytype) Error!void {
-    switch (cont.*) {
-        .emit => try collector.emit(bindings),
+fn invoke(cont: *const Cont, bindings: []?Node, collector: anytype) Error!ScanControl {
+    return switch (cont.*) {
+        .emit => collector.emit(bindings),
         .fields => |f| {
             if (f.fired) |flag| flag.* = true;
 
-            try matchFields(f.fields, f.index, f.parent, f.min_child, bindings, f.next, collector);
+            return matchFields(f.fields, f.index, f.parent, f.min_child, bindings, f.next, collector);
         },
-    }
+    };
 }
 
 fn orderU16(key: u16, item: u16) std.math.Order {

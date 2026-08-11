@@ -1,9 +1,11 @@
 const std = @import("std");
 const node_kinds = @import("node_kinds");
 
+const containing_interval = @import("shared").containing_interval;
 const diagnostic = @import("../diagnostic.zig");
 const facts = @import("../facts.zig");
 const family = @import("family.zig");
+const interval = @import("shared").interval;
 const metric = @import("../metric.zig");
 const query = @import("../query.zig");
 const Node = @import("../node.zig").Node;
@@ -12,6 +14,8 @@ const kinds = node_kinds.go;
 const fields = family.FieldFns(kinds.Field);
 const kind_fns = family.KindFns(kinds.Kind, &kinds.anon_names, kinds.anon_base);
 const metric_table = family.MetricTable(kinds.Kind, kinds.kind_count, classifyMetric);
+const ByteInterval = interval.Type(u32, .half_open);
+const MethodSelector = containing_interval.Selector(facts.MethodDef, ByteInterval, methodInterval);
 
 pub const adapter: family.Adapter = .{
     .supertypes = &kinds.supertypes,
@@ -163,14 +167,13 @@ fn resolveContainers(classes: []const facts.ClassDef, methods: []facts.MethodDef
 }
 
 fn enclosingMethodContainer(methods: []const facts.MethodDef, start: u32) ?[]const u8 {
-    var best: ?usize = null;
+    std.debug.assert(start < std.math.maxInt(u32));
+    const index = MethodSelector.innermost(methods, .init(start, start + 1)) orelse return null;
+    return methods[index].container;
+}
 
-    for (methods, 0..) |m, i| {
-        if (m.start > start or start >= m.end) continue;
-        if (best == null or methods[best.?].start < m.start) best = i;
-    }
-
-    return if (best) |i| methods[i].container else null;
+fn methodInterval(method: facts.MethodDef) ByteInterval {
+    return .init(method.start, method.end);
 }
 
 fn contextKind(id: u16) ?diagnostic.ContextKind {

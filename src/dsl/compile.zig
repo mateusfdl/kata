@@ -9,8 +9,10 @@ const dsl_parser = @import("parser.zig");
 const expr = @import("engine").expr;
 const family = @import("engine").family;
 const language = @import("engine").language;
+const OwnedArena = @import("shared").owned_arena.OwnedArena;
 const query = @import("engine").query;
 const rule = @import("engine").rule;
+const ScratchMemory = @import("shared").scratch_memory.ScratchMemory;
 
 pub const Error = error{
     OutOfMemory,
@@ -58,7 +60,7 @@ pub fn compileRaws(
     raws: []const rule.RawRule,
     diag: *rule.Diagnostic,
 ) RawError!?rule.CompiledRule {
-    var scratch = std.heap.ArenaAllocator.init(allocator);
+    var scratch = ScratchMemory.init(allocator);
     defer scratch.deinit();
     const arena = scratch.allocator();
 
@@ -67,9 +69,18 @@ pub fn compileRaws(
         try rules.appendSlice(arena, try parseRaw(arena, lang, raw, diag));
     }
 
-    if (rules.items.len == 0) return null;
+    if (rules.items.len == 0) {
+        const parse_generation = scratch.generation();
+        scratch.reset();
+        std.debug.assert(scratch.generation() == parse_generation + 1);
+        return null;
+    }
 
-    return try compile(allocator, lang, .{ .rules = rules.items }, diag);
+    const compiled = try compile(allocator, lang, .{ .rules = rules.items }, diag);
+    const parse_generation = scratch.generation();
+    scratch.reset();
+    std.debug.assert(scratch.generation() == parse_generation + 1);
+    return compiled;
 }
 
 fn parseRaw(
@@ -126,11 +137,9 @@ pub fn compile(
     file: ast.File,
     diag: *rule.Diagnostic,
 ) Error!rule.CompiledRule {
-    const arena_ptr = try allocator.create(std.heap.ArenaAllocator);
-    errdefer allocator.destroy(arena_ptr);
-    arena_ptr.* = std.heap.ArenaAllocator.init(allocator);
-    errdefer arena_ptr.deinit();
-    const arena = arena_ptr.allocator();
+    const owned_arena = try OwnedArena.create(allocator);
+    errdefer owned_arena.deinit();
+    const arena = owned_arena.allocator();
 
     var ctx: Compiler = .{ .arena = arena, .lang = lang, .diag = diag, .adapter = family.of(lang.family()) };
 
@@ -149,8 +158,7 @@ pub fn compile(
     return .{
         .patterns = compiled,
         .needs_measures = rule.needsMeasures(compiled),
-        .arena = arena_ptr,
-        .allocator = allocator,
+        .arena = owned_arena,
     };
 }
 

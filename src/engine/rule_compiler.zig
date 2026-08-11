@@ -14,7 +14,8 @@ pub const RuleCompiler = struct {
         diag: *rule.Diagnostic,
     ) CompileError!?rule.CompiledRule,
     compileFacts: *const fn (
-        allocator: std.mem.Allocator,
+        output_allocator: std.mem.Allocator,
+        scratch_allocator: std.mem.Allocator,
         raws: []const rule.RawRule,
         diag: *rule.Diagnostic,
     ) CompileError![]const fact_rule.CompiledFactRule,

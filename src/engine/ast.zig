@@ -1,16 +1,14 @@
 const std = @import("std");
 
 const family_mod = @import("family/family.zig");
+const line_index = @import("line_index.zig");
 
 pub const NodeIndex = u32;
 
 /// parent link of the root: no node reports this index.
 pub const no_parent: NodeIndex = std.math.maxInt(NodeIndex);
 
-pub const Point = struct {
-    row: u32,
-    column: u32,
-};
+pub const Point = line_index.Point;
 
 pub const Flags = packed struct(u8) {
     named: bool,
@@ -51,21 +49,6 @@ pub const Ast = struct {
     }
 
     pub fn pointAt(self: Ast, byte: u32) Point {
-        const row = self.rowForByte(byte);
-        return .{ .row = row, .column = byte - self.line_starts[row] };
-    }
-
-    /// greatest row whose line start is at or before `byte`. tree-sitter counts
-    /// columns in bytes, so `byte - line_starts[row]` reproduces its column.
-    fn rowForByte(self: Ast, byte: u32) u32 {
-        var lo: usize = 0;
-        var hi: usize = self.line_starts.len;
-        while (lo < hi) {
-            const mid = lo + (hi - lo) / 2;
-
-            if (self.line_starts[mid] <= byte) lo = mid + 1 else hi = mid;
-        }
-
-        return @intCast(lo - 1);
+        return line_index.LineIndex.borrow(self.line_starts).pointAt(byte);
     }
 };
