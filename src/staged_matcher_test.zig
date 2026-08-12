@@ -44,6 +44,7 @@ test "staged matcher is ordered and one-to-one" {
         .{ .rule = "a", .fingerprint = "", .span = "same" },
         .{ .rule = "a", .fingerprint = "", .span = "same" },
     };
+
     var state = try staged_matcher.State.init(std.testing.allocator, current.len, baseline.len);
     defer state.deinit();
 

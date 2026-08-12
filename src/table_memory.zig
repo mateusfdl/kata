@@ -17,11 +17,13 @@ pub const TableMemory = struct {
 
     pub fn output(self: *Self) std.mem.Allocator {
         std.debug.assert(self.live);
+
         return self.output_allocator;
     }
 
     pub fn scratch(self: *Self) std.mem.Allocator {
         std.debug.assert(self.live);
+
         return self.scratch_arena.allocator();
     }
 
@@ -33,6 +35,7 @@ pub const TableMemory = struct {
     pub fn resetScratch(self: *Self) void {
         std.debug.assert(self.live);
         _ = self.scratch_arena.reset(.retain_capacity);
+
         self.scratch_generation = std.math.add(usize, self.scratch_generation, 1) catch @panic("scratch generation overflow");
     }
 

@@ -9,10 +9,13 @@ test "static allocator supports the init static deinit lifecycle" {
 
     try std.testing.expectEqual(StaticAllocator.State.init, static_allocator.state);
     static_allocator.transition_from_init_to_static();
+
     try std.testing.expectEqual(StaticAllocator.State.static, static_allocator.state);
     static_allocator.transition_from_static_to_deinit();
+
     try std.testing.expectEqual(StaticAllocator.State.deinit, static_allocator.state);
     allocator.free(memory);
+
     try std.testing.expectEqual(StaticAllocator.State.deinit, static_allocator.state);
     static_allocator.deinit();
 }
