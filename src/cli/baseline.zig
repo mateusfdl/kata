@@ -63,6 +63,7 @@ pub const Baseline = struct {
         if (!has_error) return;
 
         const repo_path = try std.fmt.allocPrint(arena, "{s}{s}", .{ baseline.prefix, path });
+
         // A file absent at the ref has no historical findings to demote.
         const baseline_source = (try fs.git.showFile(io, arena, baseline.dir, baseline.ref, repo_path)) orelse return;
         const before = try engine.lint(arena, baseline_source, lang, path);
@@ -85,9 +86,14 @@ pub const Baseline = struct {
         ref_files: []const []const u8,
     ) !void {
         for (std.enums.values(language.Name)) |lang| {
-            for (rule_set.get(lang)) |raw| try appendIfMissingAtRef(arena, out, raw, ref_files);
+            for (rule_set.get(lang)) |raw| {
+                try appendIfMissingAtRef(arena, out, raw, ref_files);
+            }
         }
-        for (rule_set.projectRaws()) |raw| try appendIfMissingAtRef(arena, out, raw, ref_files);
+
+        for (rule_set.projectRaws()) |raw| {
+            try appendIfMissingAtRef(arena, out, raw, ref_files);
+        }
     }
 
     fn appendIfMissingAtRef(

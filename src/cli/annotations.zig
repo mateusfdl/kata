@@ -164,7 +164,10 @@ pub const Parser = struct {
         // Adjacent expect and expect-fix lines form one annotation block. Every
         // annotation in the block targets the first source line below it.
         while (parser.coversLine(target)) target += 1;
-
-        return if (target >= total) null else target;
+        if (target >= total) {
+            return null;
+        } else {
+            return target;
+        }
     }
 };
