@@ -69,6 +69,9 @@ pub const call_none_of = "noneOf";
 pub const call_starts_with = "startsWith";
 pub const call_ends_with = "endsWith";
 pub const call_contains = "contains";
+pub const call_text = "text";
+pub const call_capture = "capture";
+pub const call_field = "field";
 
 pub const MessageToken = union(enum) {
     literal: []const u8,

@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const check = @import("check.zig");
+const render_budget = @import("render_budget.zig");
 const fs = @import("../fs.zig");
 const reports = @import("../reports.zig");
 const lint = @import("engine");
@@ -586,8 +587,8 @@ const fact_repository_isolation = [_]lint.fact_rule.CompiledFactRule{.{
     .id = "repository-isolation",
     .fact = .call,
     .predicates = &.{
-        .{ .op = .ends_with, .args = &.{ .receiver_type, .{ .literal = "Repository" } } },
-        .{ .op = .not_ends_with, .args = &.{ .{ .field = .container }, .{ .literal = "Repository" } } },
+        .{ .scalar = .{ .op = .ends_with, .args = &.{ .{ .helper = .{ .id = .receiver_type, .capture = 0 } }, .{ .literal = "Repository" } } } },
+        .{ .scalar = .{ .op = .not_ends_with, .args = &.{ .{ .field = .{ .capture = 0, .field = .container } }, .{ .literal = "Repository" } } } },
     },
     .message = &.{.{ .literal = "repositories can only be called by repositories" }},
 }};
@@ -655,8 +656,8 @@ test "check: kata import rules report at the yaml rule positions" {
         .id = "domain-no-infra",
         .fact = .import,
         .predicates = &.{
-            .{ .op = .glob, .args = &.{ .{ .field = .path }, .{ .literal = "**/domain/**" } } },
-            .{ .op = .glob, .args = &.{ .resolved_import_source, .{ .literal = "**/infra/**" } } },
+            .{ .scalar = .{ .op = .glob, .args = &.{ .{ .field = .{ .capture = 0, .field = .path } }, .{ .literal = "**/domain/**" } } } },
+            .{ .scalar = .{ .op = .glob, .args = &.{ .{ .helper = .{ .id = .resolved_import_source, .capture = 0 } }, .{ .literal = "**/infra/**" } } } },
         },
         .message = &.{.{ .literal = "infra imports are denied from the domain layer" }},
     }};
@@ -1068,7 +1069,7 @@ test "check: a rule over the per-run budget truncates and reports the overflow" 
 
     try std.testing.expectEqual(check.Outcome.violations, r.outcome);
     try std.testing.expectEqual(
-        @as(usize, check.render_budget_per_rule),
+        @as(usize, render_budget.render_budget_per_rule),
         std.mem.count(u8, r.json, "as any is not allowed"),
     );
     try std.testing.expect(std.mem.indexOf(u8, r.json, "\"violations\":240") != null);

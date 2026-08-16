@@ -208,6 +208,25 @@ test "facts: non-constructor call initializers are not typed decls" {
     try std.testing.expectEqual(@as(usize, 0), ff.typed_decls.len);
 }
 
+test "facts: project index generation tracks fact changes" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    try std.testing.expectEqual(@as(u64, 0), index.generation);
+    try index.put(try f.engine.extractFacts(gpa, "class A {}", .ts, "src/a.ts"));
+    try std.testing.expectEqual(@as(u64, 1), index.generation);
+    try index.put(try f.engine.extractFacts(gpa, "class A {}", .ts, "src/a.ts"));
+    try std.testing.expectEqual(@as(u64, 1), index.generation);
+    try index.put(try f.engine.extractFacts(gpa, "class B {}", .ts, "src/a.ts"));
+    try std.testing.expectEqual(@as(u64, 2), index.generation);
+    try std.testing.expectEqual(true, index.remove("src/a.ts"));
+    try std.testing.expectEqual(@as(u64, 3), index.generation);
+}
+
 test "facts: project index replaces entries by path" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);

@@ -11,6 +11,7 @@ const Entry = struct {
     path: []const u8,
     language: language.Name,
     content_hash: [32]u8,
+    generation: u64,
     diagnostics: []const diagnostic.Diagnostic,
     previous: ?*Entry = null,
     next: ?*Entry = null,
@@ -76,10 +77,11 @@ pub const ReplayCache = struct {
         path: []const u8,
         lang: language.Name,
         content_hash: [32]u8,
+        generation: u64,
     ) ?[]const diagnostic.Diagnostic {
         const entry = self.entries.get(.{ .path = path, .language = lang }) orelse return null;
         // Stale content is a miss and must not make the old entry more recent.
-        if (!std.mem.eql(u8, &entry.content_hash, &content_hash)) return null;
+        if (!std.mem.eql(u8, &entry.content_hash, &content_hash) or entry.generation != generation) return null;
         self.promote(entry);
         return entry.diagnostics;
     }
@@ -89,12 +91,13 @@ pub const ReplayCache = struct {
         path: []const u8,
         lang: language.Name,
         content_hash: [32]u8,
+        generation: u64,
         diagnostics: []const diagnostic.Diagnostic,
     ) !void {
         try self.ensureStorage();
         // Fully build the replacement before changing the map or LRU list. An
         // allocation failure therefore preserves the old value and exact order.
-        const entry = try self.createEntry(path, lang, content_hash, diagnostics);
+        const entry = try self.createEntry(path, lang, content_hash, generation, diagnostics);
         errdefer self.destroyEntry(entry);
 
         const key = entryKey(entry);
@@ -118,6 +121,7 @@ pub const ReplayCache = struct {
         path: []const u8,
         lang: language.Name,
         content_hash: [32]u8,
+        generation: u64,
         diagnostics: []const diagnostic.Diagnostic,
     ) !*Entry {
         const pool = &self.pool.?;
@@ -134,6 +138,7 @@ pub const ReplayCache = struct {
         entry.path = try arena.dupe(u8, path);
         entry.language = lang;
         entry.content_hash = content_hash;
+        entry.generation = generation;
         entry.diagnostics = try dupeDiagnostics(arena, diagnostics);
         entry.previous = null;
         entry.next = null;
@@ -179,14 +184,6 @@ pub const ReplayCache = struct {
     fn destroyEntry(self: *ReplayCache, entry: *Entry) void {
         entry.deinit();
         self.pool.?.release(@ptrCast(entry));
-    }
-
-    pub fn pooledEntries(self: *const ReplayCache) usize {
-        return if (self.pool) |*pool| pool.inUseCount() else 0;
-    }
-
-    pub fn availablePoolEntries(self: *const ReplayCache) usize {
-        return if (self.pool) |*pool| pool.available() else 0;
     }
 };
 

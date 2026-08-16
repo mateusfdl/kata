@@ -1,8 +1,9 @@
 const std = @import("std");
-const mvzr = @import("mvzr");
 
 const diagnostic = @import("diagnostic.zig");
+const fact_query = @import("fact_query.zig");
 const facts = @import("facts.zig");
+const fact_schema = @import("fact_schema.zig");
 const glob = @import("glob.zig");
 const project_rule = @import("ProjectRule.zig");
 const rule = @import("rule.zig");
@@ -11,73 +12,26 @@ const ProjectIndex = @import("ProjectIndex.zig").ProjectIndex;
 
 pub const Violation = project_rule.Violation;
 
-pub const FactKind = enum {
-    class,
-    method,
-    typed_decl,
-    call,
-    import,
+pub const FactKind = fact_schema.FactKind;
+pub const Field = fact_schema.Field;
+pub const Fact = fact_schema.Fact;
+pub const factHasField = fact_schema.factHasField;
 
-    pub fn fromString(name: []const u8) ?FactKind {
-        inline for (std.meta.fields(FactKind)) |field| {
-            const kind: FactKind = @enumFromInt(field.value);
-            if (std.mem.eql(u8, name, kind.toString())) return kind;
-        }
+pub const CaptureId = fact_query.CaptureId;
+pub const CaptureSet = fact_query.CaptureSet;
+pub const FieldOperand = fact_query.FieldOperand;
+pub const HelperOperand = fact_query.HelperOperand;
+pub const Operand = fact_query.Operand;
+pub const Op = fact_query.Op;
+pub const ScalarPredicate = fact_query.ScalarPredicate;
+pub const FactQuery = fact_query.FactQuery;
+pub const CountCompare = fact_query.CountCompare;
+pub const CountPredicate = fact_query.CountPredicate;
+pub const Predicate = fact_query.Predicate;
+pub const Group = fact_query.Group;
 
-        return null;
-    }
-
-    pub fn toString(self: FactKind) []const u8 {
-        return switch (self) {
-            .class => "class",
-            .method => "method",
-            .typed_decl => "typedDecl",
-            .call => "call",
-            .import => "import",
-        };
-    }
-};
-
-pub const Field = enum {
-    name,
-    container,
-    type,
-    receiver,
-    method,
-    source,
-    path,
-    lang,
-};
-
-pub const Operand = union(enum) {
-    field: Field,
-    literal: []const u8,
-    receiver_type,
-    resolved_import_source,
-};
-
-pub const Op = enum {
-    eq,
-    not_eq,
-    any_of,
-    not_any_of,
-    match,
-    not_match,
-    starts_with,
-    not_starts_with,
-    ends_with,
-    not_ends_with,
-    contains,
-    not_contains,
-    glob,
-    not_glob,
-};
-
-pub const Predicate = struct {
-    op: Op,
-    args: []const Operand,
-    regex: ?mvzr.Regex = null,
-};
+const BoundFact = fact_query.BoundFact;
+const Context = fact_query.Context;
 
 pub const MessageSegment = union(enum) {
     literal: []const u8,
@@ -87,6 +41,7 @@ pub const MessageSegment = union(enum) {
 pub const CompiledFactRule = struct {
     id: []const u8,
     fact: FactKind,
+    capture_count: usize = 1,
     predicates: []const Predicate,
     message: []const MessageSegment,
     severity: diagnostic.Severity = .@"error",
@@ -97,32 +52,6 @@ pub const CompiledFactRule = struct {
 pub fn fieldFromString(name: []const u8) ?Field {
     return std.meta.stringToEnum(Field, name);
 }
-
-pub fn factHasField(kind: FactKind, field: Field) bool {
-    if (field == .path or field == .lang) return true;
-
-    return switch (kind) {
-        .class => field == .name,
-        .method => field == .name or field == .container,
-        .typed_decl => field == .name or field == .type,
-        .call => field == .receiver or field == .method or field == .container,
-        .import => field == .name or field == .source,
-    };
-}
-
-const Fact = union(FactKind) {
-    class: facts.ClassDef,
-    method: facts.MethodDef,
-    typed_decl: facts.TypedDecl,
-    call: facts.Call,
-    import: facts.Import,
-};
-
-const Context = struct {
-    allocator: std.mem.Allocator,
-    file: *const facts.FileFacts,
-    class_names: *const std.StringHashMapUnmanaged(void),
-};
 
 /// Evaluate fact rules against the index. `path_filter` restricts the output
 /// to violations in that file while still using the whole index for
@@ -156,32 +85,32 @@ pub fn evaluateInto(
     defer class_names.deinit(allocator);
     if (needsClassIndex(rules)) try collectClassNames(allocator, index, &class_names);
 
+    const ctx: Context = .{
+        .allocator = allocator,
+        .index = index,
+        .class_names = &class_names,
+    };
+
     if (path_filter) |path| {
         if (index.get(path)) |file| {
-            const ctx: Context = .{ .allocator = allocator, .file = file, .class_names = &class_names };
-            for (rules) |r| try evaluateFile(out, allocator, r, settings, ctx);
+            for (rules) |r| try evaluateFile(out, allocator, r, settings, ctx, file);
         }
     } else {
         for (rules) |r| {
-            var files = index.files.valueIterator();
+            var files = index.fileIterator();
             while (files.next()) |file| {
-                const ctx: Context = .{ .allocator = allocator, .file = file, .class_names = &class_names };
-                try evaluateFile(out, allocator, r, settings, ctx);
+                try evaluateFile(out, allocator, r, settings, ctx, file);
             }
         }
     }
 }
 
 fn needsClassIndex(rules: []const CompiledFactRule) bool {
-    for (rules) |r| {
-        for (r.predicates) |pred| {
-            for (pred.args) |arg| {
-                if (arg == .receiver_type) return true;
-            }
-        }
-        for (r.message) |segment| {
+    for (rules) |compiled| {
+        if (predicatesNeedClassIndex(compiled.predicates)) return true;
+        for (compiled.message) |segment| {
             switch (segment) {
-                .operand => |operand| if (operand == .receiver_type) return true,
+                .operand => |operand| if (operandNeedsClassIndex(operand)) return true,
                 .literal => {},
             }
         }
@@ -190,16 +119,53 @@ fn needsClassIndex(rules: []const CompiledFactRule) bool {
     return false;
 }
 
+fn predicatesNeedClassIndex(predicates: []const Predicate) bool {
+    for (predicates) |predicate| {
+        switch (predicate) {
+            .scalar => |scalar| for (scalar.args) |operand| {
+                if (operandNeedsClassIndex(operand)) return true;
+            },
+            .all_group, .any_group => |group| if (predicatesNeedClassIndex(group.members)) return true,
+            .exists, .not_exists => |query| if (predicatesNeedClassIndex(query.predicates)) return true,
+            .count => |count| if (predicatesNeedClassIndex(count.query.predicates)) return true,
+        }
+    }
+
+    return false;
+}
+
+fn operandNeedsClassIndex(operand: Operand) bool {
+    return switch (operand) {
+        .helper => |helper| switch (helper.id) {
+            inline else => |id| fact_schema.descriptor(id).needs_class_index,
+        },
+        .field, .literal => false,
+    };
+}
+
 fn collectClassNames(
     allocator: std.mem.Allocator,
     index: *const ProjectIndex,
     class_names: *std.StringHashMapUnmanaged(void),
 ) !void {
-    var files = index.files.valueIterator();
+    var files = index.fileIterator();
     while (files.next()) |file| {
         for (file.classes) |class_def| try class_names.put(allocator, class_def.name, {});
     }
 }
+
+const EvaluateFactSink = struct {
+    out: *std.ArrayList(Violation),
+    allocator: std.mem.Allocator,
+    rule_value: CompiledFactRule,
+    ctx: Context,
+    bindings: []?BoundFact,
+
+    pub fn visit(self: *EvaluateFactSink, file: *const facts.FileFacts, fact: Fact) std.mem.Allocator.Error!fact_schema.VisitControl {
+        try evaluateFact(self.out, self.allocator, self.rule_value, self.ctx, self.bindings, .{ .fact = fact, .file = file });
+        return .continue_scan;
+    }
+};
 
 fn evaluateFile(
     out: *std.ArrayList(Violation),
@@ -207,23 +173,29 @@ fn evaluateFile(
     r: CompiledFactRule,
     settings: []const rule.RuleSetting,
     ctx: Context,
+    file: *const facts.FileFacts,
 ) !void {
     for (r.exclude_paths) |pattern| {
-        if (glob.match(pattern, ctx.file.path)) return;
+        if (glob.match(pattern, file.path)) return;
     }
 
-    const policy = rule.resolvePolicy(settings, .project, r.id, ctx.file.path);
+    const policy = rule.resolvePolicy(settings, .project, r.id, file.path);
     if (!policy.enabled or policy.excluded) return;
     var configured = r;
     configured.severity = policy.severity orelse r.severity;
 
-    switch (configured.fact) {
-        .class => for (ctx.file.classes) |c| try evaluateFact(out, allocator, configured, ctx, .{ .class = c }),
-        .method => for (ctx.file.methods) |m| try evaluateFact(out, allocator, configured, ctx, .{ .method = m }),
-        .typed_decl => for (ctx.file.typed_decls) |d| try evaluateFact(out, allocator, configured, ctx, .{ .typed_decl = d }),
-        .call => for (ctx.file.calls) |c| try evaluateFact(out, allocator, configured, ctx, .{ .call = c }),
-        .import => for (ctx.file.imports) |i| try evaluateFact(out, allocator, configured, ctx, .{ .import = i }),
-    }
+    const bindings = try ctx.allocator.alloc(?BoundFact, configured.capture_count);
+    defer ctx.allocator.free(bindings);
+    @memset(bindings, null);
+
+    var sink: EvaluateFactSink = .{
+        .out = out,
+        .allocator = allocator,
+        .rule_value = configured,
+        .ctx = ctx,
+        .bindings = bindings,
+    };
+    _ = try fact_schema.visitFacts(file, configured.fact, &sink);
 }
 
 fn evaluateFact(
@@ -231,103 +203,31 @@ fn evaluateFact(
     allocator: std.mem.Allocator,
     r: CompiledFactRule,
     ctx: Context,
-    fact: Fact,
+    bindings: []?BoundFact,
+    root: BoundFact,
 ) !void {
-    for (r.predicates) |pred| {
-        if (!try evalPredicate(pred, ctx, fact)) return;
-    }
+    bindings[0] = root;
+    if (try fact_query.evaluate(r.predicates, ctx, bindings) != .yes) return;
 
     try out.append(allocator, .{
-        .path = ctx.file.path,
+        .path = root.file.path,
         .diagnostic = .{
             .rule_id = r.id,
-            .language = ctx.file.lang.toString(),
+            .language = root.file.lang.toString(),
             .rule_scope = .project,
             .severity = r.severity,
             .maturity = r.maturity,
-            .message = try renderMessage(allocator, r.message, ctx, fact),
-            .range = factRange(fact),
+            .message = try renderMessage(allocator, r.message, ctx, bindings),
+            .range = factRange(root.fact),
         },
     });
-}
-
-fn evalPredicate(pred: Predicate, ctx: Context, fact: Fact) std.mem.Allocator.Error!bool {
-    return switch (pred.op) {
-        .eq => try evalEq(pred, ctx, fact, false),
-        .not_eq => try evalEq(pred, ctx, fact, true),
-        .any_of => try evalAnyOf(pred, ctx, fact, false),
-        .not_any_of => try evalAnyOf(pred, ctx, fact, true),
-        .match => try evalMatch(pred, ctx, fact, false),
-        .not_match => try evalMatch(pred, ctx, fact, true),
-        .starts_with => try evalStringHelper(pred, ctx, fact, .starts_with, false),
-        .not_starts_with => try evalStringHelper(pred, ctx, fact, .starts_with, true),
-        .ends_with => try evalStringHelper(pred, ctx, fact, .ends_with, false),
-        .not_ends_with => try evalStringHelper(pred, ctx, fact, .ends_with, true),
-        .contains => try evalStringHelper(pred, ctx, fact, .contains, false),
-        .not_contains => try evalStringHelper(pred, ctx, fact, .contains, true),
-        .glob => try evalStringHelper(pred, ctx, fact, .glob, false),
-        .not_glob => try evalStringHelper(pred, ctx, fact, .glob, true),
-    };
-}
-
-fn evalEq(pred: Predicate, ctx: Context, fact: Fact, negate: bool) std.mem.Allocator.Error!bool {
-    if (pred.args.len != 2) return false;
-
-    const left = (try resolveOperand(pred.args[0], ctx, fact)) orelse return false;
-    const right = (try resolveOperand(pred.args[1], ctx, fact)) orelse return false;
-
-    return std.mem.eql(u8, left, right) != negate;
-}
-
-fn evalAnyOf(pred: Predicate, ctx: Context, fact: Fact, negate: bool) std.mem.Allocator.Error!bool {
-    if (pred.args.len < 2) return false;
-
-    const left = (try resolveOperand(pred.args[0], ctx, fact)) orelse return false;
-    for (pred.args[1..]) |arg| {
-        const candidate = (try resolveOperand(arg, ctx, fact)) orelse continue;
-        if (std.mem.eql(u8, left, candidate)) return !negate;
-    }
-
-    return negate;
-}
-
-fn evalMatch(pred: Predicate, ctx: Context, fact: Fact, negate: bool) std.mem.Allocator.Error!bool {
-    const re = pred.regex orelse return false;
-    if (pred.args.len != 1) return false;
-
-    const text = (try resolveOperand(pred.args[0], ctx, fact)) orelse return false;
-
-    return re.isMatch(text) != negate;
-}
-
-const StringHelper = enum { starts_with, ends_with, contains, glob };
-
-fn evalStringHelper(
-    pred: Predicate,
-    ctx: Context,
-    fact: Fact,
-    helper: StringHelper,
-    negate: bool,
-) std.mem.Allocator.Error!bool {
-    if (pred.args.len != 2) return false;
-
-    const subject = (try resolveOperand(pred.args[0], ctx, fact)) orelse return false;
-    const candidate = (try resolveOperand(pred.args[1], ctx, fact)) orelse return false;
-    const found = switch (helper) {
-        .starts_with => std.mem.startsWith(u8, subject, candidate),
-        .ends_with => std.mem.endsWith(u8, subject, candidate),
-        .contains => std.mem.indexOf(u8, subject, candidate) != null,
-        .glob => glob.match(candidate, subject),
-    };
-
-    return found != negate;
 }
 
 fn renderMessage(
     allocator: std.mem.Allocator,
     segments: []const MessageSegment,
     ctx: Context,
-    fact: Fact,
+    bindings: []?BoundFact,
 ) std.mem.Allocator.Error![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
@@ -336,78 +236,13 @@ fn renderMessage(
         switch (segment) {
             .literal => |text| try out.appendSlice(allocator, text),
             .operand => |operand| {
-                const value = (try resolveOperand(operand, ctx, fact)) orelse "?";
+                const value = (try fact_query.resolveOperand(operand, ctx, bindings)) orelse "?";
                 try out.appendSlice(allocator, value);
             },
         }
     }
 
     return out.toOwnedSlice(allocator);
-}
-
-fn resolveOperand(operand: Operand, ctx: Context, fact: Fact) std.mem.Allocator.Error!?[]const u8 {
-    return switch (operand) {
-        .literal => |s| s,
-        .field => |f| fieldValue(fact, f, ctx.file),
-        .receiver_type => receiverType(ctx, fact),
-        .resolved_import_source => try resolvedImportSource(ctx, fact),
-    };
-}
-
-fn fieldValue(fact: Fact, field: Field, file: *const facts.FileFacts) ?[]const u8 {
-    switch (field) {
-        .path => return file.path,
-        .lang => return file.lang.toString(),
-        else => {},
-    }
-
-    return switch (fact) {
-        .class => |c| switch (field) {
-            .name => c.name,
-            else => null,
-        },
-        .method => |m| switch (field) {
-            .name => m.name,
-            .container => m.container,
-            else => null,
-        },
-        .typed_decl => |d| switch (field) {
-            .name => d.name,
-            .type => d.type_name,
-            else => null,
-        },
-        .call => |c| switch (field) {
-            .receiver => c.receiver,
-            .method => c.method,
-            .container => c.container,
-            else => null,
-        },
-        .import => |i| switch (field) {
-            .name => i.name,
-            .source => i.source,
-            else => null,
-        },
-    };
-}
-
-fn receiverType(ctx: Context, fact: Fact) ?[]const u8 {
-    const call = switch (fact) {
-        .call => |c| c,
-        else => return null,
-    };
-    const resolved = facts.receiverType(ctx.file, call.receiver) orelse return null;
-    if (!ctx.class_names.contains(resolved)) return null;
-
-    return resolved;
-}
-
-fn resolvedImportSource(ctx: Context, fact: Fact) std.mem.Allocator.Error!?[]const u8 {
-    const im = switch (fact) {
-        .import => |i| i,
-        else => return null,
-    };
-
-    return facts.resolveImportSource(ctx.allocator, ctx.file.lang.family(), ctx.file.path, im.source);
 }
 
 fn factRange(fact: Fact) diagnostic.Range {

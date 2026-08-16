@@ -45,9 +45,30 @@ test "replay: empty cache misses" {
     var cache = try replay.ReplayCache.init(std.testing.allocator, 4);
     defer cache.deinit();
 
-    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_a));
-    try std.testing.expectEqual(@as(usize, 0), cache.pooledEntries());
-    try std.testing.expectEqual(@as(usize, 0), cache.availablePoolEntries());
+    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_a, 0));
+}
+
+test "replay: matching project generations hit" {
+    const gpa = std.testing.allocator;
+    var cache = try replay.ReplayCache.init(gpa, 4);
+    defer cache.deinit();
+
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    try cache.put("src/a.ts", .ts, hash_a, 5, try sample(arena.allocator(), "generation five"));
+
+    try std.testing.expectEqualStrings("generation five", cache.get("src/a.ts", .ts, hash_a, 5).?[0].message);
+    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_a, 6));
+}
+
+test "replay: zero project generations hit" {
+    const gpa = std.testing.allocator;
+    var cache = try replay.ReplayCache.init(gpa, 4);
+    defer cache.deinit();
+
+    try cache.put("src/a.ts", .ts, hash_a, 0, &.{});
+
+    try std.testing.expectEqual(@as(usize, 0), cache.get("src/a.ts", .ts, hash_a, 0).?.len);
 }
 
 test "replay: put then get returns the stored diagnostics" {
@@ -57,9 +78,9 @@ test "replay: put then get returns the stored diagnostics" {
 
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    try cache.put("src/a.ts", .ts, hash_a, try sample(arena.allocator(), "as any is not allowed"));
+    try cache.put("src/a.ts", .ts, hash_a, 0, try sample(arena.allocator(), "as any is not allowed"));
 
-    const hit = cache.get("src/a.ts", .ts, hash_a).?;
+    const hit = cache.get("src/a.ts", .ts, hash_a, 0).?;
     try std.testing.expectEqual(@as(usize, 1), hit.len);
     try std.testing.expectEqualStrings("no-as-any", hit[0].rule_id);
     try std.testing.expectEqualStrings("as any is not allowed", hit[0].message);
@@ -76,13 +97,13 @@ test "replay: a different content hash misses and put replaces the entry" {
 
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    try cache.put("src/a.ts", .ts, hash_a, try sample(arena.allocator(), "first"));
+    try cache.put("src/a.ts", .ts, hash_a, 0, try sample(arena.allocator(), "first"));
 
-    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_b));
+    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_b, 0));
 
-    try cache.put("src/a.ts", .ts, hash_b, try sample(arena.allocator(), "second"));
-    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_a));
-    try std.testing.expectEqualStrings("second", cache.get("src/a.ts", .ts, hash_b).?[0].message);
+    try cache.put("src/a.ts", .ts, hash_b, 0, try sample(arena.allocator(), "second"));
+    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_a, 0));
+    try std.testing.expectEqualStrings("second", cache.get("src/a.ts", .ts, hash_b, 0).?[0].message);
 }
 
 test "replay: stored diagnostics survive the source arena teardown" {
@@ -93,10 +114,10 @@ test "replay: stored diagnostics survive the source arena teardown" {
     {
         var arena = std.heap.ArenaAllocator.init(gpa);
         defer arena.deinit();
-        try cache.put("src/a.ts", .ts, hash_a, try sample(arena.allocator(), "outlives"));
+        try cache.put("src/a.ts", .ts, hash_a, 0, try sample(arena.allocator(), "outlives"));
     }
 
-    const hit = cache.get("src/a.ts", .ts, hash_a).?;
+    const hit = cache.get("src/a.ts", .ts, hash_a, 0).?;
     try std.testing.expectEqualStrings("outlives", hit[0].message);
     try std.testing.expectEqualStrings("render", hit[0].context[0].name);
 }
@@ -110,9 +131,9 @@ test "replay: stored diagnostics preserve capped state" {
     defer arena.deinit();
     const diagnostics = try sample(arena.allocator(), "capped");
     diagnostics[0].capped = true;
-    try cache.put("src/a.ts", .ts, hash_a, diagnostics);
+    try cache.put("src/a.ts", .ts, hash_a, 0, diagnostics);
 
-    try std.testing.expectEqual(true, cache.get("src/a.ts", .ts, hash_a).?[0].capped);
+    try std.testing.expectEqual(true, cache.get("src/a.ts", .ts, hash_a, 0).?[0].capped);
 }
 
 test "replay: LRU eviction keeps a promoted path" {
@@ -122,15 +143,15 @@ test "replay: LRU eviction keeps a promoted path" {
 
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    try cache.put("src/a.ts", .ts, hash_a, try sample(arena.allocator(), "a"));
-    try cache.put("src/b.ts", .ts, hash_a, try sample(arena.allocator(), "b"));
+    try cache.put("src/a.ts", .ts, hash_a, 0, try sample(arena.allocator(), "a"));
+    try cache.put("src/b.ts", .ts, hash_a, 0, try sample(arena.allocator(), "b"));
 
-    _ = cache.get("src/a.ts", .ts, hash_a);
-    try cache.put("src/c.ts", .ts, hash_a, try sample(arena.allocator(), "c"));
+    _ = cache.get("src/a.ts", .ts, hash_a, 0);
+    try cache.put("src/c.ts", .ts, hash_a, 0, try sample(arena.allocator(), "c"));
 
-    try std.testing.expectEqualStrings("a", cache.get("src/a.ts", .ts, hash_a).?[0].message);
-    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/b.ts", .ts, hash_a));
-    try std.testing.expectEqualStrings("c", cache.get("src/c.ts", .ts, hash_a).?[0].message);
+    try std.testing.expectEqualStrings("a", cache.get("src/a.ts", .ts, hash_a, 0).?[0].message);
+    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/b.ts", .ts, hash_a, 0));
+    try std.testing.expectEqualStrings("c", cache.get("src/c.ts", .ts, hash_a, 0).?[0].message);
 }
 
 test "replay: an empty diagnostic slice is a valid cached value" {
@@ -138,9 +159,9 @@ test "replay: an empty diagnostic slice is a valid cached value" {
     var cache = try replay.ReplayCache.init(gpa, 4);
     defer cache.deinit();
 
-    try cache.put("src/clean.ts", .ts, hash_a, &.{});
+    try cache.put("src/clean.ts", .ts, hash_a, 0, &.{});
 
-    const hit = cache.get("src/clean.ts", .ts, hash_a).?;
+    const hit = cache.get("src/clean.ts", .ts, hash_a, 0).?;
     try std.testing.expectEqual(@as(usize, 0), hit.len);
 }
 
@@ -153,9 +174,9 @@ test "replay: path lookup uses byte equality" {
     defer gpa.free(stored_path);
     const lookup_path = try gpa.dupe(u8, "src/a.ts");
     defer gpa.free(lookup_path);
-    try cache.put(stored_path, .ts, hash_a, &.{});
+    try cache.put(stored_path, .ts, hash_a, 0, &.{});
 
-    try std.testing.expectEqual(@as(usize, 0), cache.get(lookup_path, .ts, hash_a).?.len);
+    try std.testing.expectEqual(@as(usize, 0), cache.get(lookup_path, .ts, hash_a, 0).?.len);
 }
 
 test "replay: stale content does not promote an entry" {
@@ -165,17 +186,17 @@ test "replay: stale content does not promote an entry" {
 
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    try cache.put("src/a.ts", .ts, hash_a, try sample(arena.allocator(), "a"));
-    try cache.put("src/b.ts", .ts, hash_a, try sample(arena.allocator(), "b"));
-    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_b));
-    _ = cache.get("src/b.ts", .ts, hash_a);
-    try cache.put("src/c.ts", .ts, hash_a, try sample(arena.allocator(), "c"));
+    try cache.put("src/a.ts", .ts, hash_a, 0, try sample(arena.allocator(), "a"));
+    try cache.put("src/b.ts", .ts, hash_a, 0, try sample(arena.allocator(), "b"));
+    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_b, 0));
+    _ = cache.get("src/b.ts", .ts, hash_a, 0);
+    try cache.put("src/c.ts", .ts, hash_a, 0, try sample(arena.allocator(), "c"));
 
-    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_a));
-    try std.testing.expectEqualStrings("b", cache.get("src/b.ts", .ts, hash_a).?[0].message);
+    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_a, 0));
+    try std.testing.expectEqualStrings("b", cache.get("src/b.ts", .ts, hash_a, 0).?[0].message);
 }
 
-test "replay: repeated eviction reuses bounded pool slots" {
+test "replay: repeated eviction keeps only the newest entries" {
     const gpa = std.testing.allocator;
     var cache = try replay.ReplayCache.init(gpa, 2);
     defer cache.deinit();
@@ -183,11 +204,17 @@ test "replay: repeated eviction reuses bounded pool slots" {
     for (0..32) |index| {
         var path_buffer: [32]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buffer, "src/{d}.ts", .{index});
-        try cache.put(path, .ts, hash_a, &.{});
+        try cache.put(path, .ts, hash_a, 0, &.{});
     }
 
-    try std.testing.expectEqual(@as(usize, 2), cache.pooledEntries());
-    try std.testing.expectEqual(@as(usize, 1), cache.availablePoolEntries());
+    for (0..30) |index| {
+        var path_buffer: [32]u8 = undefined;
+        const path = try std.fmt.bufPrint(&path_buffer, "src/{d}.ts", .{index});
+        try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get(path, .ts, hash_a, 0));
+    }
+
+    try std.testing.expectEqual(@as(usize, 0), cache.get("src/30.ts", .ts, hash_a, 0).?.len);
+    try std.testing.expectEqual(@as(usize, 0), cache.get("src/31.ts", .ts, hash_a, 0).?.len);
 }
 
 test "replay: init rejects zero capacity" {
@@ -203,14 +230,12 @@ test "replay: failed replacement preserves the stored entry" {
     var cache = try replay.ReplayCache.init(gpa, 2);
     defer cache.deinit();
 
-    try cache.put("src/a.ts", .ts, hash_a, &.{});
-    const in_use = cache.pooledEntries();
+    try cache.put("src/a.ts", .ts, hash_a, 0, &.{});
     failing.fail_index = failing.alloc_index;
 
-    try std.testing.expectError(error.OutOfMemory, cache.put("src/a.ts", .ts, hash_b, &.{}));
-    try std.testing.expectEqual(@as(usize, 0), cache.get("src/a.ts", .ts, hash_a).?.len);
-    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_b));
-    try std.testing.expectEqual(in_use, cache.pooledEntries());
+    try std.testing.expectError(error.OutOfMemory, cache.put("src/a.ts", .ts, hash_b, 0, &.{}));
+    try std.testing.expectEqual(@as(usize, 0), cache.get("src/a.ts", .ts, hash_a, 0).?.len);
+    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_b, 0));
 }
 
 test "replay: failed full insertion preserves LRU order" {
@@ -219,19 +244,18 @@ test "replay: failed full insertion preserves LRU order" {
     var cache = try replay.ReplayCache.init(gpa, 2);
     defer cache.deinit();
 
-    try cache.put("src/a.ts", .ts, hash_a, &.{});
-    try cache.put("src/b.ts", .ts, hash_a, &.{});
-    _ = cache.get("src/a.ts", .ts, hash_a);
+    try cache.put("src/a.ts", .ts, hash_a, 0, &.{});
+    try cache.put("src/b.ts", .ts, hash_a, 0, &.{});
+    _ = cache.get("src/a.ts", .ts, hash_a, 0);
     failing.fail_index = failing.alloc_index;
 
-    try std.testing.expectError(error.OutOfMemory, cache.put("src/c.ts", .ts, hash_a, &.{}));
-    try std.testing.expectEqual(@as(usize, 2), cache.pooledEntries());
+    try std.testing.expectError(error.OutOfMemory, cache.put("src/c.ts", .ts, hash_a, 0, &.{}));
     failing.fail_index = std.math.maxInt(usize);
-    try cache.put("src/c.ts", .ts, hash_a, &.{});
+    try cache.put("src/c.ts", .ts, hash_a, 0, &.{});
 
-    try std.testing.expectEqual(@as(usize, 0), cache.get("src/a.ts", .ts, hash_a).?.len);
-    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/b.ts", .ts, hash_a));
-    try std.testing.expectEqual(@as(usize, 0), cache.get("src/c.ts", .ts, hash_a).?.len);
+    try std.testing.expectEqual(@as(usize, 0), cache.get("src/a.ts", .ts, hash_a, 0).?.len);
+    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/b.ts", .ts, hash_a, 0));
+    try std.testing.expectEqual(@as(usize, 0), cache.get("src/c.ts", .ts, hash_a, 0).?.len);
 }
 
 test "replay: language is part of cache identity" {
@@ -241,11 +265,11 @@ test "replay: language is part of cache identity" {
 
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    try cache.put("src/input", .ts, hash_a, try sample(arena.allocator(), "typescript"));
+    try cache.put("src/input", .ts, hash_a, 0, try sample(arena.allocator(), "typescript"));
 
-    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/input", .go, hash_a));
-    try cache.put("src/input", .go, hash_a, try sample(arena.allocator(), "go"));
+    try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/input", .go, hash_a, 0));
+    try cache.put("src/input", .go, hash_a, 0, try sample(arena.allocator(), "go"));
 
-    try std.testing.expectEqualStrings("typescript", cache.get("src/input", .ts, hash_a).?[0].message);
-    try std.testing.expectEqualStrings("go", cache.get("src/input", .go, hash_a).?[0].message);
+    try std.testing.expectEqualStrings("typescript", cache.get("src/input", .ts, hash_a, 0).?[0].message);
+    try std.testing.expectEqualStrings("go", cache.get("src/input", .go, hash_a, 0).?[0].message);
 }

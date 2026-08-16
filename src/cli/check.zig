@@ -10,8 +10,6 @@ const language = lint.language;
 const baseline_mod = @import("baseline.zig");
 const render_budget = @import("render_budget.zig");
 
-pub const render_budget_per_rule = render_budget.render_budget_per_rule;
-
 const RenderBudget = render_budget.RenderBudget;
 
 pub const Outcome = enum { clean, violations };

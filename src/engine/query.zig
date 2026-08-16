@@ -61,17 +61,6 @@ pub const Match = struct {
     }
 };
 
-const Collector = struct {
-    arena: std.mem.Allocator,
-    matches: std.ArrayList(Match) = .empty,
-
-    fn emit(self: *Collector, bindings: []const ?Node) Error!ScanControl {
-        const owned = try self.arena.dupe(?Node, bindings);
-        try self.matches.append(self.arena, .{ .nodes = owned });
-        return .continue_scan;
-    }
-};
-
 /// Continuation for the enumerating recursion: `emit` yields a full match;
 /// `fields` resumes the parent's remaining field patterns. Frames live on the
 /// stack for the duration of the synchronous descent.
@@ -86,63 +75,6 @@ const Cont = union(enum) {
         fired: ?*bool = null,
     },
 };
-
-/// run `pattern` over the subtree at `root`, returning one match per satisfying
-/// assignment in pre-order. `capture_count` sizes each match. matching a node
-/// with an unanchored `child` relation that has several satisfying children
-/// yields one match per child, reproducing tree-sitter query multiplicity. a
-/// capture id shared by several pattern nodes keeps its first binding.
-pub fn run(
-    arena: std.mem.Allocator,
-    pattern: *const Pattern,
-    capture_count: usize,
-    root: Node,
-) Error![]Match {
-    var collector: Collector = .{ .arena = arena };
-    try stream(arena, pattern, capture_count, root, &collector);
-    return collector.matches.toOwnedSlice(arena);
-}
-
-/// run `pattern` anchored at `n` only, returning the matches rooted there in
-/// enumeration order. descendants of `n` are not offered as anchors.
-pub fn runAt(
-    arena: std.mem.Allocator,
-    pattern: *const Pattern,
-    capture_count: usize,
-    n: Node,
-) Error![]Match {
-    var collector: Collector = .{ .arena = arena };
-    try streamAt(arena, pattern, capture_count, n, &collector);
-    return collector.matches.toOwnedSlice(arena);
-}
-
-/// run `pattern` like `run`, but hand each match to `sink.emit` as it is found
-/// instead of materializing a slice. the match handed to `emit` views the live
-/// binding scratch and is only valid during that call. `scratch` only backs the
-/// binding slots and is released before returning.
-pub fn stream(
-    scratch: std.mem.Allocator,
-    pattern: *const Pattern,
-    capture_count: usize,
-    root: Node,
-    sink: anytype,
-) Error!void {
-    var workspace = MatchWorkspace.init(scratch);
-    defer workspace.deinit();
-    try streamWithWorkspace(&workspace, pattern, capture_count, root, sink);
-}
-
-pub fn streamAt(
-    scratch: std.mem.Allocator,
-    pattern: *const Pattern,
-    capture_count: usize,
-    n: Node,
-    sink: anytype,
-) Error!void {
-    var workspace = MatchWorkspace.init(scratch);
-    defer workspace.deinit();
-    try streamAtWithWorkspace(&workspace, pattern, capture_count, n, sink);
-}
 
 pub fn streamWithWorkspace(
     workspace: *MatchWorkspace,

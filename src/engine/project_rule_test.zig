@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const lint_diagnostic = @import("engine").diagnostic;
+const lint_fact_rule = @import("engine").fact_rule;
 const lint_rule = @import("engine").rule;
 const project_rule = @import("engine").project_rule;
 const test_fixture = @import("../test_fixture.zig");
@@ -17,6 +18,13 @@ const comment_rule =
     \\  emit @match { message "no comments" }
     \\}
 ;
+
+const project_fact_rules = [_]lint_fact_rule.CompiledFactRule{.{
+    .id = "classes-exist",
+    .fact = .class,
+    .predicates = &.{},
+    .message = &.{.{ .literal = "class exists" }},
+}};
 
 const repository_isolation: project_rule.ProjectRule = .{
     .id = "repository-isolation",
@@ -82,6 +90,25 @@ test "project rule: restricted-callers flags non-repository callers only" {
     );
     try std.testing.expectEqual(@as(u32, 4), v.diagnostic.range.start.line);
     try std.testing.expectEqual(@as(u32, 4), v.diagnostic.range.start.column);
+}
+
+test "project reports whether cross-file rules are active" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var empty = try Project.init(gpa, &f.engine, &.{});
+    defer empty.deinit();
+    try std.testing.expectEqual(false, empty.hasCrossFileRules());
+
+    var legacy = try Project.init(gpa, &f.engine, &.{repository_isolation});
+    defer legacy.deinit();
+    try std.testing.expectEqual(true, legacy.hasCrossFileRules());
+
+    f.engine.compiled_fact = &project_fact_rules;
+    var fact = try Project.init(gpa, &f.engine, &.{});
+    defer fact.deinit();
+    try std.testing.expectEqual(true, fact.hasCrossFileRules());
 }
 
 test "project analysis disables native rules through project settings" {

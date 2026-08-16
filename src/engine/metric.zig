@@ -165,28 +165,6 @@ fn innermostOpen(spans: []const Span, open_spans: []const OpenSpanStack.Entry, s
     return null;
 }
 
-pub fn complexityOf(
-    allocator: std.mem.Allocator,
-    compiled: *const Compiled,
-    node: Node,
-) std.mem.Allocator.Error!u32 {
-    var analysis = try analyze(allocator, compiled, node);
-    defer analysis.deinit();
-
-    return (try analysis.measures()).complexity;
-}
-
-pub fn nestingOf(
-    allocator: std.mem.Allocator,
-    compiled: *const Compiled,
-    node: Node,
-) std.mem.Allocator.Error!u32 {
-    var analysis = try analyze(allocator, compiled, node);
-    defer analysis.deinit();
-
-    return (try analysis.measures()).nesting;
-}
-
 /// a span collected under `node` belongs to `node` itself when no captured
 /// function strictly contains it, or when the innermost one is `node` (the
 /// query root is captured too, so it shows up as a function span).

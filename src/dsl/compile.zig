@@ -4,6 +4,8 @@ const mvzr = @import("mvzr");
 const ast = @import("ast.zig");
 const bytes = @import("bytes.zig");
 const lower = @import("lower.zig");
+const scalar_compile = @import("scalar_compile.zig");
+const tokenizer = @import("tokenizer.zig");
 const diagnostic = @import("engine").diagnostic;
 const dsl_parser = @import("parser.zig");
 const expr = @import("engine").expr;
@@ -31,6 +33,8 @@ pub const Error = error{
     ReservedCapture,
 };
 
+const ScalarError = Error;
+
 pub const RawError = Error || dsl_parser.Error || error{
     RuleIdMismatch,
     UndeclaredLanguage,
@@ -38,8 +42,6 @@ pub const RawError = Error || dsl_parser.Error || error{
 };
 
 const nested_root_capture = "kata-nested-root";
-const call_text = "text";
-const call_capture = "capture";
 
 const Compiler = struct {
     arena: std.mem.Allocator,
@@ -53,6 +55,114 @@ const Compiler = struct {
         self.diag.* = .{ .lang = self.lang, .rule_id = self.rule_id, .detail = detail };
     }
 };
+
+const ScalarAdapter = struct {
+    pub const Context = Compiler;
+    pub const Error = ScalarError;
+    pub const Operand = rule.PredicateOperand;
+    pub const Predicate = rule.Predicate;
+    pub const any_of_detail = "anyOf and noneOf expect (text(@capture), \"a\", \"b\", ...)";
+    pub const membership_detail = "in expects text(@capture) on the left";
+    pub const compare_has_numeric_fallback = true;
+
+    const ExtraCallHandler = *const fn (*Compiler, ast.Call, bool) ScalarError!?rule.Predicate;
+    pub const extra_call_dispatch = std.StaticStringMap(ExtraCallHandler).initComptime(.{
+        .{ bytes.call_capture, capturedScalarPredicate },
+    });
+
+    pub fn allocator(ctx: *Compiler) std.mem.Allocator {
+        return ctx.arena;
+    }
+
+    pub fn textOperand(ctx: *Compiler, expression: ast.Expression) ScalarError!?rule.PredicateOperand {
+        switch (expression) {
+            .string => |string| return .{ .string = try ctx.arena.dupe(u8, string.value) },
+            .call => |call| {
+                if (!std.mem.eql(u8, call.name, bytes.call_text)) return null;
+                if (call.args.len != 1 or call.args[0] != .capture) {
+                    return failWith(ctx, "text expects one capture argument", call.range);
+                }
+
+                return .{ .capture = try resolveCapture(ctx, call.args[0].capture.name) };
+            },
+            else => return null,
+        }
+    }
+
+    pub fn literalOperand(ctx: *Compiler, value: []const u8) ScalarError!rule.PredicateOperand {
+        return .{ .string = try ctx.arena.dupe(u8, value) };
+    }
+
+    pub fn isAnyOfSubject(operand: rule.PredicateOperand) bool {
+        return operand == .capture;
+    }
+
+    pub fn literalValue(operand: rule.PredicateOperand) ?[]const u8 {
+        return switch (operand) {
+            .capture => null,
+            .string => |value| value,
+        };
+    }
+
+    pub fn operandEql(left: rule.PredicateOperand, right: rule.PredicateOperand) bool {
+        return switch (left) {
+            .capture => |capture| right == .capture and capture == right.capture,
+            .string => |value| right == .string and std.mem.eql(u8, value, right.string),
+        };
+    }
+
+    pub fn emit(op: scalar_compile.Operation, args: []rule.PredicateOperand) rule.Predicate {
+        return switch (op) {
+            .eq => .{ .eq = args },
+            .not_eq => .{ .not_eq = args },
+            .any_of => .{ .any_of = args },
+            .not_any_of => .{ .not_any_of = args },
+            .starts_with => .{ .starts_with = args },
+            .not_starts_with => .{ .not_starts_with = args },
+            .ends_with => .{ .ends_with = args },
+            .not_ends_with => .{ .not_ends_with = args },
+            .contains => .{ .contains = args },
+            .not_contains => .{ .not_contains = args },
+            .glob => .{ .glob = args },
+            .not_glob => .{ .not_glob = args },
+        };
+    }
+
+    pub fn emitRegex(
+        ctx: *Compiler,
+        subject: rule.PredicateOperand,
+        pattern: []const u8,
+        regex: mvzr.Regex,
+        negated: bool,
+    ) ScalarError!rule.Predicate {
+        const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
+        args[0] = subject;
+        args[1] = .{ .string = pattern };
+        const predicate: rule.RegexPredicate = .{ .args = args, .regex = regex };
+        return if (negated) .{ .not_match = predicate } else .{ .match = predicate };
+    }
+
+    pub fn report(ctx: *Compiler, detail: []const u8, _: tokenizer.Range) void {
+        ctx.fail(detail);
+    }
+
+    pub fn failWith(ctx: *Compiler, detail: []const u8, range: tokenizer.Range) ScalarError {
+        report(ctx, detail, range);
+        return error.UnsupportedPredicate;
+    }
+
+    fn capturedScalarPredicate(ctx: *Compiler, call: ast.Call, negated: bool) ScalarError!?rule.Predicate {
+        if (call.args.len != 1 or call.args[0] != .capture) {
+            return failWith(ctx, "capture expects one capture argument", call.range);
+        }
+
+        const args = try ctx.arena.alloc(rule.PredicateOperand, 1);
+        args[0] = .{ .capture = try resolveCapture(ctx, call.args[0].capture.name) };
+        return if (negated) .{ .not_captured = args } else .{ .captured = args };
+    }
+};
+
+const Scalar = scalar_compile.ScalarCompiler(ScalarAdapter);
 
 pub fn compileRaws(
     allocator: std.mem.Allocator,
@@ -316,6 +426,11 @@ fn translatePredicate(
         .composition => |composition| try out.append(ctx.arena, try compositionPredicate(ctx, composition)),
         .count => |count| try out.append(ctx.arena, try countPredicate(ctx, count)),
         .group => |group| try out.append(ctx.arena, try groupPredicate(ctx, group)),
+        .fact_exists, .fact_count => {
+            ctx.fail("project fact queries are not supported in local rules");
+
+            return error.UnsupportedPredicate;
+        },
     }
 }
 
@@ -462,7 +577,7 @@ fn translateExpression(
         return;
     }
 
-    if (try stringPredicate(ctx, expression, false)) |pred| {
+    if (try Scalar.predicateFrom(ctx, expression, false)) |pred| {
         try out.append(ctx.arena, pred);
 
         return;
@@ -481,254 +596,14 @@ fn translateExpression(
     return error.UnsupportedPredicate;
 }
 
-fn stringPredicate(ctx: *Compiler, expression: ast.Expression, negated: bool) Error!?rule.Predicate {
-    return switch (expression) {
-        .negate => |negate| stringPredicate(ctx, negate.expression.*, !negated),
-        .call => |call| callPredicate(ctx, call, negated),
-        .compare => |c| comparePredicate(ctx, c, negated),
-        .logical => |logical| if (logical.op == .@"or") anyOfPredicate(ctx, expression, negated) else null,
-        .membership => |m| membershipPredicate(ctx, m, negated),
-        else => null,
-    };
-}
-
-fn membershipPredicate(ctx: *Compiler, m: ast.Membership, negated: bool) Error!?rule.Predicate {
-    const fail_detail = "in expects text(@capture) on the left";
-    const subject = (try textOperand(ctx, m.subject.*)) orelse return failWith(ctx, fail_detail);
-    if (subject != .capture) return failWith(ctx, fail_detail);
-
-    const args = try ctx.arena.alloc(rule.PredicateOperand, m.values.len + 1);
-    args[0] = subject;
-
-    for (m.values, args[1..]) |value, *slot| slot.* = .{ .string = try ctx.arena.dupe(u8, value.value) };
-
-    const effective = m.negated != negated;
-
-    return if (effective) .{ .not_any_of = args } else .{ .any_of = args };
-}
-
-fn anyOfPredicate(ctx: *Compiler, expression: ast.Expression, negated: bool) Error!?rule.Predicate {
-    var capture: ?query.CaptureId = null;
-    var strings: std.ArrayList([]const u8) = .empty;
-
-    if (!try collectDisjunction(ctx, expression, &capture, &strings)) return null;
-
-    const args = try ctx.arena.alloc(rule.PredicateOperand, strings.items.len + 1);
-    args[0] = .{ .capture = capture.? };
-
-    for (strings.items, args[1..]) |s, *slot| slot.* = .{ .string = s };
-
-    return if (negated) .{ .not_any_of = args } else .{ .any_of = args };
-}
-
-fn collectDisjunction(
-    ctx: *Compiler,
-    expression: ast.Expression,
-    capture: *?query.CaptureId,
-    strings: *std.ArrayList([]const u8),
-) Error!bool {
-    switch (expression) {
-        .logical => |logical| {
-            if (logical.op != .@"or") return false;
-            if (!try collectDisjunction(ctx, logical.left.*, capture, strings)) return false;
-
-            return collectDisjunction(ctx, logical.right.*, capture, strings);
-        },
-        .compare => |c| {
-            if (c.op != .eq) return false;
-            const left = (try textOperand(ctx, c.left.*)) orelse return false;
-            const right = (try textOperand(ctx, c.right.*)) orelse return false;
-            const leaf_capture = switch (left) {
-                .capture => |id| id,
-                .string => switch (right) {
-                    .capture => |id| id,
-                    .string => return false,
-                },
-            };
-            const leaf_string = switch (left) {
-                .string => |s| s,
-                .capture => switch (right) {
-                    .string => |s| s,
-                    .capture => return false,
-                },
-            };
-            if (capture.*) |seen| {
-                if (seen != leaf_capture) return false;
-            } else {
-                capture.* = leaf_capture;
-            }
-
-            try strings.append(ctx.arena, leaf_string);
-
-            return true;
-        },
-        else => return false,
-    }
-}
-
-const CallHandler = *const fn (*Compiler, ast.Call, bool) Error!?rule.Predicate;
 const deferred_calls = std.StaticStringMap(void).initComptime(.{
-    .{ call_text, {} },
-    .{ call_capture, {} },
+    .{ bytes.call_text, {} },
+    .{ bytes.call_capture, {} },
     .{ bytes.call_matches, {} },
     .{ bytes.call_starts_with, {} },
     .{ bytes.call_ends_with, {} },
     .{ bytes.call_contains, {} },
 });
-
-const call_dispatch = std.StaticStringMap(CallHandler).initComptime(.{
-    .{ bytes.call_matches, matchesPredicate },
-    .{ call_capture, capturedPredicate },
-    .{ bytes.call_glob, globPredicate },
-    .{ bytes.call_any_of, anyOfHelperPredicate },
-    .{ bytes.call_none_of, noneOfPredicate },
-    .{ bytes.call_starts_with, startsWithPredicate },
-    .{ bytes.call_ends_with, endsWithPredicate },
-    .{ bytes.call_contains, containsPredicate },
-});
-
-fn callPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
-    const handler = call_dispatch.get(call.name) orelse return null;
-    return handler(ctx, call, negated);
-}
-
-fn noneOfPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
-    return anyOfHelperPredicate(ctx, call, !negated);
-}
-
-fn startsWithPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
-    const args = try stringHelperArgs(ctx, call);
-    return if (negated) .{ .not_starts_with = args } else .{ .starts_with = args };
-}
-
-fn endsWithPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
-    const args = try stringHelperArgs(ctx, call);
-    return if (negated) .{ .not_ends_with = args } else .{ .ends_with = args };
-}
-
-fn containsPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
-    const args = try stringHelperArgs(ctx, call);
-    return if (negated) .{ .not_contains = args } else .{ .contains = args };
-}
-
-fn anyOfHelperPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
-    const fail_detail = "anyOf and noneOf expect (text(@capture), \"a\", \"b\", ...)";
-    if (call.args.len < 2) return failWith(ctx, fail_detail);
-
-    const subject = (try textOperand(ctx, call.args[0])) orelse return failWith(ctx, fail_detail);
-    if (subject != .capture) return failWith(ctx, fail_detail);
-
-    const args = try ctx.arena.alloc(rule.PredicateOperand, call.args.len);
-    args[0] = subject;
-
-    for (call.args[1..], args[1..]) |arg, *slot| {
-        if (arg != .string) return failWith(ctx, fail_detail);
-        slot.* = .{ .string = try ctx.arena.dupe(u8, arg.string.value) };
-    }
-
-    return if (negated) .{ .not_any_of = args } else .{ .any_of = args };
-}
-
-fn globPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
-    const fail_detail = "glob expects (value, \"pattern\")";
-    if (call.args.len != 2 or call.args[1] != .string) return failWith(ctx, fail_detail);
-
-    const subject = (try textOperand(ctx, call.args[0])) orelse return failWith(ctx, fail_detail);
-
-    const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
-    args[0] = subject;
-    args[1] = .{ .string = try ctx.arena.dupe(u8, call.args[1].string.value) };
-
-    return if (negated) .{ .not_glob = args } else .{ .glob = args };
-}
-
-fn capturedPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
-    if (call.args.len != 1 or call.args[0] != .capture) return failWith(ctx, "capture expects one capture argument");
-
-    const args = try ctx.arena.alloc(rule.PredicateOperand, 1);
-    args[0] = .{ .capture = try resolveCapture(ctx, call.args[0].capture.name) };
-
-    return if (negated) .{ .not_captured = args } else .{ .captured = args };
-}
-
-fn failWith(ctx: *Compiler, detail: []const u8) Error {
-    ctx.fail(detail);
-    return error.UnsupportedPredicate;
-}
-
-fn stringHelperArgs(ctx: *Compiler, call: ast.Call) Error![]rule.PredicateOperand {
-    const fail_detail = "startsWith, endsWith, and contains expect (value, text)";
-    if (call.args.len != 2) return failWith(ctx, fail_detail);
-    const subject = (try textOperand(ctx, call.args[0])) orelse return failWith(ctx, fail_detail);
-    const candidate = (try textOperand(ctx, call.args[1])) orelse return failWith(ctx, fail_detail);
-    const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
-    args[0] = subject;
-    args[1] = candidate;
-
-    return args;
-}
-
-fn matchesPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?rule.Predicate {
-    if (call.args.len != 2) return failWith(ctx, "matches expects (value, regex)");
-
-    const subject = (try textOperand(ctx, call.args[0])) orelse return failWith(ctx, "matches expects a text value");
-
-    const pattern = switch (call.args[1]) {
-        .string => |s| try ctx.arena.dupe(u8, s.value),
-        else => return failWith(ctx, "matches expects a string regex"),
-    };
-
-    const regex = mvzr.compile(pattern) orelse {
-        ctx.fail("invalid regex");
-        return error.InvalidRegex;
-    };
-
-    const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
-    args[0] = subject;
-    args[1] = .{ .string = pattern };
-
-    const pred: rule.RegexPredicate = .{ .args = args, .regex = regex };
-
-    return if (negated) .{ .not_match = pred } else .{ .match = pred };
-}
-
-fn comparePredicate(ctx: *Compiler, c: ast.Compare, negated: bool) Error!?rule.Predicate {
-    const left = try textOperand(ctx, c.left.*);
-    const right = try textOperand(ctx, c.right.*);
-
-    if (c.op == .eq or c.op == .ne) {
-        const resolved_left = left orelse return null;
-        const resolved_right = right orelse return null;
-        const wants_eq = (c.op == .eq) != negated;
-
-        const args = try ctx.arena.alloc(rule.PredicateOperand, 2);
-        args[0] = resolved_left;
-        args[1] = resolved_right;
-
-        return if (wants_eq) .{ .eq = args } else .{ .not_eq = args };
-    }
-
-    if (left != null and right != null) {
-        ctx.fail("strings compare with == and != only");
-
-        return error.InvalidStringComparison;
-    }
-
-    return null;
-}
-
-fn textOperand(ctx: *Compiler, expression: ast.Expression) Error!?rule.PredicateOperand {
-    switch (expression) {
-        .string => |s| return .{ .string = try ctx.arena.dupe(u8, s.value) },
-        .call => |call| {
-            if (!std.mem.eql(u8, call.name, call_text)) return null;
-            if (call.args.len != 1 or call.args[0] != .capture) return failWith(ctx, "text expects one capture argument");
-
-            return .{ .capture = try resolveCapture(ctx, call.args[0].capture.name) };
-        },
-        else => return null,
-    }
-}
 
 fn numericExpression(ctx: *Compiler, expression: ast.Expression) Error!?expr.Expr {
     switch (expression) {
@@ -773,7 +648,9 @@ fn numericTerm(ctx: *Compiler, expression: ast.Expression) Error!?expr.Term {
 
                 return error.UnknownMeasure;
             };
-            if (call.args.len != 1 or call.args[0] != .capture) return failWith(ctx, "measures expect one capture argument");
+            if (call.args.len != 1 or call.args[0] != .capture) {
+                return ScalarAdapter.failWith(ctx, "measures expect one capture argument", call.range);
+            }
 
             return .{ .measure = .{
                 .measure = measure,

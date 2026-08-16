@@ -103,10 +103,6 @@ pub fn write(io: std.Io, file_path: []const u8, contents: []const u8) !void {
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = file_path, .data = contents });
 }
 
-pub fn readOptional(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8) !?[]u8 {
-    return file.readOptionalAlloc(io, allocator, file_path, max_file_bytes);
-}
-
 pub fn indexPath(gpa: std.mem.Allocator, target: []const u8, sub_path: []const u8) ![]u8 {
     const trimmed = std.mem.trimEnd(u8, target, "/");
     if (trimmed.len == 0 or std.mem.eql(u8, trimmed, ".")) {

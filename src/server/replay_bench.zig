@@ -153,8 +153,10 @@ const OldReplayCache = struct {
         path: []const u8,
         lang: language.Name,
         content_hash: [32]u8,
+        generation: u64,
     ) ?[]const diagnostic.Diagnostic {
         _ = lang;
+        _ = generation;
         const entry = self.entries.getPtr(path) orelse return null;
         if (!std.mem.eql(u8, &entry.content_hash, &content_hash)) return null;
 
@@ -169,9 +171,11 @@ const OldReplayCache = struct {
         path: []const u8,
         lang: language.Name,
         content_hash: [32]u8,
+        generation: u64,
         diagnostics: []const diagnostic.Diagnostic,
     ) !void {
         _ = lang;
+        _ = generation;
         const arena_ptr = try self.gpa.create(std.heap.ArenaAllocator);
         errdefer self.gpa.destroy(arena_ptr);
         arena_ptr.* = std.heap.ArenaAllocator.init(self.gpa);
@@ -311,13 +315,13 @@ fn initCache(comptime Cache: type, gpa: std.mem.Allocator) !Cache {
 
 fn seed(comptime Cache: type, cache: *Cache, data: Data) !void {
     for (0..capacity) |index| {
-        try cache.put(&data.paths[index], .ts, data.hashes[index], &.{});
+        try cache.put(&data.paths[index], .ts, data.hashes[index], 0, &.{});
     }
 }
 
 fn seedNatural(comptime Cache: type, cache: *Cache, data: Data) !void {
     for (0..capacity) |index| {
-        try cache.put(&data.natural_paths[index], .ts, data.natural_hashes[index], &.{});
+        try cache.put(&data.natural_paths[index], .ts, data.natural_hashes[index], 0, &.{});
     }
 }
 
@@ -328,7 +332,7 @@ fn runGets(comptime Cache: type, cache: *Cache, data: Data, operations: usize, s
     for (0..operations) |operation| {
         const index = operation % capacity;
         const hash = if (stale) data.stale_hashes[index] else data.hashes[index];
-        if (cache.get(&data.paths[index], .ts, hash)) |diagnostics| {
+        if (cache.get(&data.paths[index], .ts, hash, 0)) |diagnostics| {
             hits += 1;
             checksum +%= index + diagnostics.len + 1;
         } else {
@@ -350,7 +354,7 @@ fn runInsertions(comptime Cache: type, cache: *Cache, data: Data, operations: us
     var checksum: u64 = 0;
     for (0..operations) |operation| {
         const index = capacity + operation;
-        try cache.put(&data.paths[index], .ts, data.hashes[index], &.{});
+        try cache.put(&data.paths[index], .ts, data.hashes[index], 0, &.{});
         checksum +%= index;
     }
     std.mem.doNotOptimizeAway(checksum);
@@ -374,7 +378,7 @@ fn runMixed(comptime Cache: type, cache: *Cache, data: Data, operations: usize) 
                     data.natural_stale_hashes[operation.path_index]
                 else
                     data.natural_hashes[operation.path_index];
-                if (cache.get(&data.natural_paths[operation.path_index], .ts, hash)) |diagnostics| {
+                if (cache.get(&data.natural_paths[operation.path_index], .ts, hash, 0)) |diagnostics| {
                     hits += 1;
                     checksum +%= operation.path_index + diagnostics.len + 1;
                 } else {
@@ -387,6 +391,7 @@ fn runMixed(comptime Cache: type, cache: *Cache, data: Data, operations: usize) 
                     &data.natural_paths[operation.path_index],
                     .ts,
                     data.natural_hashes[operation.path_index],
+                    0,
                     &.{},
                 );
                 checksum +%= operation.path_index *% 5 +% 11;
@@ -482,7 +487,7 @@ fn runRetention(comptime Cache: type, cache: *Cache, data: Data) Measurement {
     var misses: u64 = 0;
     var checksum: u64 = 0;
     for (0..capacity) |index| {
-        if (cache.get(&data.natural_paths[index], .ts, data.natural_hashes[index])) |_| {
+        if (cache.get(&data.natural_paths[index], .ts, data.natural_hashes[index], 0)) |_| {
             hits += 1;
             checksum +%= index + 1;
         } else {

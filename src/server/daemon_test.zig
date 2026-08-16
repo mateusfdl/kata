@@ -831,8 +831,8 @@ const fact_repository_isolation = [_]@import("engine").fact_rule.CompiledFactRul
     .id = "repository-isolation",
     .fact = .call,
     .predicates = &.{
-        .{ .op = .ends_with, .args = &.{ .receiver_type, .{ .literal = "Repository" } } },
-        .{ .op = .not_ends_with, .args = &.{ .{ .field = .container }, .{ .literal = "Repository" } } },
+        .{ .scalar = .{ .op = .ends_with, .args = &.{ .{ .helper = .{ .id = .receiver_type, .capture = 0 } }, .{ .literal = "Repository" } } } },
+        .{ .scalar = .{ .op = .not_ends_with, .args = &.{ .{ .field = .{ .capture = 0, .field = .container } }, .{ .literal = "Repository" } } } },
     },
     .message = &.{.{ .literal = "repositories can only be called by repositories" }},
 }};
@@ -867,6 +867,163 @@ test "daemon: project kata rules flag a write" {
         report.diagnostics[0].message,
     );
     try std.testing.expectEqual(@as(u32, 4), report.diagnostics[0].range.start.line);
+}
+
+const resolved_call_rule =
+    \\rule resolved-call {
+    \\  kind project
+    \\  match call @call
+    \\  where {
+    \\    exists typedDecl @decl {
+    \\      where {
+    \\        field(@decl, path) == field(@call, path)
+    \\        field(@decl, name) == field(@call, receiver)
+    \\        exists class @class {
+    \\          where {
+    \\            field(@class, name) == field(@decl, type)
+    \\          }
+    \\        }
+    \\      }
+    \\    }
+    \\  }
+    \\  emit @call { message "resolved call" }
+    \\}
+;
+
+fn addResolvedCallRule(f: *test_fixture.Fixture) !void {
+    try f.rule_set.upsertProject(.{ .id = "resolved-call", .source = resolved_call_rule }, .project);
+}
+
+test "daemon: fact queries keep cross-file candidates on replay" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    try addResolvedCallRule(f);
+
+    var state = try lint.Project.init(gpa, &f.engine, &.{});
+    defer state.deinit();
+    try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
+
+    var cache = try replay.ReplayCache.init(gpa, 16);
+    defer cache.deinit();
+    var ctx = context(f);
+    ctx.project = &state;
+    ctx.replay = &cache;
+
+    const request: protocol.Request = .{
+        .filename = "/proj/run.ts",
+        .source = "function run(repo: UserRepository) { repo.find(1); }\n",
+    };
+    const first = daemon.handle(ctx, arena.allocator(), request);
+    const replayed = daemon.handle(ctx, arena.allocator(), request);
+
+    try std.testing.expectEqual(@as(usize, 1), first.report.?.diagnostics.len);
+    try std.testing.expectEqualStrings("resolved-call", first.report.?.diagnostics[0].rule_id);
+    try std.testing.expectEqualStrings(
+        try encodeResponse(arena.allocator(), first),
+        try encodeResponse(arena.allocator(), replayed),
+    );
+}
+
+test "daemon: replay invalidates cross-file diagnostics after another file changes" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    try addResolvedCallRule(f);
+
+    var state = try lint.Project.init(gpa, &f.engine, &.{});
+    defer state.deinit();
+    try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
+
+    var cache = try replay.ReplayCache.init(gpa, 16);
+    defer cache.deinit();
+    var ctx = context(f);
+    ctx.project = &state;
+    ctx.replay = &cache;
+
+    const request: protocol.Request = .{
+        .filename = "/proj/run.ts",
+        .source = "function run(repo: UserRepository) { repo.find(1); }\n",
+    };
+    const first = daemon.handle(ctx, arena.allocator(), request);
+    try state.replace("export const missing = 1;\n", .ts, "/proj/user-repository.ts");
+    const second = daemon.handle(ctx, arena.allocator(), request);
+
+    try std.testing.expectEqual(@as(usize, 1), first.report.?.diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 0), second.report.?.diagnostics.len);
+}
+
+test "daemon: repeated cross-file replay hits stay byte-identical" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    try addResolvedCallRule(f);
+
+    var state = try lint.Project.init(gpa, &f.engine, &.{});
+    defer state.deinit();
+    try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
+
+    var cache = try replay.ReplayCache.init(gpa, 16);
+    defer cache.deinit();
+    var ctx = context(f);
+    ctx.project = &state;
+    ctx.replay = &cache;
+
+    const request: protocol.Request = .{
+        .filename = "/proj/run.ts",
+        .source = "function run(repo: UserRepository) { repo.find(1); }\n",
+    };
+    const first = daemon.handle(ctx, arena.allocator(), request);
+    const second = daemon.handle(ctx, arena.allocator(), request);
+    const third = daemon.handle(ctx, arena.allocator(), request);
+
+    try std.testing.expectEqual(@as(usize, 1), first.report.?.diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 1), second.report.?.diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 1), third.report.?.diagnostics.len);
+    const encoded = try encodeResponse(arena.allocator(), first);
+    try std.testing.expectEqualStrings(encoded, try encodeResponse(arena.allocator(), second));
+    try std.testing.expectEqualStrings(encoded, try encodeResponse(arena.allocator(), third));
+}
+
+test "daemon: replay ignores unrelated index changes without cross-file rules" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var state = try lint.Project.init(gpa, &f.engine, &.{});
+    defer state.deinit();
+
+    var cache = try replay.ReplayCache.init(gpa, 16);
+    defer cache.deinit();
+    var ctx = context(f);
+    ctx.project = &state;
+    ctx.replay = &cache;
+
+    const request: protocol.Request = .{
+        .filename = "/proj/a.ts",
+        .source = "const x = (foo[0] as any).bar;",
+    };
+    const first = daemon.handle(ctx, arena.allocator(), request);
+    try state.replace("const unrelated = 1;\n", .ts, "/proj/b.ts");
+    const second = daemon.handle(ctx, arena.allocator(), request);
+
+    try std.testing.expectEqual(@as(usize, 1), first.report.?.diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 1), second.report.?.diagnostics.len);
+    try std.testing.expectEqualStrings(
+        try encodeResponse(arena.allocator(), first),
+        try encodeResponse(arena.allocator(), second),
+    );
 }
 
 test "daemon: sweep unlinks dead kata sockets and spares everything else" {
@@ -1055,6 +1212,36 @@ test "daemon: project violations appear on a replay hit" {
         try encodeResponse(arena.allocator(), first),
         try encodeResponse(arena.allocator(), second),
     );
+}
+
+test "daemon: replay restores the facts for the replayed source" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var f = try newFixture(gpa);
+    defer f.deinit();
+
+    var state = try lint.Project.init(gpa, &f.engine, &repository_isolation);
+    defer state.deinit();
+    try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
+
+    var cache = try replay.ReplayCache.init(gpa, 16);
+    defer cache.deinit();
+    var ctx = context(f);
+    ctx.project = &state;
+    ctx.replay = &cache;
+
+    const violating: protocol.Request = .{
+        .filename = "/proj/order-service.ts",
+        .source = order_service_src,
+    };
+    const first = daemon.handle(ctx, arena.allocator(), violating);
+    try state.replace(fixed_order_service_src, .ts, "/proj/order-service.ts");
+    const replayed = daemon.handle(ctx, arena.allocator(), violating);
+
+    try std.testing.expectEqual(@as(usize, 1), first.report.?.diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 1), replayed.report.?.diagnostics.len);
+    try std.testing.expectEqualStrings("repository-isolation", replayed.report.?.diagnostics[0].rule_id);
 }
 
 fn diskCacheDir(arena: std.mem.Allocator, tmp: *std.testing.TmpDir, buf: []u8) ![]const u8 {

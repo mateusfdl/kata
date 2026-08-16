@@ -24,6 +24,7 @@ pub const Context = struct {
 };
 
 const IndexVisit = struct {
+    io: std.Io,
     project: *lint.Project,
 };
 
@@ -33,12 +34,14 @@ pub fn buildIndex(
     root: []const u8,
     state: *lint.Project,
 ) !usize {
-    const visit: IndexVisit = .{ .project = state };
+    const visit: IndexVisit = .{ .io = io, .project = state };
 
     return fs.source.walkFiles(io, gpa, root, visit, visitForIndex);
 }
 
 fn visitForIndex(visit: IndexVisit, lang: language.Name, source: []const u8, path: []const u8) anyerror!void {
+    if (try fs.rules.isFixturePath(visit.io, path)) return;
+
     try visit.project.replace(source, lang, path);
 }
 
@@ -259,13 +262,21 @@ pub fn handle(
         project.configure(engine) catch return reply(.fail, null, "project configuration failed");
     }
 
+    const replay_generation: u64 = if (ctx.project) |p|
+        (if (p.hasCrossFileRules()) p.indexGeneration() else 0)
+    else
+        0;
+
     var content_hash: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(source, &content_hash, .{});
 
     const diagnostics = replayed: {
         if (replay_cache) |rc| {
             if (req.filename) |path| {
-                if (rc.get(path, lang, content_hash)) |cached| {
+                // A generation-matched hit proves the index has not changed
+                // since the entry was stored, so the file's facts are already
+                // indexed for this exact content and re-indexing is redundant.
+                if (rc.get(path, lang, content_hash, replay_generation)) |cached| {
                     break :replayed arena.dupe(diagnostic.Diagnostic, cached) catch
                         return reply(.fail, null, "lint failed");
                 }
@@ -294,7 +305,11 @@ pub fn handle(
         if (replay_cache) |rc| {
             // Replay is an optimization. Allocation failure must not turn a
             // successful lint into a failed request.
-            if (req.filename) |path| rc.put(path, lang, content_hash, fresh) catch {};
+            const post_lint_generation: u64 = if (ctx.project) |p|
+                (if (p.hasCrossFileRules()) p.indexGeneration() else 0)
+            else
+                0;
+            if (req.filename) |path| rc.put(path, lang, content_hash, post_lint_generation, fresh) catch {};
         }
 
         if (disk_cache) |cache| {

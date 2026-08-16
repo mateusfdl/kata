@@ -246,6 +246,27 @@ test "compile: text compared with a number is a numeric measure" {
     try std.testing.expect(compiled.needs_measures);
 }
 
+test "compile: rejects a half-string comparison without numeric interpretation" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    const file = try parseDsl(arena.allocator(),
+        \\rule bad {
+        \\  lang ts
+        \\  match call_expression @match
+        \\  where { complexity(@match) > "high" }
+        \\  emit @match { message "bad" }
+        \\}
+    );
+    var diag: rule.Diagnostic = .{};
+
+    try std.testing.expectError(error.UnsupportedPredicate, compile.compile(gpa, .ts, file, &diag));
+    try std.testing.expectEqual(language.Name.ts, diag.lang.?);
+    try std.testing.expectEqualStrings("bad", diag.rule_id);
+    try std.testing.expectEqualStrings("unsupported where expression", diag.detail);
+}
+
 test "compile: builds message segments from call placeholders" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);

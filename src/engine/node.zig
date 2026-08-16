@@ -111,10 +111,6 @@ pub const Node = struct {
         return self.childAt(index, false);
     }
 
-    pub fn childCount(self: Node) u32 {
-        return self.countChildren(false);
-    }
-
     pub fn namedChild(self: Node, index: u32) ?Node {
         return self.childAt(index, true);
     }
@@ -139,12 +135,6 @@ pub const Node = struct {
         }
 
         return null;
-    }
-
-    pub fn fieldNameForChild(self: Node, index: u32) ?[]const u8 {
-        const c = self.childAt(index, false) orelse return null;
-
-        return family.of(self.tree.family).fieldName(c.stored().field_id);
     }
 
     pub fn prevNamedSibling(self: Node) ?Node {

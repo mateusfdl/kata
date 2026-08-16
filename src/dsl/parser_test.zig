@@ -1779,6 +1779,79 @@ test "parser: parses count with a comparison" {
     try std.testing.expectEqual(@as(u32, 3), count.value);
 }
 
+test "parser: parses fact exists queries before the project kind clause" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule method-owner {
+        \\  match method @method
+        \\  where {
+        \\    exists class @owner {
+        \\      where {
+        \\        all {
+        \\          field(@owner, name) == field(@method, container)
+        \\          not exists import @generated
+        \\        }
+        \\      }
+        \\    }
+        \\  }
+        \\  kind project
+        \\  emit @method { message "method has an owner" }
+        \\}
+    , &diag);
+
+    const exists = file.rules[0].where[0].fact_exists;
+    try std.testing.expectEqual(false, exists.negated);
+    try std.testing.expectEqualStrings("class", exists.query.fact);
+    try std.testing.expectEqualStrings("owner", exists.query.capture.name);
+    try std.testing.expectEqual(@as(usize, 1), exists.query.where.len);
+
+    const group = exists.query.where[0].group;
+    try std.testing.expectEqual(ast.GroupOp.all, group.op);
+    try std.testing.expectEqual(@as(usize, 2), group.predicates.len);
+    try std.testing.expectEqualStrings("field", group.predicates[0].expression.compare.left.*.call.name);
+    try std.testing.expectEqual(true, group.predicates[1].fact_exists.negated);
+    try std.testing.expectEqualStrings("import", group.predicates[1].fact_exists.query.fact);
+    try std.testing.expectEqual(@as(usize, 0), group.predicates[1].fact_exists.query.where.len);
+}
+
+test "parser: parses fact count queries with recursive predicates" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var diag: parser.Diagnostic = .{};
+    const file = try parse(arena.allocator(),
+        \\rule classes-per-file {
+        \\  kind project
+        \\  match class @class
+        \\  where {
+        \\    count class @peer {
+        \\      where {
+        \\        field(@peer, path) == field(@class, path)
+        \\        exists method @method {
+        \\          where {
+        \\            field(@method, container) == field(@peer, name)
+        \\          }
+        \\        }
+        \\      }
+        \\    } > 1
+        \\  }
+        \\  emit @class { message "more than one class" }
+        \\}
+    , &diag);
+
+    const count = file.rules[0].where[0].fact_count;
+    try std.testing.expectEqualStrings("class", count.query.fact);
+    try std.testing.expectEqualStrings("peer", count.query.capture.name);
+    try std.testing.expectEqual(@as(usize, 2), count.query.where.len);
+    try std.testing.expectEqualStrings("method", count.query.where[1].fact_exists.query.fact);
+    try std.testing.expectEqual(@as(usize, 1), count.query.where[1].fact_exists.query.where.len);
+    try std.testing.expectEqual(ast.CompareOp.gt, count.op);
+    try std.testing.expectEqual(@as(u32, 1), count.value);
+}
+
 test "parser: rejects not without inside or has" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

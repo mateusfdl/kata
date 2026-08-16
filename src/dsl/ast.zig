@@ -76,6 +76,26 @@ pub const Predicate = union(enum) {
     composition: Composition,
     count: CountPredicate,
     group: Group,
+    fact_exists: FactExistsPredicate,
+    fact_count: FactCountPredicate,
+};
+
+pub const FactQuery = struct {
+    fact: []const u8,
+    capture: Capture,
+    where: []const Predicate = &.{},
+    range: tokenizer.Range,
+};
+
+pub const FactExistsPredicate = struct {
+    query: FactQuery,
+    negated: bool,
+};
+
+pub const FactCountPredicate = struct {
+    query: FactQuery,
+    op: CompareOp,
+    value: u32,
 };
 
 pub const Group = struct {

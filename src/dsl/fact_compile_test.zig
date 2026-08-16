@@ -65,16 +65,16 @@ test "fact compile: compiles the repository isolation rule" {
     try std.testing.expectEqualStrings("repository-isolation", compiled.id);
     try std.testing.expectEqual(fact_rule.FactKind.call, compiled.fact);
     try std.testing.expectEqual(@as(usize, 2), compiled.predicates.len);
-    try std.testing.expectEqual(fact_rule.Op.ends_with, compiled.predicates[0].op);
-    try std.testing.expectEqual(fact_rule.Operand.receiver_type, compiled.predicates[0].args[0]);
-    try std.testing.expectEqualStrings("Repository", compiled.predicates[0].args[1].literal);
-    try std.testing.expectEqual(fact_rule.Op.not_ends_with, compiled.predicates[1].op);
-    try std.testing.expectEqual(fact_rule.Field.container, compiled.predicates[1].args[0].field);
+    try std.testing.expectEqual(fact_rule.Op.ends_with, compiled.predicates[0].scalar.op);
+    try std.testing.expectEqual(fact_rule.HelperOperand{ .id = .receiver_type, .capture = 0 }, compiled.predicates[0].scalar.args[0].helper);
+    try std.testing.expectEqualStrings("Repository", compiled.predicates[0].scalar.args[1].literal);
+    try std.testing.expectEqual(fact_rule.Op.not_ends_with, compiled.predicates[1].scalar.op);
+    try std.testing.expectEqual(fact_rule.Field.container, compiled.predicates[1].scalar.args[0].field.field);
     try std.testing.expectEqual(@as(usize, 5), compiled.message.len);
     try std.testing.expectEqualStrings("call to ", compiled.message[0].literal);
-    try std.testing.expectEqual(fact_rule.Operand.receiver_type, compiled.message[1].operand);
+    try std.testing.expectEqual(fact_rule.HelperOperand{ .id = .receiver_type, .capture = 0 }, compiled.message[1].operand.helper);
     try std.testing.expectEqualStrings(".", compiled.message[2].literal);
-    try std.testing.expectEqual(fact_rule.Field.method, compiled.message[3].operand.field);
+    try std.testing.expectEqual(fact_rule.Field.method, compiled.message[3].operand.field.field);
     try std.testing.expectEqualStrings(" is restricted to repository callers", compiled.message[4].literal);
 }
 
@@ -100,7 +100,7 @@ test "fact compile: compiled output survives parse scratch reset" {
 
     try std.testing.expectEqual(@as(usize, 1), compiled.len);
     try std.testing.expectEqualStrings("repository-isolation", compiled[0].id);
-    try std.testing.expectEqualStrings("Repository", compiled[0].predicates[0].args[1].literal);
+    try std.testing.expectEqualStrings("Repository", compiled[0].predicates[0].scalar.args[1].literal);
     try std.testing.expectEqualStrings("call to ", compiled[0].message[0].literal);
 }
 
@@ -131,12 +131,12 @@ test "fact compile: compiles the import boundary rule" {
     try std.testing.expectEqual(@as(usize, 1), rules.len);
     const compiled = rules[0];
     try std.testing.expectEqual(fact_rule.FactKind.import, compiled.fact);
-    try std.testing.expectEqual(fact_rule.Op.glob, compiled.predicates[0].op);
-    try std.testing.expectEqual(fact_rule.Field.path, compiled.predicates[0].args[0].field);
-    try std.testing.expectEqualStrings("src/domain/**", compiled.predicates[0].args[1].literal);
-    try std.testing.expectEqual(fact_rule.Op.glob, compiled.predicates[1].op);
-    try std.testing.expectEqual(fact_rule.Operand.resolved_import_source, compiled.predicates[1].args[0]);
-    try std.testing.expectEqual(fact_rule.Field.source, compiled.message[1].operand.field);
+    try std.testing.expectEqual(fact_rule.Op.glob, compiled.predicates[0].scalar.op);
+    try std.testing.expectEqual(fact_rule.Field.path, compiled.predicates[0].scalar.args[0].field.field);
+    try std.testing.expectEqualStrings("src/domain/**", compiled.predicates[0].scalar.args[1].literal);
+    try std.testing.expectEqual(fact_rule.Op.glob, compiled.predicates[1].scalar.op);
+    try std.testing.expectEqual(fact_rule.HelperOperand{ .id = .resolved_import_source, .capture = 0 }, compiled.predicates[1].scalar.args[0].helper);
+    try std.testing.expectEqual(fact_rule.Field.source, compiled.message[1].operand.field.field);
 }
 
 test "fact compile: or chains fold to any-of" {
@@ -158,13 +158,13 @@ test "fact compile: or chains fold to any-of" {
 
     try std.testing.expectEqual(@as(usize, 1), rules.len);
     const compiled = rules[0];
-    try std.testing.expectEqual(fact_rule.Op.any_of, compiled.predicates[0].op);
-    try std.testing.expectEqual(@as(usize, 3), compiled.predicates[0].args.len);
-    try std.testing.expectEqual(fact_rule.Field.method, compiled.predicates[0].args[0].field);
-    try std.testing.expectEqualStrings("find", compiled.predicates[0].args[1].literal);
-    try std.testing.expectEqualStrings("get", compiled.predicates[0].args[2].literal);
-    try std.testing.expectEqual(fact_rule.Op.match, compiled.predicates[1].op);
-    try std.testing.expect(compiled.predicates[1].regex != null);
+    try std.testing.expectEqual(fact_rule.Op.any_of, compiled.predicates[0].scalar.op);
+    try std.testing.expectEqual(@as(usize, 3), compiled.predicates[0].scalar.args.len);
+    try std.testing.expectEqual(fact_rule.Field.method, compiled.predicates[0].scalar.args[0].field.field);
+    try std.testing.expectEqualStrings("find", compiled.predicates[0].scalar.args[1].literal);
+    try std.testing.expectEqualStrings("get", compiled.predicates[0].scalar.args[2].literal);
+    try std.testing.expectEqual(fact_rule.Op.match, compiled.predicates[1].scalar.op);
+    try std.testing.expect(compiled.predicates[1].scalar.regex != null);
 }
 
 test "fact compile: severity maturity and exclude carry over" {
@@ -327,7 +327,7 @@ test "fact compile: composition predicates fail" {
         \\  }
         \\  emit @call { message "bad" }
         \\}
-    , error.UnsupportedPredicate, "composition predicates are not supported in project rules");
+    , error.UnsupportedPredicate, "tree composition predicates are not supported in project rules");
 }
 
 test "fact compile: numeric comparisons fail" {
@@ -411,4 +411,220 @@ test "fact compile: suggest clause fails" {
         \\  }
         \\}
     , error.UnsupportedClause, "fix and suggest are not supported in project rules");
+}
+
+test "fact compile: compiles recursive predicate groups" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const rules = try compileProject(arena_state.allocator(),
+        \\rule grouped-calls {
+        \\  kind project
+        \\  match call @call
+        \\  where {
+        \\    any {
+        \\      field(@call, method) == "find"
+        \\      all {
+        \\        field(@call, method) == "get"
+        \\        field(@call, container) == "Repository"
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @call { message "grouped call" }
+        \\}
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), rules.len);
+    try std.testing.expectEqual(@as(usize, 1), rules[0].predicates.len);
+}
+
+test "fact compile: compiles correlated exists and not exists queries" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const rules = try compileProject(arena_state.allocator(),
+        \\rule method-owner {
+        \\  kind project
+        \\  match method @method
+        \\  where {
+        \\    exists class @owner {
+        \\      where {
+        \\        field(@owner, name) == field(@method, container)
+        \\      }
+        \\    }
+        \\    not exists import @ignored {
+        \\      where {
+        \\        field(@ignored, path) == field(@method, path)
+        \\        field(@ignored, source) == "generated"
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @method { message "method has an owner" }
+        \\}
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), rules.len);
+    try std.testing.expectEqual(@as(usize, 2), rules[0].predicates.len);
+}
+
+test "fact compile: compiles correlated fact counts" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const rules = try compileProject(arena_state.allocator(),
+        \\rule classes-per-file {
+        \\  kind project
+        \\  match class @class
+        \\  where {
+        \\    count class @peer {
+        \\      where {
+        \\        field(@peer, path) == field(@class, path)
+        \\      }
+        \\    } > 1
+        \\  }
+        \\  emit @class { message "more than one class" }
+        \\}
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), rules.len);
+    try std.testing.expectEqual(@as(usize, 1), rules[0].predicates.len);
+}
+
+test "fact compile: nested queries can reference enclosing captures" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const rules = try compileProject(arena_state.allocator(),
+        \\rule resolved-call {
+        \\  kind project
+        \\  match call @call
+        \\  where {
+        \\    exists typedDecl @decl {
+        \\      where {
+        \\        field(@decl, name) == field(@call, receiver)
+        \\        exists class @class {
+        \\          where {
+        \\            field(@class, name) == field(@decl, type)
+        \\          }
+        \\        }
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @call { message "resolved call" }
+        \\}
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), rules.len);
+}
+
+test "fact compile: query captures do not escape their scope" {
+    try expectFactFail(
+        \\rule escaped-capture {
+        \\  kind project
+        \\  match method @method
+        \\  where {
+        \\    exists class @owner
+        \\    field(@owner, name) == field(@method, container)
+        \\  }
+        \\  emit @method { message "bad" }
+        \\}
+    , error.UnknownCapture, "unknown capture");
+}
+
+test "fact compile: fact matchers reject absent fields" {
+    try expectFactFail(
+        \\rule bad {
+        \\  kind project
+        \\  match call @call {
+        \\    !receiver
+        \\  }
+        \\  emit @call { message "bad" }
+        \\}
+    , error.UnsupportedMatch, "fact matchers take no fields");
+}
+
+test "fact compile: tree compositions fail inside project groups and queries" {
+    try expectFactFail(
+        \\rule grouped-tree-query {
+        \\  kind project
+        \\  match call @call
+        \\  where {
+        \\    any {
+        \\      inside @call function_declaration
+        \\      field(@call, method) == "find"
+        \\    }
+        \\  }
+        \\  emit @call { message "bad" }
+        \\}
+    , error.UnsupportedPredicate, "tree composition predicates are not supported in project rules");
+
+    try expectFactFail(
+        \\rule nested-tree-query {
+        \\  kind project
+        \\  match call @call
+        \\  where {
+        \\    exists class @class {
+        \\      where {
+        \\        inside @class source_file
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @call { message "bad" }
+        \\}
+    , error.UnsupportedPredicate, "tree composition predicates are not supported in project rules");
+}
+
+test "fact compile: compiled predicates track the captures they require" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const rules = try compileProject(arena_state.allocator(),
+        \\rule resolved-call {
+        \\  kind project
+        \\  match call @call
+        \\  where {
+        \\    exists typedDecl @decl {
+        \\      where {
+        \\        field(@decl, name) == field(@call, receiver)
+        \\        exists class @class {
+        \\          where {
+        \\            field(@class, name) == field(@decl, type)
+        \\          }
+        \\        }
+        \\      }
+        \\    }
+        \\  }
+        \\  emit @call { message "resolved call" }
+        \\}
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), rules.len);
+    try std.testing.expectEqual(@as(usize, 1), rules[0].predicates.len);
+    const outer = rules[0].predicates[0].exists;
+    try std.testing.expectEqual(@as(usize, 1), outer.capture);
+    try std.testing.expectEqual(@as(usize, 2), outer.predicates.len);
+    try std.testing.expectEqual(@as(fact_rule.CaptureSet, 0b011), outer.predicates[0].scalar.requires);
+    const inner = outer.predicates[1].exists;
+    try std.testing.expectEqual(@as(usize, 2), inner.capture);
+    try std.testing.expectEqual(@as(fact_rule.CaptureSet, 0b110), inner.predicates[0].scalar.requires);
+    try std.testing.expectEqual(@as(fact_rule.CaptureSet, 0b010), inner.requires);
+    try std.testing.expectEqual(@as(fact_rule.CaptureSet, 0b001), outer.requires);
+}
+
+test "fact compile: the sixty fifth capture fails" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    var source: std.Io.Writer.Allocating = .init(arena_state.allocator());
+    try source.writer.writeAll("rule too-many-captures {\n  kind project\n  match call @root\n  where {\n");
+    for (1..65) |i| try source.writer.print("    exists class @c{d}\n", .{i});
+    try source.writer.writeAll("  }\n  emit @root { message \"too many\" }\n}\n");
+
+    try expectFactFail(source.written(), error.TooManyCaptures, "too many captures");
 }

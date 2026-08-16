@@ -68,20 +68,6 @@ pub const Options = struct {
         return if (rendered.clean) exit.clean else exit.violations;
     }
 
-    pub fn run(
-        allocator: std.mem.Allocator,
-        ctx: daemon.Context,
-        opts: Options,
-    ) !u8 {
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        defer arena.deinit();
-
-        return switch (try Options.prepare(arena.allocator(), opts)) {
-            .ready => |req| try Options.serve(ctx, arena.allocator(), req, opts),
-            .failed => |code| code,
-        };
-    }
-
     fn writeReport(opts: Options, rendered: diagnostic.Report) !void {
         try std.json.Stringify.value(rendered, .{ .whitespace = .indent_2 }, opts.stdout);
         try opts.stdout.writeAll("\n");
@@ -92,7 +78,6 @@ pub const Options = struct {
 pub const prepare = Options.prepare;
 pub const serve = Options.serve;
 pub const report = Options.report;
-pub const run = Options.run;
 
 const usage_line = "usage: kata --lang=<ts|tsx|go> [--filename=<path>] < source\n";
 

@@ -101,7 +101,7 @@ fn evaluateRestrictedCallers(
     var callee_types: std.StringHashMapUnmanaged(void) = .empty;
     defer callee_types.deinit(allocator);
 
-    var defs = index.files.valueIterator();
+    var defs = index.fileIterator();
     while (defs.next()) |file| {
         for (file.classes) |class_def| {
             if (!std.mem.endsWith(u8, class_def.name, restricted.callee_suffix)) continue;
@@ -117,7 +117,7 @@ fn evaluateRestrictedCallers(
         return;
     }
 
-    var callers = index.files.valueIterator();
+    var callers = index.fileIterator();
     while (callers.next()) |file| {
         try restrictedCallsInFile(allocator, rule_id, restricted, file, &callee_types, out);
     }
@@ -170,7 +170,7 @@ fn evaluateImportBoundary(
         return;
     }
 
-    var files = index.files.valueIterator();
+    var files = index.fileIterator();
     while (files.next()) |file| {
         try importBoundaryInFile(allocator, rule_id, boundary, file, out);
     }

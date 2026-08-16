@@ -1,10 +1,35 @@
 const std = @import("std");
 
 const query = @import("query.zig");
+const match_workspace = @import("match_workspace.zig");
 const test_tree = @import("test_tree.zig");
 
 const Node = @import("node.zig").Node;
 const Pattern = query.Pattern;
+
+const Collector = struct {
+    arena: std.mem.Allocator,
+    matches: std.ArrayList(query.Match) = .empty,
+
+    pub fn emit(self: *Collector, bindings: []const ?Node) std.mem.Allocator.Error!query.ScanControl {
+        const owned = try self.arena.dupe(?Node, bindings);
+        try self.matches.append(self.arena, .{ .nodes = owned });
+        return .continue_scan;
+    }
+};
+
+fn runMatches(
+    arena: std.mem.Allocator,
+    pattern: *const Pattern,
+    capture_count: usize,
+    root: Node,
+) std.mem.Allocator.Error![]query.Match {
+    var workspace = match_workspace.MatchWorkspace.init(arena);
+    defer workspace.deinit();
+    var collector: Collector = .{ .arena = arena };
+    try query.streamWithWorkspace(&workspace, pattern, capture_count, root, &collector);
+    return collector.matches.toOwnedSlice(arena);
+}
 
 test "query: symbol capture matches every occurrence" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -15,7 +40,7 @@ test "query: symbol capture matches every occurrence" {
     defer t.deinit(std.testing.allocator);
 
     const pattern: Pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 };
-    const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
 
     try std.testing.expectEqual(@as(usize, 2), matches.len);
     try std.testing.expectEqualStrings("a", matches[0].get(0).?.text(src).?);
@@ -37,7 +62,7 @@ test "query: field relation binds the field child" {
             .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 },
         }},
     };
-    const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("a", matches[0].get(0).?.text(src).?);
@@ -58,7 +83,7 @@ test "query: unanchored child yields one match per satisfying child" {
             .pattern = .{ .kind = .{ .symbol = t.sym("method_definition") }, .capture = 0 },
         }},
     };
-    const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
 
     try std.testing.expectEqual(@as(usize, 2), matches.len);
     try std.testing.expect(std.mem.startsWith(u8, matches[0].get(0).?.text(src).?, "foo"));
@@ -80,7 +105,7 @@ test "query: alternation matches any branch kind" {
         } },
         .capture = 0,
     };
-    const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
 
     try std.testing.expectEqual(@as(usize, 2), matches.len);
 }
@@ -101,7 +126,7 @@ test "query: anonymous token under a field" {
             .pattern = .{ .kind = .{ .anonymous = t.tok("&&") } },
         }},
     };
-    const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("a && b", matches[0].get(0).?.text(src).?);
@@ -126,7 +151,7 @@ test "query: symbols set matches any member kind with fields applied once" {
             .pattern = .{ .kind = .{ .symbol = t.sym("type_identifier") }, .capture = 1 },
         }},
     };
-    const matches = try query.run(arena.allocator(), &pattern, 2, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 2, t.root());
 
     try std.testing.expectEqual(@as(usize, 2), matches.len);
     try std.testing.expect(std.mem.startsWith(u8, matches[0].get(0).?.text(src).?, "class C"));
@@ -148,7 +173,7 @@ test "query: absent field excludes nodes that have it" {
         .capture = 0,
         .absent_fields = &.{t.field("value")},
     };
-    const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("x", matches[0].get(0).?.text(src).?);
@@ -176,7 +201,7 @@ test "query: children relation rejects a child failing its nested constraint" {
             },
         }},
     };
-    const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expect(matches[0].get(0) == null);
@@ -204,7 +229,7 @@ test "query: children relation binds a later child when an earlier one fails" {
             },
         }},
     };
-    const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("return g();", matches[0].get(0).?.text(src).?);
@@ -231,7 +256,7 @@ test "query: a repeated capture keeps its first binding" {
             },
         },
     };
-    const matches = try query.run(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("a", matches[0].get(0).?.text(src).?);
@@ -253,8 +278,10 @@ test "query: stream stops enumeration when the sink requests it" {
             return .stop;
         }
     };
+    var workspace = match_workspace.MatchWorkspace.init(std.testing.allocator);
+    defer workspace.deinit();
     var sink: FirstOnly = .{};
-    try query.stream(std.testing.allocator, &pattern, 1, t.root(), &sink);
+    try query.streamWithWorkspace(&workspace, &pattern, 1, t.root(), &sink);
 
     try std.testing.expectEqual(@as(usize, 1), sink.emits);
 }
@@ -280,8 +307,10 @@ test "query: stop exits alternation before the next branch" {
             return .stop;
         }
     };
+    var workspace = match_workspace.MatchWorkspace.init(std.testing.allocator);
+    defer workspace.deinit();
     var sink: FirstOnly = .{};
-    try query.stream(std.testing.allocator, &pattern, 1, t.root(), &sink);
+    try query.streamWithWorkspace(&workspace, &pattern, 1, t.root(), &sink);
 
     try std.testing.expectEqual(@as(usize, 1), sink.emits);
 }
@@ -307,8 +336,10 @@ test "query: stop exits child enumeration before the next child" {
             return .stop;
         }
     };
+    var workspace = match_workspace.MatchWorkspace.init(std.testing.allocator);
+    defer workspace.deinit();
     var sink: FirstOnly = .{};
-    try query.stream(std.testing.allocator, &pattern, 1, t.root(), &sink);
+    try query.streamWithWorkspace(&workspace, &pattern, 1, t.root(), &sink);
 
     try std.testing.expectEqual(@as(usize, 1), sink.emits);
 }
@@ -330,8 +361,10 @@ test "query: streamAt only offers the anchored node" {
         }
     };
 
+    var root_workspace = match_workspace.MatchWorkspace.init(std.testing.allocator);
+    defer root_workspace.deinit();
     var root_sink: Counter = .{};
-    try query.streamAt(std.testing.allocator, &pattern, 1, t.root(), &root_sink);
+    try query.streamAtWithWorkspace(&root_workspace, &pattern, 1, t.root(), &root_sink);
     try std.testing.expectEqual(@as(usize, 0), root_sink.emits);
 
     var nodes = t.root().preorder();
@@ -343,7 +376,9 @@ test "query: streamAt only offers the anchored node" {
         }
     }
 
+    var identifier_workspace = match_workspace.MatchWorkspace.init(std.testing.allocator);
+    defer identifier_workspace.deinit();
     var identifier_sink: Counter = .{};
-    try query.streamAt(std.testing.allocator, &pattern, 1, identifier.?, &identifier_sink);
+    try query.streamAtWithWorkspace(&identifier_workspace, &pattern, 1, identifier.?, &identifier_sink);
     try std.testing.expectEqual(@as(usize, 1), identifier_sink.emits);
 }

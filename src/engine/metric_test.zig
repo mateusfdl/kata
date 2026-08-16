@@ -19,18 +19,14 @@ fn goId(comptime name: []const u8) u16 {
 
 fn collectBinary(n: Node, out: *std.ArrayList(Node), gpa: std.mem.Allocator) !void {
     if (std.mem.eql(u8, n.kind(), "binary_expression")) try out.append(gpa, n);
-    var i: u32 = 0;
-    while (i < n.childCount()) : (i += 1) {
-        if (n.child(i)) |c| try collectBinary(c, out, gpa);
-    }
+    var children = n.children();
+    while (children.next()) |c| try collectBinary(c, out, gpa);
 }
 
 fn walkClassifyAll(n: Node, table: []const ?MetricKind) void {
     _ = metric.classify(table, n);
-    var i: u32 = 0;
-    while (i < n.childCount()) : (i += 1) {
-        if (n.child(i)) |c| walkClassifyAll(c, table);
-    }
+    var children = n.children();
+    while (children.next()) |c| walkClassifyAll(c, table);
 }
 
 test "metric: ts table classifies decision points by kind" {

@@ -42,6 +42,7 @@ pub const Error = tokenizer.Error || error{
     InvalidExpression,
     ExpectedComposition,
     ExpectedComparison,
+    ExpectedWhere,
     NestedComposition,
     ExpectedSafety,
     DuplicateFix,
@@ -78,6 +79,7 @@ const Keyword = enum {
     precedes,
     between,
     count,
+    exists,
     not,
     in,
     any,
@@ -611,6 +613,15 @@ pub const Parser = struct {
 
     fn parsePredicate(self: *Parser) Error!ast.Predicate {
         if (try self.groupOp()) |op| return self.parseGroupPredicate(op);
+        if (self.currentIs(.exists)) return self.parseFactExistsPredicate(false);
+        if (self.currentIs(.not) and isKeyword(try self.peek(), .exists)) {
+            try self.advance();
+
+            return self.parseFactExistsPredicate(true);
+        }
+        if (self.currentIs(.count) and (try self.peek()).kind == .symbol) {
+            return self.parseFactCountPredicate();
+        }
         if (compositionKeyword(self.current)) |keyword| {
             return self.parseCompositionPredicate(keyword);
         }
@@ -656,6 +667,50 @@ pub const Parser = struct {
             .op = op,
             .predicates = try predicates.toOwnedSlice(self.allocator),
         } };
+    }
+
+    fn parseFactExistsPredicate(self: *Parser, negated: bool) Error!ast.Predicate {
+        try self.expectKeyword(.exists, error.ExpectedSymbol);
+
+        return .{ .fact_exists = .{
+            .query = try self.parseFactQuery(),
+            .negated = negated,
+        } };
+    }
+
+    fn parseFactCountPredicate(self: *Parser) Error!ast.Predicate {
+        try self.expectKeyword(.count, error.ExpectedSymbol);
+        const query = try self.parseFactQuery();
+        const op = compareOp(self.current.kind) orelse {
+            self.failAt(self.current);
+
+            return error.ExpectedComparison;
+        };
+
+        try self.advance();
+        const value = try self.parseNumberLiteral();
+
+        return .{ .fact_count = .{ .query = query, .op = op, .value = value.value } };
+    }
+
+    fn parseFactQuery(self: *Parser) Error!ast.FactQuery {
+        const fact = try self.expectSymbol(error.ExpectedSymbol);
+        const capture = try self.expectCapture();
+        var predicates: []const ast.Predicate = &.{};
+        var end = capture.range.end;
+
+        if (try self.consume(.left_brace)) {
+            try self.expectKeyword(.where, error.ExpectedWhere);
+            predicates = try self.parseWhere();
+            end = (try self.expect(.right_brace, error.ExpectedRightBrace)).range.end;
+        }
+
+        return .{
+            .fact = fact.lexeme,
+            .capture = capture,
+            .where = predicates,
+            .range = .{ .start = fact.range.start, .end = end },
+        };
     }
 
     fn parseCompositionPredicate(self: *Parser, keyword: Keyword) Error!ast.Predicate {
@@ -880,7 +935,7 @@ pub const Parser = struct {
             return error.ExpectedSafety;
         };
 
-        const target = try self.optionalCapture();
+        const target = try self.parseOptionalCapture();
         const template = try self.parseStringLiteral();
 
         return .{
@@ -893,7 +948,7 @@ pub const Parser = struct {
 
     fn parseSuggestion(self: *Parser, start: Token) Error!ast.Suggestion {
         const label = try self.parseString();
-        const target = try self.optionalCapture();
+        const target = try self.parseOptionalCapture();
         const template = try self.parseStringLiteral();
 
         return .{
@@ -902,12 +957,6 @@ pub const Parser = struct {
             .template = template.value,
             .range = .{ .start = start.range.start, .end = template.range.end },
         };
-    }
-
-    fn optionalCapture(self: *Parser) Error!?ast.Capture {
-        if (self.current.kind != .capture) return null;
-
-        return try self.expectCapture();
     }
 
     fn parseExpression(self: *Parser) Error!ast.Expression {

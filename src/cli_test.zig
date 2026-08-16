@@ -42,12 +42,19 @@ fn runCli(
     var stderr_buf: std.Io.Writer.Allocating = .init(allocator);
     errdefer stderr_buf.deinit();
 
-    const code = try one_shot.run(allocator, ctx, .{
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const opts: one_shot.Options = .{
         .args = args,
         .stdin = &stdin,
         .stdout = &stdout_buf.writer,
         .stderr = &stderr_buf.writer,
-    });
+    };
+    const code = switch (try one_shot.prepare(arena.allocator(), opts)) {
+        .ready => |req| try one_shot.serve(ctx, arena.allocator(), req, opts),
+        .failed => |c| c,
+    };
 
     return .{
         .code = code,

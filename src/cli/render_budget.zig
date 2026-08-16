@@ -72,10 +72,6 @@ pub const RenderBudget = struct {
     }
 
     fn recordSuppressed(self: *RenderBudget, rule_id: []const u8, count: usize) !void {
-        if (count == 0) {
-            return;
-        }
-
         const gop = try self.entries.getOrPut(self.gpa, rule_id);
         if (!gop.found_existing) {
             gop.value_ptr.* = .{};

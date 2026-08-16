@@ -7,6 +7,7 @@ const lint = @import("engine");
 
 const Engine = lint.Engine;
 const language = lint.language;
+const fact_schema = lint.fact_schema;
 
 const Presenter = struct {
     stdout: *std.Io.Writer,
@@ -42,27 +43,23 @@ const Presenter = struct {
     fn print(presenter: *const Presenter, file_facts: lint.facts.FileFacts) !void {
         const stdout = presenter.stdout;
 
-        for (file_facts.classes) |cl| {
-            try stdout.print("class {s} @{d}:{d}\n", .{ cl.name, cl.range.start.line + 1, cl.range.start.column + 1 });
-        }
-
-        for (file_facts.methods) |m| {
-            try stdout.print("method {s}.{s} @{d}:{d}\n", .{ orDash(m.container), m.name, m.range.start.line + 1, m.range.start.column + 1 });
-        }
-
-        for (file_facts.typed_decls) |d| {
-            try stdout.print("decl {s}: {s} @{d}:{d}\n", .{ d.name, d.type_name, d.range.start.line + 1, d.range.start.column + 1 });
-        }
-
-        for (file_facts.calls) |call| {
-            try stdout.print("call {s}.{s} in {s} @{d}:{d}\n", .{ orDash(call.receiver), call.method, orDash(call.container), call.range.start.line + 1, call.range.start.column + 1 });
-        }
-
-        for (file_facts.imports) |im| {
-            try stdout.print("import {s} from {s}\n", .{ orDash(im.name), im.source });
+        inline for (fact_schema.descriptors) |descriptor_value| {
+            for (@field(file_facts, descriptor_value.list)) |record| {
+                try printRecord(stdout, descriptor_value, record);
+            }
         }
 
         try stdout.flush();
+    }
+
+    fn printRecord(stdout: *std.Io.Writer, comptime descriptor_value: fact_schema.FactDescriptor, record: descriptor_value.Record) !void {
+        switch (descriptor_value.kind) {
+            .class => try stdout.print("class {s} @{d}:{d}\n", .{ record.name, record.range.start.line + 1, record.range.start.column + 1 }),
+            .method => try stdout.print("method {s}.{s} @{d}:{d}\n", .{ orDash(record.container), record.name, record.range.start.line + 1, record.range.start.column + 1 }),
+            .typed_decl => try stdout.print("decl {s}: {s} @{d}:{d}\n", .{ record.name, record.type_name, record.range.start.line + 1, record.range.start.column + 1 }),
+            .call => try stdout.print("call {s}.{s} in {s} @{d}:{d}\n", .{ orDash(record.receiver), record.method, orDash(record.container), record.range.start.line + 1, record.range.start.column + 1 }),
+            .import => try stdout.print("import {s} from {s}\n", .{ orDash(record.name), record.source }),
+        }
     }
 
     fn orDash(s: []const u8) []const u8 {

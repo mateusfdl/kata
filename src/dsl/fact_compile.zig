@@ -4,17 +4,29 @@ const mvzr = @import("mvzr");
 const ast = @import("ast.zig");
 const bytes = @import("bytes.zig");
 const dsl_parser = @import("parser.zig");
+const scalar_compile = @import("scalar_compile.zig");
 const tokenizer = @import("tokenizer.zig");
 
-const fact_rule = @import("engine").fact_rule;
-const rule = @import("engine").rule;
+const engine = @import("engine");
+const fact_rule = engine.fact_rule;
+const fact_schema = engine.fact_schema;
+const rule = engine.rule;
 
-const unknown_fact_detail = "unknown fact (expected class, method, typedDecl, call, or import)";
+const unknown_fact_detail = "unknown fact (expected " ++ expectedFactNames() ++ ")";
 const required_match_detail = "project rules require match <fact> @capture";
-const call_text = "text";
-const call_field = "field";
-const call_receiver_type = "receiverType";
-const call_resolved_import_source = "resolvedImportSource";
+
+fn expectedFactNames() []const u8 {
+    comptime {
+        var names: []const u8 = "";
+        for (fact_schema.descriptors, 0..) |descriptor_value, i| {
+            if (i != 0) names = names ++ ", ";
+            if (i == fact_schema.descriptors.len - 1) names = names ++ "or ";
+            names = names ++ descriptor_value.dsl_name;
+        }
+
+        return names;
+    }
+}
 
 pub const Error = error{
     OutOfMemory,
@@ -23,9 +35,13 @@ pub const Error = error{
     UnsupportedPredicate,
     UnsupportedPlaceholder,
     UnknownCapture,
+    DuplicateCapture,
     InvalidRegex,
     InvalidStringComparison,
+    TooManyCaptures,
 };
+
+const ScalarError = Error;
 
 pub const RawError = Error || dsl_parser.Error || error{
     RuleIdMismatch,
@@ -38,6 +54,7 @@ const Compiler = struct {
     rule_id: []const u8 = "",
     fact: fact_rule.FactKind = .call,
     capture: []const u8 = "",
+    scopes: CaptureScopes = .{},
 
     fn fail(self: *Compiler, detail: []const u8) void {
         self.diag.* = .{ .rule_id = self.rule_id, .detail = detail };
@@ -50,6 +67,163 @@ const Compiler = struct {
             .line = range.start.line,
             .column = range.start.column,
         };
+    }
+};
+
+const ScalarAdapter = struct {
+    pub const Context = Compiler;
+    pub const Error = ScalarError;
+    pub const Operand = fact_rule.Operand;
+    pub const Predicate = fact_rule.ScalarPredicate;
+    pub const any_of_detail = "anyOf and noneOf expect (field(@fact, name), \"a\", \"b\", ...)";
+    pub const membership_detail = "in expects field(@fact, name) on the left";
+    pub const compare_has_numeric_fallback = false;
+
+    const ExtraCallHandler = *const fn (*Compiler, ast.Call, bool) ScalarError!?fact_rule.ScalarPredicate;
+    pub const extra_call_dispatch = std.StaticStringMap(ExtraCallHandler).initComptime(.{});
+
+    pub fn allocator(ctx: *Compiler) std.mem.Allocator {
+        return ctx.arena;
+    }
+
+    pub fn textOperand(ctx: *Compiler, expression: ast.Expression) ScalarError!?fact_rule.Operand {
+        return switch (expression) {
+            .string => |string| .{ .literal = try ctx.arena.dupe(u8, string.value) },
+            .call => |call| try callOperand(ctx, call),
+            else => null,
+        };
+    }
+
+    pub fn literalOperand(ctx: *Compiler, value: []const u8) ScalarError!fact_rule.Operand {
+        return .{ .literal = try ctx.arena.dupe(u8, value) };
+    }
+
+    pub fn isAnyOfSubject(operand: fact_rule.Operand) bool {
+        return operand != .literal;
+    }
+
+    pub fn literalValue(operand: fact_rule.Operand) ?[]const u8 {
+        return switch (operand) {
+            .field, .helper => null,
+            .literal => |value| value,
+        };
+    }
+
+    pub fn operandEql(left: fact_rule.Operand, right: fact_rule.Operand) bool {
+        if (std.meta.activeTag(left) != std.meta.activeTag(right)) return false;
+        return switch (left) {
+            .field => |field| field.capture == right.field.capture and field.field == right.field.field,
+            .literal => |value| std.mem.eql(u8, value, right.literal),
+            .helper => |helper| helper.id == right.helper.id and helper.capture == right.helper.capture,
+        };
+    }
+
+    pub fn emit(op: scalar_compile.Operation, args: []fact_rule.Operand) fact_rule.ScalarPredicate {
+        return .{
+            .op = switch (op) {
+                .eq => .eq,
+                .not_eq => .not_eq,
+                .any_of => .any_of,
+                .not_any_of => .not_any_of,
+                .starts_with => .starts_with,
+                .not_starts_with => .not_starts_with,
+                .ends_with => .ends_with,
+                .not_ends_with => .not_ends_with,
+                .contains => .contains,
+                .not_contains => .not_contains,
+                .glob => .glob,
+                .not_glob => .not_glob,
+            },
+            .args = args,
+        };
+    }
+
+    pub fn emitRegex(
+        ctx: *Compiler,
+        subject: fact_rule.Operand,
+        _: []const u8,
+        regex: mvzr.Regex,
+        negated: bool,
+    ) ScalarError!fact_rule.ScalarPredicate {
+        const args = try ctx.arena.alloc(fact_rule.Operand, 1);
+        args[0] = subject;
+        return .{ .op = if (negated) .not_match else .match, .args = args, .regex = regex };
+    }
+
+    pub fn report(ctx: *Compiler, detail: []const u8, range: tokenizer.Range) void {
+        ctx.failAt(detail, range);
+    }
+
+    pub fn failWith(ctx: *Compiler, detail: []const u8, range: tokenizer.Range) ScalarError {
+        report(ctx, detail, range);
+        return error.UnsupportedPredicate;
+    }
+};
+
+const Scalar = scalar_compile.ScalarCompiler(ScalarAdapter);
+
+const Binding = struct {
+    name: []const u8,
+    fact: fact_rule.FactKind,
+    capture: fact_rule.CaptureId,
+};
+
+const CaptureScopes = struct {
+    bindings: std.ArrayList(Binding) = .empty,
+    next_capture: fact_rule.CaptureId = 0,
+
+    fn reset(self: *CaptureScopes, arena: std.mem.Allocator, name: []const u8, fact: fact_rule.FactKind) Error!void {
+        self.bindings.clearRetainingCapacity();
+        self.next_capture = 1;
+        try self.bindings.append(arena, .{ .name = name, .fact = fact, .capture = 0 });
+    }
+
+    fn declare(
+        self: *CaptureScopes,
+        ctx: *Compiler,
+        name: []const u8,
+        fact: fact_rule.FactKind,
+        range: tokenizer.Range,
+    ) Error!fact_rule.CaptureId {
+        if (self.resolve(name) != null) {
+            ctx.failAt("duplicate capture", range);
+
+            return error.DuplicateCapture;
+        }
+
+        const capture = self.next_capture;
+        if (capture >= 64) {
+            ctx.failAt("too many captures", range);
+
+            return error.TooManyCaptures;
+        }
+        self.next_capture += 1;
+        try self.bindings.append(ctx.arena, .{ .name = name, .fact = fact, .capture = capture });
+
+        return capture;
+    }
+
+    fn resolve(self: *const CaptureScopes, name: []const u8) ?Binding {
+        var i = self.bindings.items.len;
+        while (i > 0) {
+            i -= 1;
+            const binding = self.bindings.items[i];
+            if (std.mem.eql(u8, binding.name, name)) return binding;
+        }
+
+        return null;
+    }
+
+    fn push(self: *const CaptureScopes) usize {
+        return self.bindings.items.len;
+    }
+
+    fn pop(self: *CaptureScopes, mark: usize) void {
+        self.bindings.shrinkRetainingCapacity(mark);
+    }
+
+    fn count(self: *const CaptureScopes) fact_rule.CaptureId {
+        return self.next_capture;
     }
 };
 
@@ -142,6 +316,7 @@ fn compileRule(ctx: *Compiler, r: ast.Rule) Error!fact_rule.CompiledFactRule {
 
     ctx.fact = subject.fact;
     ctx.capture = subject.capture;
+    try ctx.scopes.reset(ctx.arena, subject.capture, subject.fact);
 
     var predicates: std.ArrayList(fact_rule.Predicate) = .empty;
     for (r.where) |predicate| try translatePredicate(ctx, predicate, &predicates);
@@ -155,6 +330,7 @@ fn compileRule(ctx: *Compiler, r: ast.Rule) Error!fact_rule.CompiledFactRule {
     return .{
         .id = try ctx.arena.dupe(u8, r.id),
         .fact = ctx.fact,
+        .capture_count = ctx.scopes.count(),
         .predicates = try predicates.toOwnedSlice(ctx.arena),
         .message = try compileMessage(ctx, r.emit.message),
         .severity = switch (r.severity) {
@@ -197,7 +373,7 @@ fn factSubject(ctx: *Compiler, r: ast.Rule) Error!Subject {
 
         return error.UnsupportedMatch;
     };
-    if (pattern.fields.len != 0) {
+    if (pattern.fields.len != 0 or pattern.absent_fields.len != 0) {
         ctx.failAt("fact matchers take no fields", pattern.range);
 
         return error.UnsupportedMatch;
@@ -219,16 +395,121 @@ fn translatePredicate(
     switch (predicate) {
         .expression => |expression| try translateExpression(ctx, expression, out),
         .composition, .count => {
-            ctx.fail("composition predicates are not supported in project rules");
+            ctx.fail("tree composition predicates are not supported in project rules");
 
             return error.UnsupportedPredicate;
         },
-        .group => {
-            ctx.fail("predicate groups are not supported in project rules");
-
-            return error.UnsupportedPredicate;
-        },
+        .group => |group| try out.append(ctx.arena, try groupPredicate(ctx, group)),
+        .fact_exists => |exists| try out.append(ctx.arena, try existsPredicate(ctx, exists)),
+        .fact_count => |count| try out.append(ctx.arena, try factCountPredicate(ctx, count)),
     }
+}
+
+fn groupPredicate(ctx: *Compiler, group: ast.Group) Error!fact_rule.Predicate {
+    var members: std.ArrayList(fact_rule.Predicate) = .empty;
+    if (group.op == .all) {
+        for (group.predicates) |member| try translatePredicate(ctx, member, &members);
+
+        const requires = membersRequires(members.items);
+
+        return .{ .all_group = .{ .requires = requires, .members = try members.toOwnedSlice(ctx.arena) } };
+    }
+
+    for (group.predicates) |member| {
+        var conjuncts: std.ArrayList(fact_rule.Predicate) = .empty;
+        try translatePredicate(ctx, member, &conjuncts);
+        if (conjuncts.items.len == 1) {
+            try members.append(ctx.arena, conjuncts.items[0]);
+        } else {
+            const requires = membersRequires(conjuncts.items);
+            try members.append(ctx.arena, .{ .all_group = .{ .requires = requires, .members = try conjuncts.toOwnedSlice(ctx.arena) } });
+        }
+    }
+
+    const requires = membersRequires(members.items);
+
+    return .{ .any_group = .{ .requires = requires, .members = try members.toOwnedSlice(ctx.arena) } };
+}
+
+fn existsPredicate(ctx: *Compiler, exists: ast.FactExistsPredicate) Error!fact_rule.Predicate {
+    const query = try compileFactQuery(ctx, exists.query);
+
+    return if (exists.negated) .{ .not_exists = query } else .{ .exists = query };
+}
+
+fn factCountPredicate(ctx: *Compiler, count: ast.FactCountPredicate) Error!fact_rule.Predicate {
+    return .{ .count = .{
+        .query = try compileFactQuery(ctx, count.query),
+        .op = countCompare(count.op),
+        .value = count.value,
+    } };
+}
+
+fn compileFactQuery(ctx: *Compiler, query: ast.FactQuery) Error!fact_rule.FactQuery {
+    const fact = fact_rule.FactKind.fromString(query.fact) orelse {
+        ctx.failAt(unknown_fact_detail, query.range);
+
+        return error.UnsupportedMatch;
+    };
+    const scope = ctx.scopes.push();
+    defer ctx.scopes.pop(scope);
+    const capture = try ctx.scopes.declare(ctx, query.capture.name, fact, query.capture.range);
+
+    var predicates: std.ArrayList(fact_rule.Predicate) = .empty;
+    for (query.where) |predicate| try translatePredicate(ctx, predicate, &predicates);
+
+    const requires = membersRequires(predicates.items) & ~captureBit(capture);
+
+    return .{
+        .fact = fact,
+        .capture = capture,
+        .predicates = try predicates.toOwnedSlice(ctx.arena),
+        .requires = requires,
+    };
+}
+
+fn captureBit(capture: fact_rule.CaptureId) fact_rule.CaptureSet {
+    return @as(fact_rule.CaptureSet, 1) << @intCast(capture);
+}
+
+fn membersRequires(predicates: []const fact_rule.Predicate) fact_rule.CaptureSet {
+    var requires: fact_rule.CaptureSet = 0;
+    for (predicates) |predicate| requires |= predicateRequires(predicate);
+
+    return requires;
+}
+
+fn predicateRequires(predicate: fact_rule.Predicate) fact_rule.CaptureSet {
+    return switch (predicate) {
+        .scalar => |scalar| scalar.requires,
+        .all_group, .any_group => |group| group.requires,
+        .exists, .not_exists => |query| query.requires,
+        .count => |count| count.query.requires,
+    };
+}
+
+fn operandsRequires(args: []const fact_rule.Operand) fact_rule.CaptureSet {
+    var requires: fact_rule.CaptureSet = 0;
+    for (args) |operand| {
+        requires |= switch (operand) {
+            .literal => 0,
+            .field => |field| captureBit(field.capture),
+            .helper => |helper| captureBit(helper.capture),
+        };
+    }
+
+    return requires;
+}
+
+fn countCompare(op: ast.CompareOp) fact_rule.CountCompare {
+    return switch (op) {
+        .gt => .gt,
+        .ge => .ge,
+        .lt => .lt,
+        .le => .le,
+        .eq => .eq,
+        .ne => .ne,
+    };
 }
 
 fn translateExpression(
@@ -243,8 +524,10 @@ fn translateExpression(
         return;
     }
 
-    if (try predicateFrom(ctx, expression, false)) |pred| {
-        try out.append(ctx.arena, pred);
+    if (try Scalar.predicateFrom(ctx, expression, false)) |pred| {
+        var scalar = pred;
+        scalar.requires = operandsRequires(pred.args);
+        try out.append(ctx.arena, .{ .scalar = scalar });
 
         return;
     }
@@ -254,243 +537,23 @@ fn translateExpression(
     return error.UnsupportedPredicate;
 }
 
-fn predicateFrom(ctx: *Compiler, expression: ast.Expression, negated: bool) Error!?fact_rule.Predicate {
-    return switch (expression) {
-        .negate => |negate| predicateFrom(ctx, negate.expression.*, !negated),
-        .call => |call| callPredicate(ctx, call, negated),
-        .compare => |c| comparePredicate(ctx, c, negated),
-        .logical => |logical| if (logical.op == .@"or") anyOfPredicate(ctx, expression, negated) else null,
-        .membership => |m| membershipPredicate(ctx, m, negated),
-        else => null,
-    };
-}
-
-fn membershipPredicate(ctx: *Compiler, m: ast.Membership, negated: bool) Error!?fact_rule.Predicate {
-    const fail_detail = "in expects field(@fact, name) on the left";
-    const subject = (try textOperand(ctx, m.subject.*)) orelse return failWithAt(ctx, fail_detail, m.range);
-    if (subject == .literal) return failWithAt(ctx, fail_detail, m.range);
-
-    const args = try ctx.arena.alloc(fact_rule.Operand, m.values.len + 1);
-    args[0] = subject;
-
-    for (m.values, args[1..]) |value, *slot| slot.* = .{ .literal = try ctx.arena.dupe(u8, value.value) };
-
-    const effective = m.negated != negated;
-
-    return .{ .op = if (effective) .not_any_of else .any_of, .args = args };
-}
-
-const CallHandler = *const fn (*Compiler, ast.Call, bool) Error!?fact_rule.Predicate;
-const call_dispatch = std.StaticStringMap(CallHandler).initComptime(.{
-    .{ bytes.call_matches, matchesPredicate },
-    .{ bytes.call_glob, globPredicate },
-    .{ bytes.call_any_of, anyOfHelperPredicate },
-    .{ bytes.call_none_of, noneOfPredicate },
-    .{ bytes.call_starts_with, startsWithPredicate },
-    .{ bytes.call_ends_with, endsWithPredicate },
-    .{ bytes.call_contains, containsPredicate },
-});
-
-fn callPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?fact_rule.Predicate {
-    const handler = call_dispatch.get(call.name) orelse return null;
-    return handler(ctx, call, negated);
-}
-
-fn noneOfPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?fact_rule.Predicate {
-    return anyOfHelperPredicate(ctx, call, !negated);
-}
-
-fn startsWithPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?fact_rule.Predicate {
-    const args = try stringHelperArgs(ctx, call);
-    return .{ .op = if (negated) .not_starts_with else .starts_with, .args = args };
-}
-
-fn endsWithPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?fact_rule.Predicate {
-    const args = try stringHelperArgs(ctx, call);
-    return .{ .op = if (negated) .not_ends_with else .ends_with, .args = args };
-}
-
-fn containsPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?fact_rule.Predicate {
-    const args = try stringHelperArgs(ctx, call);
-    return .{ .op = if (negated) .not_contains else .contains, .args = args };
-}
-
-fn failWithAt(ctx: *Compiler, detail: []const u8, range: tokenizer.Range) Error {
-    ctx.failAt(detail, range);
-    return error.UnsupportedPredicate;
-}
-
-fn anyOfHelperPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?fact_rule.Predicate {
-    const fail_detail = "anyOf and noneOf expect (field(@fact, name), \"a\", \"b\", ...)";
-    if (call.args.len < 2) return failWithAt(ctx, fail_detail, call.range);
-
-    const subject = (try textOperand(ctx, call.args[0])) orelse return failWithAt(ctx, fail_detail, call.range);
-    if (subject == .literal) return failWithAt(ctx, fail_detail, call.range);
-
-    const args = try ctx.arena.alloc(fact_rule.Operand, call.args.len);
-    args[0] = subject;
-
-    for (call.args[1..], args[1..]) |arg, *slot| {
-        if (arg != .string) return failWithAt(ctx, fail_detail, call.range);
-        slot.* = .{ .literal = try ctx.arena.dupe(u8, arg.string.value) };
-    }
-
-    return .{ .op = if (negated) .not_any_of else .any_of, .args = args };
-}
-
-fn matchesPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?fact_rule.Predicate {
-    if (call.args.len != 2) return failWithAt(ctx, "matches expects (value, regex)", call.range);
-
-    const subject = (try textOperand(ctx, call.args[0])) orelse return failWithAt(ctx, "matches expects a text value", call.range);
-
-    const pattern = switch (call.args[1]) {
-        .string => |s| try ctx.arena.dupe(u8, s.value),
-        else => return failWithAt(ctx, "matches expects a string regex", call.range),
-    };
-
-    const regex = mvzr.compile(pattern) orelse {
-        ctx.failAt("invalid regex", call.range);
-        return error.InvalidRegex;
-    };
-
-    const args = try ctx.arena.alloc(fact_rule.Operand, 1);
-    args[0] = subject;
-
-    return .{ .op = if (negated) .not_match else .match, .args = args, .regex = regex };
-}
-
-fn globPredicate(ctx: *Compiler, call: ast.Call, negated: bool) Error!?fact_rule.Predicate {
-    const fail_detail = "glob expects (value, \"pattern\")";
-    if (call.args.len != 2 or call.args[1] != .string) return failWithAt(ctx, fail_detail, call.range);
-
-    const subject = (try textOperand(ctx, call.args[0])) orelse return failWithAt(ctx, fail_detail, call.range);
-
-    const args = try ctx.arena.alloc(fact_rule.Operand, 2);
-    args[0] = subject;
-    args[1] = .{ .literal = try ctx.arena.dupe(u8, call.args[1].string.value) };
-
-    return .{ .op = if (negated) .not_glob else .glob, .args = args };
-}
-
-fn stringHelperArgs(ctx: *Compiler, call: ast.Call) Error![]fact_rule.Operand {
-    const fail_detail = "startsWith, endsWith, and contains expect (value, text)";
-    if (call.args.len != 2) return failWithAt(ctx, fail_detail, call.range);
-    const subject = (try textOperand(ctx, call.args[0])) orelse return failWithAt(ctx, fail_detail, call.range);
-    const candidate = (try textOperand(ctx, call.args[1])) orelse return failWithAt(ctx, fail_detail, call.range);
-    const args = try ctx.arena.alloc(fact_rule.Operand, 2);
-    args[0] = subject;
-    args[1] = candidate;
-
-    return args;
-}
-
-fn comparePredicate(ctx: *Compiler, c: ast.Compare, negated: bool) Error!?fact_rule.Predicate {
-    const left = try textOperand(ctx, c.left.*);
-    const right = try textOperand(ctx, c.right.*);
-
-    if (c.op == .eq or c.op == .ne) {
-        const resolved_left = left orelse return null;
-        const resolved_right = right orelse return null;
-
-        const wants_eq = (c.op == .eq) != negated;
-
-        const args = try ctx.arena.alloc(fact_rule.Operand, 2);
-
-        args[0] = resolved_left;
-        args[1] = resolved_right;
-
-        return .{ .op = if (wants_eq) .eq else .not_eq, .args = args };
-    }
-
-    if (left != null or right != null) {
-        ctx.failAt("strings compare with == and != only", c.range);
-
-        return error.InvalidStringComparison;
-    }
-
-    return null;
-}
-
-fn anyOfPredicate(ctx: *Compiler, expression: ast.Expression, negated: bool) Error!?fact_rule.Predicate {
-    var subject: ?fact_rule.Operand = null;
-    var literals: std.ArrayList([]const u8) = .empty;
-
-    if (!try collectDisjunction(ctx, expression, &subject, &literals)) return null;
-
-    const args = try ctx.arena.alloc(fact_rule.Operand, literals.items.len + 1);
-    args[0] = subject.?;
-
-    for (literals.items, args[1..]) |s, *slot| slot.* = .{ .literal = s };
-
-    return .{ .op = if (negated) .not_any_of else .any_of, .args = args };
-}
-
-fn collectDisjunction(
-    ctx: *Compiler,
-    expression: ast.Expression,
-    subject: *?fact_rule.Operand,
-    literals: *std.ArrayList([]const u8),
-) Error!bool {
-    switch (expression) {
-        .logical => |logical| {
-            if (logical.op != .@"or") return false;
-
-            if (!try collectDisjunction(ctx, logical.left.*, subject, literals)) return false;
-
-            return collectDisjunction(ctx, logical.right.*, subject, literals);
-        },
-        .compare => |c| {
-            if (c.op != .eq) return false;
-
-            const left = (try textOperand(ctx, c.left.*)) orelse return false;
-            const right = (try textOperand(ctx, c.right.*)) orelse return false;
-
-            const leaf_subject = if (left == .literal) right else left;
-            const leaf_literal = if (left == .literal) left else right;
-
-            if (leaf_subject == .literal or leaf_literal != .literal) return false;
-
-            if (subject.*) |seen| {
-                if (!operandEq(seen, leaf_subject)) return false;
-            } else {
-                subject.* = leaf_subject;
-            }
-
-            try literals.append(ctx.arena, leaf_literal.literal);
-
-            return true;
-        },
-        else => return false,
-    }
-}
-
-fn operandEq(a: fact_rule.Operand, b: fact_rule.Operand) bool {
-    if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
-
-    return switch (a) {
-        .field => |f| f == b.field,
-        .literal => |s| std.mem.eql(u8, s, b.literal),
-        .receiver_type, .resolved_import_source => true,
-    };
-}
-
-fn textOperand(ctx: *Compiler, expression: ast.Expression) Error!?fact_rule.Operand {
-    return switch (expression) {
-        .string => |s| .{ .literal = try ctx.arena.dupe(u8, s.value) },
-        .call => |call| try callOperand(ctx, call),
-        else => null,
-    };
-}
-
 fn callOperand(ctx: *Compiler, call: ast.Call) Error!?fact_rule.Operand {
-    if (std.mem.eql(u8, call.name, call_field)) return try fieldOperand(ctx, call);
-    if (std.mem.eql(u8, call.name, call_receiver_type))
-        return try helperOperand(ctx, call, .call, .receiver_type, "receiverType expects the call fact");
+    if (std.mem.eql(u8, call.name, bytes.call_field)) return try fieldOperand(ctx, call);
 
-    if (std.mem.eql(u8, call.name, call_resolved_import_source))
-        return try helperOperand(ctx, call, .import, .resolved_import_source, "resolvedImportSource expects the import fact");
+    inline for (std.meta.fields(fact_schema.HelperId)) |helper_field| {
+        const id: fact_schema.HelperId = @enumFromInt(helper_field.value);
+        const descriptor_value = comptime fact_schema.descriptor(id);
+        if (std.mem.eql(u8, call.name, descriptor_value.name)) {
+            const wrong_fact_detail = comptime std.fmt.comptimePrint("{s} expects the {s} fact", .{
+                descriptor_value.name,
+                @tagName(descriptor_value.fact),
+            });
 
-    if (std.mem.eql(u8, call.name, call_text)) {
+            return try helperOperand(ctx, call, id, wrong_fact_detail);
+        }
+    }
+
+    if (std.mem.eql(u8, call.name, bytes.call_text)) {
         ctx.failAt("text is not available in project rules - use field(@fact, name)", call.range);
 
         return error.UnsupportedPredicate;
@@ -506,7 +569,11 @@ fn fieldOperand(ctx: *Compiler, call: ast.Call) Error!?fact_rule.Operand {
         return error.UnsupportedPredicate;
     }
 
-    try checkSubject(ctx, call.args[0].capture);
+    const binding = ctx.scopes.resolve(call.args[0].capture.name) orelse {
+        ctx.failAt("unknown capture", call.args[0].capture.range);
+
+        return error.UnknownCapture;
+    };
 
     const field = fact_rule.fieldFromString(call.args[1].symbol.name) orelse {
         ctx.failAt("unknown fact field", call.args[1].symbol.range);
@@ -514,20 +581,19 @@ fn fieldOperand(ctx: *Compiler, call: ast.Call) Error!?fact_rule.Operand {
         return error.UnsupportedPredicate;
     };
 
-    if (!fact_rule.factHasField(ctx.fact, field)) {
+    if (!fact_rule.factHasField(binding.fact, field)) {
         ctx.failAt("field is not defined for this fact", call.args[1].symbol.range);
 
         return error.UnsupportedPredicate;
     }
 
-    return .{ .field = field };
+    return .{ .field = .{ .capture = binding.capture, .field = field } };
 }
 
 fn helperOperand(
     ctx: *Compiler,
     call: ast.Call,
-    expected_fact: fact_rule.FactKind,
-    operand: fact_rule.Operand,
+    comptime id: fact_schema.HelperId,
     wrong_fact_detail: []const u8,
 ) Error!?fact_rule.Operand {
     if (call.args.len != 1 or call.args[0] != .capture) {
@@ -536,23 +602,20 @@ fn helperOperand(
         return error.UnsupportedPredicate;
     }
 
-    try checkSubject(ctx, call.args[0].capture);
+    const binding = ctx.scopes.resolve(call.args[0].capture.name) orelse {
+        ctx.failAt("unknown capture", call.args[0].capture.range);
 
-    if (ctx.fact != expected_fact) {
+        return error.UnknownCapture;
+    };
+    const descriptor_value = comptime fact_schema.descriptor(id);
+
+    if (binding.fact != descriptor_value.fact) {
         ctx.failAt(wrong_fact_detail, call.range);
 
         return error.UnsupportedPredicate;
     }
 
-    return operand;
-}
-
-fn checkSubject(ctx: *Compiler, capture: ast.Capture) Error!void {
-    if (std.mem.eql(u8, capture.name, ctx.capture)) return;
-
-    ctx.failAt("unknown capture", capture.range);
-
-    return error.UnknownCapture;
+    return .{ .helper = .{ .id = id, .capture = binding.capture } };
 }
 
 fn compileMessage(ctx: *Compiler, message: []const u8) Error![]const fact_rule.MessageSegment {
@@ -587,7 +650,7 @@ fn placeholderOperand(ctx: *Compiler, inner: []const u8) Error!fact_rule.Operand
 
     try checkSubjectName(ctx, first[1..]);
 
-    if (std.mem.eql(u8, name, call_field)) {
+    if (std.mem.eql(u8, name, bytes.call_field)) {
         const second = std.mem.trim(u8, args.next() orelse return failPlaceholder(ctx), " ");
         if (args.next() != null or second.len == 0) return failPlaceholder(ctx);
 
@@ -603,27 +666,26 @@ fn placeholderOperand(ctx: *Compiler, inner: []const u8) Error!fact_rule.Operand
             return error.UnsupportedPlaceholder;
         }
 
-        return .{ .field = field };
+        return .{ .field = .{ .capture = 0, .field = field } };
     }
 
     if (args.next() != null) return failPlaceholder(ctx);
-    if (std.mem.eql(u8, name, call_receiver_type)) {
-        if (ctx.fact != .call) {
-            ctx.fail("receiverType expects the call fact");
 
-            return error.UnsupportedPlaceholder;
+    inline for (std.meta.fields(fact_schema.HelperId)) |helper_field| {
+        const id: fact_schema.HelperId = @enumFromInt(helper_field.value);
+        const descriptor_value = comptime fact_schema.descriptor(id);
+        if (std.mem.eql(u8, name, descriptor_value.name)) {
+            if (ctx.fact != descriptor_value.fact) {
+                ctx.fail(comptime std.fmt.comptimePrint("{s} expects the {s} fact", .{
+                    descriptor_value.name,
+                    @tagName(descriptor_value.fact),
+                }));
+
+                return error.UnsupportedPlaceholder;
+            }
+
+            return .{ .helper = .{ .id = id, .capture = 0 } };
         }
-
-        return .receiver_type;
-    }
-    if (std.mem.eql(u8, name, call_resolved_import_source)) {
-        if (ctx.fact != .import) {
-            ctx.fail("resolvedImportSource expects the import fact");
-
-            return error.UnsupportedPlaceholder;
-        }
-
-        return .resolved_import_source;
     }
 
     return failPlaceholder(ctx);

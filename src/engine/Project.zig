@@ -34,6 +34,14 @@ pub const Project = struct {
         self.index.deinit();
     }
 
+    pub fn indexGeneration(self: *const Project) u64 {
+        return self.index.generation;
+    }
+
+    pub fn hasCrossFileRules(self: *const Project) bool {
+        return self.rules.len > 0 or self.fact_rules.len > 0;
+    }
+
     pub fn configure(self: *Project, engine: *Engine) !void {
         const fact_rules = try engine.ensureCompiledFact();
         self.engine = engine;

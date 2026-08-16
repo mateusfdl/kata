@@ -937,8 +937,8 @@ rule repository-isolation {
 }
 ```
 
-A project rule matches exactly one fact and binds it to a capture. The facts
-and their fields:
+A project rule's `match` selects the root fact that owns the diagnostic. The
+facts and their fields:
 
 | Fact | Fields |
 | --- | --- |
@@ -952,6 +952,78 @@ Every fact also has `path` and `lang`. `field(@x, name)` reads a field;
 fields the extractor could not attribute are empty strings, never missing.
 There is no `lang` clause on project rules - filter with
 `field(@x, lang) == "go"`.
+
+Project rules can correlate the root with other facts through `exists` and
+`not exists`. A query capture is visible only inside its own `where` block.
+The query can read its enclosing captures and can contain expressions, nested
+queries, counts, and `any` or `all` groups:
+
+```kata
+rule method-has-owner {
+  kind project
+
+  match method @method
+
+  where {
+    exists class @owner {
+      where {
+        field(@owner, name) == field(@method, container)
+      }
+    }
+  }
+
+  emit @method {
+    message "method has an owner"
+  }
+}
+```
+
+`exists` succeeds when at least one candidate satisfies its predicates.
+`not exists` succeeds when no candidate satisfies them. Candidates never
+multiply diagnostics: one rule block emits at most once for each root fact.
+Only the root capture can be used by `emit` and message placeholders.
+
+`count` counts matching fact records and supports `>`, `>=`, `<`, `<=`, `==`,
+and `!=`:
+
+```kata
+rule multiple-classes-per-file {
+  kind project
+
+  match class @class
+
+  where {
+    count class @peer {
+      where {
+        field(@peer, path) == field(@class, path)
+      }
+    } > 1
+  }
+
+  emit @class {
+    message "file contains more than one class"
+  }
+}
+```
+
+A bare query such as `exists class @class` searches every class. A bare count
+such as `count class @class > 10` counts every class. Counts include the root
+fact when it has the queried kind and satisfies the query.
+
+The root `where` block and every query `where` block are implicit `all` groups.
+Explicit `any` and `all` groups can contain scalar predicates, queries, counts,
+and other groups. Missing helper values propagate through queries and groups,
+so negation cannot turn unknown type information into a violation.
+
+Queries inspect every indexed file. A daemon path filter and rule `exclude`
+patterns restrict root diagnostics only; matching facts in other files remain
+available as query candidates. Cross-file rules therefore require `kata check`
+on a directory or a daemon started with `--root`. A check of one file indexes
+only that file.
+
+The syntax-tree compositions `inside`, `has`, `parent`, `follows`, `precedes`,
+and `between` are not available in project rules. Extracted facts do not retain
+the tree relationships required by those operations.
 
 Two helpers derive values a raw field cannot give:
 
