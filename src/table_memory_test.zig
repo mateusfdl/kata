@@ -31,7 +31,7 @@ test "TableMemory can use different output and scratch allocators" {
 
     const output_allocator = memory.output();
     const output_value = try output_allocator.create(u8);
-    const scratch_value = try memory.scratch().create(u8);
+    _ = try memory.scratch().create(u8);
 
     try std.testing.expectEqual(@as(usize, 1), output_backing.allocations);
     try std.testing.expect(scratch_backing.allocations > 0);
@@ -42,5 +42,4 @@ test "TableMemory can use different output and scratch allocators" {
 
     try std.testing.expectEqual(output_backing.allocated_bytes, output_backing.freed_bytes);
     try std.testing.expectEqual(scratch_backing.allocated_bytes, scratch_backing.freed_bytes);
-    _ = scratch_value;
 }

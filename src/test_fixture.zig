@@ -2,10 +2,90 @@ const std = @import("std");
 
 const dsl = @import("dsl");
 const lint = @import("engine");
-const loader = @import("sources.zig").loader;
+const sources = @import("sources.zig");
+
+const config = sources.config;
+const context = sources.context;
+const loader = sources.loader;
 
 const Engine = lint.Engine;
 const language = lint.language;
+
+pub const kata_ident =
+    \\rule marker {
+    \\  lang ts
+    \\  match identifier @match
+    \\  emit @match { message "flag" }
+    \\}
+;
+
+pub const kata_local_old =
+    \\rule local {
+    \\  lang ts
+    \\  match identifier @match
+    \\  emit @match { message "old" }
+    \\}
+;
+
+pub const kata_local_new =
+    \\rule local {
+    \\  lang ts
+    \\  match identifier @match
+    \\  emit @match { message "new body, strictly longer than the old one" }
+    \\}
+;
+
+pub const TmpProject = struct {
+    tmp: std.testing.TmpDir,
+    arena: std.heap.ArenaAllocator,
+    root: []const u8,
+
+    pub fn init() !*TmpProject {
+        const gpa = std.testing.allocator;
+        const self = try gpa.create(TmpProject);
+        self.* = .{
+            .tmp = std.testing.tmpDir(.{}),
+            .arena = .init(gpa),
+            .root = undefined,
+        };
+        var rel_buf: [256]u8 = undefined;
+        const rel = try relativeTmpPath(&rel_buf, &self.tmp.sub_path);
+        self.root = try self.arena.allocator().dupe(u8, rel);
+        return self;
+    }
+
+    pub fn deinit(self: *TmpProject) void {
+        const gpa = std.testing.allocator;
+        self.tmp.cleanup();
+        self.arena.deinit();
+        gpa.destroy(self);
+    }
+
+    pub fn path(self: *TmpProject, sub: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(self.arena.allocator(), "{s}/{s}", .{ self.root, sub });
+    }
+};
+
+pub fn resolver(user_rules_dir: ?[]const u8, global: ?*const config.Config) context.Resolver {
+    return .{
+        .gpa = std.testing.allocator,
+        .io = std.testing.io,
+        .user_rules_dir = user_rules_dir,
+        .global_config = global,
+    };
+}
+
+pub fn parseGlobal(yaml: []const u8) !config.Config {
+    var diag: config.Diagnostic = .{};
+    return try config.parse(std.testing.allocator, yaml, &diag);
+}
+
+pub fn ruleSource(set: anytype, lang: language.Name, id: []const u8) ?[]const u8 {
+    for (set.get(lang)) |r| {
+        if (std.mem.eql(u8, r.id, id)) return r.source;
+    }
+    return null;
+}
 
 pub const no_as_any_rule =
     \\rule no-as-any {

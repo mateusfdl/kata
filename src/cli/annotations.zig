@@ -128,12 +128,12 @@ pub const Parser = struct {
             for (annotation.ids) |id| {
                 var rule_id = id;
                 switch (parser.table.resolve(lang, id)) {
-                    .renamed, .replaced => |canonical| {
+                    .renamed => |canonical| {
                         try parser.stdout.print("{s}:{d} renamed [{s} -> {s}]\n", .{ path, annotation.line + 1, id, canonical });
 
                         rule_id = canonical;
                     },
-                    .live, .removed, .unknown => {},
+                    .unchanged, .removed => {},
                 }
 
                 try parser.expectations.append(arena, .{ .line = target, .rule_id = rule_id });

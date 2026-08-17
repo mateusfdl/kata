@@ -2,7 +2,7 @@ const std = @import("std");
 
 const fs = @import("../fs.zig");
 const lint = @import("engine");
-const sources = @import("../sources.zig");
+const context_cache = @import("context_cache.zig");
 const protocol = @import("protocol.zig");
 const replay = @import("replay.zig");
 
@@ -15,7 +15,7 @@ pub const Context = struct {
     io: std.Io,
     project: ?*lint.Project = null,
     ratchet: bool = false,
-    cache: ?*sources.context.Cache = null,
+    cache: ?*context_cache.Cache = null,
     replay: ?*replay.ReplayCache = null,
     max_matches: u32 = 25,
     cache_dir: ?[]const u8 = null,
@@ -241,12 +241,12 @@ pub fn handle(
             return reply(.fail, null, "project context failed");
 
         if (per_project) |p| {
-            engine = &p.engine;
-            ratchet = p.resolved.ratchet;
+            engine = &p.ctx.engine;
+            ratchet = p.ctx.resolved.ratchet;
             replay_cache = &p.replay;
-            max_matches = p.resolved.max_matches_per_file;
-            cache_enabled = p.resolved.cache;
-            rules_hash = p.rules_hash;
+            max_matches = p.ctx.resolved.max_matches_per_file;
+            cache_enabled = p.ctx.resolved.cache;
+            rules_hash = p.ctx.rules_hash;
         }
     }
 

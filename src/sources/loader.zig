@@ -7,8 +7,6 @@ const lint = @import("engine");
 const language = lint.language;
 
 pub const RuleSet = lint.RuleSet;
-pub const Source = lint.Source;
-pub const Warning = lint.Warning;
 
 pub const Sources = struct {
     user_dir: ?[]const u8 = null,

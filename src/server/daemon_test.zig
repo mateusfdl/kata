@@ -668,42 +668,34 @@ test "daemon: ratchet without filename leaves severity untouched" {
 }
 
 const sources = @import("../sources.zig");
+const context_cache = @import("context_cache.zig");
 
 const ProjectHarness = struct {
-    tmp: std.testing.TmpDir,
-    arena: std.heap.ArenaAllocator,
+    project: *test_fixture.TmpProject,
     resolver: sources.context.Resolver,
-    cache: sources.context.Cache,
+    cache: context_cache.Cache,
 
     fn init() !*ProjectHarness {
         const gpa = std.testing.allocator;
         const self = try gpa.create(ProjectHarness);
         self.* = .{
-            .tmp = std.testing.tmpDir(.{}),
-            .arena = .init(gpa),
-            .resolver = undefined,
+            .project = try test_fixture.TmpProject.init(),
+            .resolver = test_fixture.resolver(null, null),
             .cache = undefined,
         };
-        self.resolver = .{
-            .gpa = gpa,
-            .io = std.testing.io,
-        };
-        self.cache = sources.context.Cache.init(gpa, &self.resolver);
+        self.cache = context_cache.Cache.init(gpa, &self.resolver);
         return self;
     }
 
     fn deinit(self: *ProjectHarness) void {
         const gpa = std.testing.allocator;
         self.cache.deinit();
-        self.tmp.cleanup();
-        self.arena.deinit();
+        self.project.deinit();
         gpa.destroy(self);
     }
 
     fn path(self: *ProjectHarness, sub: []const u8) ![]const u8 {
-        var rel_buf: [256]u8 = undefined;
-        const rel = try test_fixture.relativeTmpPath(&rel_buf, &self.tmp.sub_path);
-        return std.fmt.allocPrint(self.arena.allocator(), "{s}/{s}", .{ rel, sub });
+        return self.project.path(sub);
     }
 };
 
@@ -741,10 +733,10 @@ test "daemon: project ratchet demotes unchanged violations while the daemon defa
     var h = try ProjectHarness.init();
     defer h.deinit();
 
-    try h.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
-    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\nrules:\n  ts:\n    flag-zzz:\n" });
-    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.kata", .data = flag_zzz_kata_rule });
-    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const zzz = 1;\n" });
+    try h.project.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\nrules:\n  ts:\n    flag-zzz:\n" });
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.kata", .data = flag_zzz_kata_rule });
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const zzz = 1;\n" });
 
     var ctx = context(f);
     ctx.cache = &h.cache;
@@ -771,9 +763,9 @@ test "daemon: broken project rules yaml fails the request" {
     var h = try ProjectHarness.init();
     defer h.deinit();
 
-    try h.tmp.dir.createDirPath(io, "proj/.kata");
-    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "nonsense: true\n" });
-    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const ok = 1;\n" });
+    try h.project.tmp.dir.createDirPath(io, "proj/.kata");
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "nonsense: true\n" });
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const ok = 1;\n" });
 
     var ctx = context(f);
     ctx.cache = &h.cache;
@@ -806,10 +798,10 @@ test "daemon: cached project context lints with kata project rules" {
     var h = try ProjectHarness.init();
     defer h.deinit();
 
-    try h.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
-    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "rules:\n  ts:\n    flag-zzz:\n" });
-    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.kata", .data = flag_zzz_kata_rule });
-    try h.tmp.dir.writeFile(io, .{ .sub_path = "proj/main.ts", .data = "const ok = 1;\n" });
+    try h.project.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "rules:\n  ts:\n    flag-zzz:\n" });
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.kata", .data = flag_zzz_kata_rule });
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/main.ts", .data = "const ok = 1;\n" });
 
     var ctx = context(f);
     ctx.cache = &h.cache;

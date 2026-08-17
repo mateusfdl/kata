@@ -4,15 +4,14 @@ const fs = @import("../fs.zig");
 const lint = @import("engine");
 const lifecycle = @import("lifecycle.zig");
 const loader = @import("loader.zig");
+const yaml = @import("yaml.zig");
 
 const diagnostic = lint.diagnostic;
 const language = lint.language;
 const project_rule = lint.project_rule;
 const rule = lint.rule;
 
-pub const max_config_bytes = fs.config.max_config_bytes;
-
-pub const RuleSetting = rule.RuleSetting;
+const RuleSetting = rule.RuleSetting;
 
 pub const Presence = struct {
     project_rules: bool = false,
@@ -205,12 +204,13 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     errdefer arena_ptr.deinit();
     const arena = arena_ptr.allocator();
 
+    const defaults: Resolved = .{};
     var settings: std.ArrayList(RuleSetting) = .empty;
     var project_rules: std.ArrayList(project_rule.ProjectRule) = .empty;
-    var ratchet = false;
-    var max_matches_per_file: u32 = 25;
-    var daemon_autostart = false;
-    var cache = false;
+    var ratchet = defaults.ratchet;
+    var max_matches_per_file = defaults.max_matches_per_file;
+    var daemon_autostart = defaults.daemon_autostart;
+    var cache = defaults.cache;
     var present: Presence = .{};
     var pending: ?PendingProjectRule = null;
     var pending_rule: ?PendingRule = null;
@@ -240,7 +240,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
             try finalizePendingRule(arena, &pending_rule, &settings, diag);
             scope = null;
             if (std.mem.startsWith(u8, content, "ratchet:")) {
-                ratchet = try parseRatchetValue(content["ratchet:".len..]);
+                ratchet = try parseBoolValue(std.mem.trim(u8, content["ratchet:".len..], " "), error.InvalidRatchetValue);
                 present.ratchet = true;
                 state = .top;
                 continue;
@@ -252,19 +252,19 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
                 continue;
             }
             if (std.mem.startsWith(u8, content, "daemon-autostart:")) {
-                daemon_autostart = try parseAutostartValue(content["daemon-autostart:".len..]);
+                daemon_autostart = try parseBoolValue(std.mem.trim(u8, content["daemon-autostart:".len..], " "), error.InvalidDaemonAutostartValue);
                 present.daemon_autostart = true;
                 state = .top;
                 continue;
             }
             if (std.mem.startsWith(u8, content, "cache:")) {
-                cache = try parseCacheValue(content["cache:".len..]);
+                cache = try parseBoolValue(std.mem.trim(u8, content["cache:".len..], " "), error.InvalidCacheValue);
                 present.cache = true;
                 state = .top;
                 continue;
             }
             state = try parseTopLevelKey(content);
-            markPresent(&present, state);
+            if (state == .in_project_rules) present.project_rules = true;
             continue;
         }
 
@@ -303,15 +303,10 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
         }
 
         if (indent == 2) {
-            switch (state) {
-                .top => return error.UnexpectedListItem,
-                .in_rules => unreachable,
-                .in_project_rules => {
-                    try finalizePending(arena, &pending, &project_rules, diag);
-                    diag.line = line_no;
-                    pending = try startProjectRule(arena, content, line_no);
-                },
-            }
+            if (state == .top) return error.UnexpectedListItem;
+            try finalizePending(arena, &pending, &project_rules, diag);
+            diag.line = line_no;
+            pending = try startProjectRule(arena, content, line_no);
             continue;
         }
 
@@ -344,29 +339,10 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     };
 }
 
-fn markPresent(present: *Presence, state: State) void {
-    switch (state) {
-        .top, .in_rules => {},
-        .in_project_rules => present.project_rules = true,
-    }
-}
-
 fn parseMaxMatchesValue(raw: []const u8) ParseError!u32 {
     const value = std.mem.trim(u8, raw, " ");
 
     return std.fmt.parseInt(u32, value, 10) catch error.InvalidMaxMatchesValue;
-}
-
-fn parseRatchetValue(raw: []const u8) ParseError!bool {
-    return parseBoolValue(std.mem.trim(u8, raw, " "), error.InvalidRatchetValue);
-}
-
-fn parseAutostartValue(raw: []const u8) ParseError!bool {
-    return parseBoolValue(std.mem.trim(u8, raw, " "), error.InvalidDaemonAutostartValue);
-}
-
-fn parseCacheValue(raw: []const u8) ParseError!bool {
-    return parseBoolValue(std.mem.trim(u8, raw, " "), error.InvalidCacheValue);
 }
 
 fn finalizePending(
@@ -606,21 +582,11 @@ fn appendExcludeItem(
 ) ParseError!void {
     if (!std.mem.startsWith(u8, content, "- ")) return error.MalformedListItem;
 
-    const item = stripQuotes(std.mem.trim(u8, content[2..], " "));
+    const item = yaml.unquote(std.mem.trim(u8, content[2..], " "));
 
     if (item.len == 0) return error.MalformedListItem;
 
     try pending.exclude.append(arena, try arena.dupe(u8, item));
-}
-
-fn stripQuotes(s: []const u8) []const u8 {
-    if (s.len < 2) return s;
-
-    const first = s[0];
-    const last = s[s.len - 1];
-    if ((first == '\'' and last == '\'') or (first == '"' and last == '"')) return s[1 .. s.len - 1];
-
-    return s;
 }
 
 fn finalizePendingRule(
@@ -794,7 +760,7 @@ fn resolveFormerIds(
     for (rewritten) |*setting| {
         const scope: ?language.Name = if (setting.project) null else setting.lang orelse continue;
         switch (table.resolve(scope, setting.id)) {
-            .renamed, .replaced => |canonical| {
+            .renamed => |canonical| {
                 try appendRenamedWarning(set, setting.lang, setting.id, canonical);
                 setting.id = canonical;
             },
@@ -807,7 +773,7 @@ fn resolveFormerIds(
 
                 return error.RetiredRuleRemoved;
             },
-            .live, .unknown => {},
+            .unchanged => {},
         }
     }
 

@@ -11,11 +11,9 @@ const language = lint.language;
 pub const Error = error{ OutOfMemory, LifecycleCollision };
 
 pub const Resolution = union(enum) {
-    live,
+    unchanged,
     renamed: []const u8,
-    replaced: []const u8,
     removed: []const u8,
-    unknown,
 };
 
 const Scope = struct {
@@ -32,16 +30,16 @@ pub const Table = struct {
 
     pub fn resolve(self: *const Table, scope: ?language.Name, id: []const u8) Resolution {
         const maps = self.scopeOf(scope);
-        if (maps.live.contains(id)) return .live;
+        if (maps.live.contains(id)) return .unchanged;
         if (maps.aliases.get(id)) |canonical| return .{ .renamed = canonical };
         if (self.retired.get(id)) |entry| {
             return switch (entry) {
-                .replaced => |canonical| .{ .replaced = canonical },
+                .replaced => |canonical| .{ .renamed = canonical },
                 .removed => |reason| .{ .removed = reason },
             };
         }
 
-        return .unknown;
+        return .unchanged;
     }
 
     pub fn maturityOf(self: *const Table, scope: ?language.Name, id: []const u8) diagnostic.Maturity {

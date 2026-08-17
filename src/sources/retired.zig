@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const yaml = @import("yaml.zig");
+
 pub const embedded_source = @embedFile("retired.yaml");
 
 pub const Error = error{ OutOfMemory, InvalidRetiredEntry, MissingRetiredReason };
@@ -76,7 +78,7 @@ fn startEntry(arena: std.mem.Allocator, line: []const u8, line_no: u32, diag: *D
 fn setProperty(arena: std.mem.Allocator, entry: *Pending, trimmed: []const u8, line_no: u32, diag: *Diagnostic) Error!void {
     const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse return fail(diag, line_no, error.InvalidRetiredEntry);
     const key = trimmed[0..colon];
-    const value = unquote(std.mem.trim(u8, trimmed[colon + 1 ..], " "));
+    const value = yaml.unquote(std.mem.trim(u8, trimmed[colon + 1 ..], " "));
     if (value.len == 0) return fail(diag, line_no, error.InvalidRetiredEntry);
 
     if (std.mem.eql(u8, key, "replaced-by")) {
@@ -102,12 +104,6 @@ fn finalize(arena: std.mem.Allocator, registry: *Registry, pending: ?Pending, di
     }
 
     return fail(diag, entry.line, error.MissingRetiredReason);
-}
-
-fn unquote(value: []const u8) []const u8 {
-    if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"') return value[1 .. value.len - 1];
-
-    return value;
 }
 
 fn fail(diag: *Diagnostic, line: u32, err: Error) Error {

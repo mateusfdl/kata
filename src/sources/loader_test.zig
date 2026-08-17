@@ -31,7 +31,7 @@ test "upsert: same-tier collision replaces in place and emits one warning" {
 
     try std.testing.expectEqual(@as(usize, 1), set.warnings.items.len);
     const w = set.warnings.items[0];
-    try std.testing.expectEqual(loader.Source.user, w.source);
+    try std.testing.expectEqual(lint.Source.user, w.source);
     try std.testing.expectEqual(language.Name.ts, w.lang);
     try std.testing.expectEqualStrings("no-any", w.id);
 }
@@ -273,7 +273,7 @@ test "load: project dir reads kata files into the project slot" {
     try std.testing.expectEqual(@as(usize, 1), set.projectRaws().len);
     try std.testing.expectEqualStrings("isolation", set.projectRaws()[0].id);
     try std.testing.expectEqualStrings("rule isolation {}", set.projectRaws()[0].source);
-    try std.testing.expectEqual(loader.Source.project, set.projectRaws()[0].origin);
+    try std.testing.expectEqual(lint.Source.project, set.projectRaws()[0].origin);
 }
 
 test "load: project dir ignores non-kata files" {

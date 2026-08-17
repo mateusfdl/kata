@@ -135,6 +135,7 @@ pub const Parser = struct {
         }
 
         var rules: std.ArrayList(ast.Rule) = .empty;
+
         while (self.current.kind != .eof) {
             if (self.currentIs(.pattern)) {
                 try self.parseFragmentDeclaration();
@@ -1216,6 +1217,7 @@ pub const Parser = struct {
 
             return error.DuplicateClause;
         }
+
         seen.* = true;
     }
 

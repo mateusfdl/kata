@@ -39,7 +39,7 @@ test "lifecycle: builds alias and maturity table from rule bodies" {
     }
 }
 
-test "lifecycle: resolve distinguishes live and unknown ids" {
+test "lifecycle: resolve returns unchanged for live and unknown ids" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -50,9 +50,9 @@ test "lifecycle: resolve distinguishes live and unknown ids" {
     var diag: lint.rule.Diagnostic = .{};
     const table = try lifecycle.build(arena, &rule_set, &diag);
 
-    try std.testing.expectEqual(lifecycle.Resolution.live, table.resolve(.ts, "plain"));
-    try std.testing.expectEqual(lifecycle.Resolution.unknown, table.resolve(.ts, "missing"));
-    try std.testing.expectEqual(lifecycle.Resolution.unknown, table.resolve(.go, "plain"));
+    try std.testing.expectEqual(lifecycle.Resolution.unchanged, table.resolve(.ts, "plain"));
+    try std.testing.expectEqual(lifecycle.Resolution.unchanged, table.resolve(.ts, "missing"));
+    try std.testing.expectEqual(lifecycle.Resolution.unchanged, table.resolve(.go, "plain"));
 }
 
 test "lifecycle: parse-failing body is skipped without error" {
@@ -67,9 +67,9 @@ test "lifecycle: parse-failing body is skipped without error" {
     var diag: lint.rule.Diagnostic = .{};
     const table = try lifecycle.build(arena, &rule_set, &diag);
 
-    try std.testing.expectEqual(lifecycle.Resolution.live, table.resolve(.ts, "broken"));
+    try std.testing.expectEqual(lifecycle.Resolution.unchanged, table.resolve(.ts, "broken"));
     try std.testing.expectEqual(diagnostic.Maturity.stable, table.maturityOf(.ts, "broken"));
-    try std.testing.expectEqual(lifecycle.Resolution.live, table.resolve(.ts, "plain"));
+    try std.testing.expectEqual(lifecycle.Resolution.unchanged, table.resolve(.ts, "plain"));
 }
 
 test "lifecycle: former id colliding with a live id fails" {
@@ -143,10 +143,10 @@ test "lifecycle: project rules register in the project scope" {
     var diag: lint.rule.Diagnostic = .{};
     const table = try lifecycle.build(arena, &rule_set, &diag);
 
-    try std.testing.expectEqual(lifecycle.Resolution.live, table.resolve(null, "boundary"));
+    try std.testing.expectEqual(lifecycle.Resolution.unchanged, table.resolve(null, "boundary"));
     switch (table.resolve(null, "old-boundary")) {
         .renamed => |canonical| try std.testing.expectEqualStrings("boundary", canonical),
         else => return error.TestUnexpectedResult,
     }
-    try std.testing.expectEqual(lifecycle.Resolution.unknown, table.resolve(.ts, "old-boundary"));
+    try std.testing.expectEqual(lifecycle.Resolution.unchanged, table.resolve(.ts, "old-boundary"));
 }

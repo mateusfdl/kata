@@ -362,8 +362,12 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
             return internalError(c.stderr, "index project", err);
     }
 
-    var cache = context_mod.Cache.init(c.gpa, c.resolver);
+    var cache = server.context_cache.Cache.init(c.gpa, c.resolver);
     defer cache.deinit();
+
+    var replay_cache = server.replay.ReplayCache.init(c.gpa, server.replay.default_capacity) catch |err|
+        return internalError(c.stderr, "initialize replay cache", err);
+    defer replay_cache.deinit();
 
     daemon.serve(c.gpa, .{
         .engine = &ctx.engine,
@@ -371,7 +375,7 @@ fn runDaemon(c: Command, root: ?[]const u8) !u8 {
         .project = if (project_state) |*p| p else null,
         .ratchet = ctx.resolved.ratchet,
         .cache = &cache,
-        .replay = &ctx.replay,
+        .replay = &replay_cache,
         .max_matches = ctx.resolved.max_matches_per_file,
         .cache_dir = if (ctx.resolved.cache) resolveCacheDir(c) else null,
         .cache_enabled = ctx.resolved.cache,
