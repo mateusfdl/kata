@@ -63,6 +63,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const git_module = b.createModule(.{
+        .root_source_file = b.path("src/git/git.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    git_module.addImport("path", path_module);
+
     const node_kinds_module = b.createModule(.{
         .root_source_file = node_kinds_zig,
         .target = target,
@@ -101,7 +108,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .strip = strip,
     });
-    wireKataModule(exe_module, engine_module, dsl_module, shared_module, path_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
+    wireKataModule(exe_module, engine_module, dsl_module, shared_module, path_module, git_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
     const exe = b.addExecutable(.{
         .name = "kata",
         .root_module = exe_module,
@@ -114,7 +121,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    wireKataModule(test_module, engine_module, dsl_module, shared_module, path_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
+    wireKataModule(test_module, engine_module, dsl_module, shared_module, path_module, git_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
     // Test artifacts share one install directory. Distinct names keep each
     // debugger target addressable without replacing another test binary.
     const unit_tests = b.addTest(.{
@@ -269,6 +276,7 @@ fn wireKataModule(
     dsl_module: *std.Build.Module,
     shared_module: *std.Build.Module,
     path_module: *std.Build.Module,
+    git_module: *std.Build.Module,
     mvzr_module: *std.Build.Module,
     embedded_rules_zig: std.Build.LazyPath,
     node_kinds_module: *std.Build.Module,
@@ -278,6 +286,7 @@ fn wireKataModule(
     module.addImport("dsl", dsl_module);
     module.addImport("shared", shared_module);
     module.addImport("path", path_module);
+    module.addImport("git", git_module);
     module.addImport("mvzr", mvzr_module);
     module.addAnonymousImport("embedded_rules", .{ .root_source_file = embedded_rules_zig });
     module.addImport("node_kinds", node_kinds_module);

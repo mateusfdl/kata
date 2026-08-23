@@ -3,6 +3,7 @@ const std = @import("std");
 const build_options = @import("build_options");
 
 const fs = @import("fs.zig");
+const git = @import("git");
 const lint = @import("engine");
 const reports = @import("reports.zig");
 const server = @import("server.zig");
@@ -397,12 +398,12 @@ fn runCheck(c: Command, opts: CheckOptions) !u8 {
     var baseline: ?check.Baseline = null;
     if (baselineRef(opts.baseline, c.environ)) |ref| {
         const dir = std.Io.Dir.cwd();
-        fs.git.verifyRef(c.io, c.gpa, dir, ref) catch |err| switch (err) {
+        git.verifyRef(c.io, c.gpa, dir, ref) catch |err| switch (err) {
             error.UnknownRef => return printfAndExit(c.stderr, "unknown baseline ref \"{s}\"\n", .{ref}, exit.usage),
             error.NotAWorkTree => return printAndExit(c.stderr, "kata check --baseline requires a git work tree\n", exit.usage),
             else => return internalError(c.stderr, "verify baseline ref", err),
         };
-        const prefix = fs.git.repoPrefix(c.io, c.arena, dir) catch |err| switch (err) {
+        const prefix = git.repoPrefix(c.io, c.arena, dir) catch |err| switch (err) {
             error.NotAWorkTree => return printAndExit(c.stderr, "kata check --baseline requires a git work tree\n", exit.usage),
             else => return internalError(c.stderr, "resolve repo prefix", err),
         };

@@ -1,7 +1,9 @@
 const std = @import("std");
 
-const git = @import("git.zig");
+const git = @import("git");
 const test_fixture = @import("../test_fixture.zig");
+
+const test_limit: usize = 64 * 1024;
 
 fn initRepoWithCommit(gpa: std.mem.Allocator, io: std.Io, tmp: *std.testing.TmpDir) !void {
     try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const a = 1;\n" });
@@ -24,7 +26,7 @@ test "git: showFile returns content committed at the ref" {
     try initRepoWithCommit(gpa, io, &tmp);
     try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const changed = 2;\n" });
 
-    const content = try git.showFile(io, gpa, tmp.dir, "HEAD", "a.ts") orelse return error.TestUnexpectedResult;
+    const content = try git.showFile(io, gpa, tmp.dir, "HEAD", "a.ts", test_limit) orelse return error.TestUnexpectedResult;
     defer gpa.free(content);
 
     try std.testing.expectEqualStrings("const a = 1;\n", content);
@@ -38,7 +40,7 @@ test "git: showFile returns null for a path absent at the ref" {
     defer tmp.cleanup();
     try initRepoWithCommit(gpa, io, &tmp);
 
-    const content = try git.showFile(io, gpa, tmp.dir, "HEAD", "missing.ts");
+    const content = try git.showFile(io, gpa, tmp.dir, "HEAD", "missing.ts", test_limit);
 
     try std.testing.expectEqual(@as(?[]u8, null), content);
 }

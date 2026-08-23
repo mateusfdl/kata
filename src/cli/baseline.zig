@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const fs = @import("../fs.zig");
+const git = @import("git");
 const lint = @import("engine");
 const sources = @import("../sources.zig");
 
@@ -26,11 +27,11 @@ pub const Baseline = struct {
         var out: std.ArrayList([]const u8) = .empty;
 
         const rules_path = try std.fmt.allocPrint(arena, "{s}{s}/rules", .{ base, fs.discover.project_dir_name });
-        const ref_files = try fs.git.listFiles(io, arena, baseline.dir, baseline.ref, rules_path);
+        const ref_files = try git.listFiles(io, arena, baseline.dir, baseline.ref, rules_path, fs.source.max_file_bytes);
         try appendEnabledAfterRef(arena, &out, rule_set, ref_files);
 
         const yaml_path = try std.fmt.allocPrint(arena, "{s}{s}/rules.yaml", .{ base, fs.discover.project_dir_name });
-        if (try fs.git.showFile(io, arena, baseline.dir, baseline.ref, yaml_path)) |bytes| {
+        if (try git.showFile(io, arena, baseline.dir, baseline.ref, yaml_path, fs.source.max_file_bytes)) |bytes| {
             try appendRaisedAfterRef(arena, &out, bytes);
         }
 
@@ -65,7 +66,7 @@ pub const Baseline = struct {
         const repo_path = try std.fmt.allocPrint(arena, "{s}{s}", .{ baseline.prefix, path });
 
         // A file absent at the ref has no historical findings to demote.
-        const baseline_source = (try fs.git.showFile(io, arena, baseline.dir, baseline.ref, repo_path)) orelse return;
+        const baseline_source = (try git.showFile(io, arena, baseline.dir, baseline.ref, repo_path, fs.source.max_file_bytes)) orelse return;
         const before = try engine.lint(arena, baseline_source, lang, path);
         try lint.fingerprint.assign(arena, path, baseline_source, before);
         _ = try lint.baseline.demote(arena, source, diagnostics, baseline_source, before);

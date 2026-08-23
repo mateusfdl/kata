@@ -1,12 +1,12 @@
 const std = @import("std");
 
-const source = @import("source.zig");
+const max_control_bytes: usize = std.fs.max_path_bytes + 1;
 
 pub fn verifyRef(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, ref: []const u8) !void {
     const spec = try std.fmt.allocPrint(gpa, "{s}^{{commit}}", .{ref});
     defer gpa.free(spec);
 
-    const result = try run(io, gpa, dir, &.{ "git", "rev-parse", "--verify", "--quiet", spec });
+    const result = try run(io, gpa, dir, &.{ "git", "rev-parse", "--verify", "--quiet", spec }, max_control_bytes);
     gpa.free(result.stdout);
     gpa.free(result.stderr);
 
@@ -18,7 +18,7 @@ pub fn verifyRef(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, ref: []con
 }
 
 pub fn repoPrefix(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir) ![]u8 {
-    const result = try run(io, gpa, dir, &.{ "git", "rev-parse", "--show-prefix" });
+    const result = try run(io, gpa, dir, &.{ "git", "rev-parse", "--show-prefix" }, max_control_bytes);
     gpa.free(result.stderr);
 
     if ((exitCode(result.term) orelse 1) != 0) {
@@ -37,11 +37,12 @@ pub fn showFile(
     dir: std.Io.Dir,
     ref: []const u8,
     repo_path: []const u8,
+    limit: usize,
 ) !?[]u8 {
     const spec = try std.fmt.allocPrint(gpa, "{s}:{s}", .{ ref, repo_path });
     defer gpa.free(spec);
 
-    const result = run(io, gpa, dir, &.{ "git", "show", spec }) catch |err| switch (err) {
+    const result = run(io, gpa, dir, &.{ "git", "show", spec }, limit) catch |err| switch (err) {
         error.StreamTooLong => return null,
 
         else => return err,
@@ -62,8 +63,9 @@ pub fn listFiles(
     dir: std.Io.Dir,
     ref: []const u8,
     repo_path: []const u8,
+    limit: usize,
 ) ![]const []const u8 {
-    const result = try run(io, gpa, dir, &.{ "git", "ls-tree", "-r", "--name-only", ref, "--", repo_path });
+    const result = try run(io, gpa, dir, &.{ "git", "ls-tree", "-r", "--name-only", ref, "--", repo_path }, limit);
     defer gpa.free(result.stdout);
     gpa.free(result.stderr);
 
@@ -73,6 +75,7 @@ pub fn listFiles(
     var lines = std.mem.splitScalar(u8, result.stdout, '\n');
     while (lines.next()) |line| {
         if (line.len == 0) continue;
+
         try files.append(gpa, try gpa.dupe(u8, line));
     }
 
@@ -84,11 +87,12 @@ fn run(
     gpa: std.mem.Allocator,
     dir: std.Io.Dir,
     argv: []const []const u8,
+    limit: usize,
 ) !std.process.RunResult {
     return std.process.run(gpa, io, .{
         .argv = argv,
         .cwd = .{ .dir = dir },
-        .stdout_limit = .limited(source.max_file_bytes),
+        .stdout_limit = .limited(limit),
     });
 }
 

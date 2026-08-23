@@ -32,7 +32,7 @@ comptime {
     _ = @import("sources/retired_test.zig");
     _ = @import("sources/context_test.zig");
     _ = @import("sources/loader_test.zig");
-    _ = @import("fs/git_test.zig");
+    _ = @import("git/git_test.zig");
     _ = @import("fs/gitignore_parity_test.zig");
     _ = @import("fs/gitignore_test.zig");
     _ = @import("fs/source_test.zig");
