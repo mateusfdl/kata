@@ -22,20 +22,24 @@ const Presenter = struct {
     ) !u8 {
         const lang = switch (language.resolve("", target)) {
             .ok => |n| n,
-            else => return output.format(stderr, "cannot infer language from \"{s}\"\n", .{target}, exit.usage),
+            else => {
+                return output.format(stderr, "cannot infer language from \"{s}\"\n", .{target}, exit.usage);
+            },
         };
 
         const source = fs.source.read(io, gpa, target) catch |err|
             return output.internal(stderr, "read file", err, exit.internal_error);
         defer gpa.free(source);
 
-        var file_facts = engine.extractFacts(gpa, source, lang, target) catch |err|
+        var file_facts = engine.extractFacts(gpa, source, lang, target) catch |err| {
             return output.internal(stderr, "extract facts", err, exit.internal_error);
+        };
         defer file_facts.deinit();
 
         const presenter: Presenter = .{ .stdout = stdout };
-        presenter.print(file_facts) catch |err|
+        presenter.print(file_facts) catch |err| {
             return output.internal(stderr, "print facts", err, exit.internal_error);
+        };
 
         return exit.clean;
     }

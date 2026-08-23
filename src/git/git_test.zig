@@ -45,6 +45,32 @@ test "git: showFile returns null for a path absent at the ref" {
     try std.testing.expectEqual(@as(?[]u8, null), content);
 }
 
+test "git: listFiles returns the ls-tree name list as one buffer" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try initRepoWithCommit(gpa, io, &tmp);
+
+    const listing = (try git.listFiles(io, gpa, tmp.dir, "HEAD", ".", test_limit)) orelse return error.TestUnexpectedResult;
+    defer gpa.free(listing);
+
+    try std.testing.expectEqualStrings("a.ts\n", listing);
+}
+
+test "git: listFiles returns null outside a work tree" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try test_fixture.runGit(gpa, io, tmp.dir, &.{ "git", "--version" });
+    try tmp.dir.writeFile(io, .{ .sub_path = ".git", .data = "gitdir: /nonexistent\n" });
+
+    try std.testing.expectEqual(@as(?[]u8, null), try git.listFiles(io, gpa, tmp.dir, "HEAD", ".", test_limit));
+}
+
 test "git: verifyRef accepts a commit ref and rejects garbage" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;

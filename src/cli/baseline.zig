@@ -27,7 +27,7 @@ pub const Baseline = struct {
         var out: std.ArrayList([]const u8) = .empty;
 
         const rules_path = try std.fmt.allocPrint(arena, "{s}{s}/rules", .{ base, fs.discover.project_dir_name });
-        const ref_files = try git.listFiles(io, arena, baseline.dir, baseline.ref, rules_path, fs.source.max_file_bytes);
+        const ref_files = (try git.listFiles(io, arena, baseline.dir, baseline.ref, rules_path, fs.source.max_file_bytes)) orelse "";
         try appendEnabledAfterRef(arena, &out, rule_set, ref_files);
 
         const yaml_path = try std.fmt.allocPrint(arena, "{s}{s}/rules.yaml", .{ base, fs.discover.project_dir_name });
@@ -84,7 +84,7 @@ pub const Baseline = struct {
         arena: std.mem.Allocator,
         out: *std.ArrayList([]const u8),
         rule_set: *const lint.RuleSet,
-        ref_files: []const []const u8,
+        ref_files: []const u8,
     ) !void {
         for (std.enums.values(language.Name)) |lang| {
             for (rule_set.get(lang)) |raw| {
@@ -101,13 +101,14 @@ pub const Baseline = struct {
         arena: std.mem.Allocator,
         out: *std.ArrayList([]const u8),
         raw: lint.rule.RawRule,
-        ref_files: []const []const u8,
+        ref_files: []const u8,
     ) !void {
         if (raw.origin != .project) return;
         if (containsId(out.items, raw.id)) return;
 
         const suffix = try std.fmt.allocPrint(arena, "/{s}{s}", .{ raw.id, fs.rules.kata_suffix });
-        for (ref_files) |path| {
+        var lines = std.mem.splitScalar(u8, ref_files, '\n');
+        while (lines.next()) |path| {
             if (std.mem.endsWith(u8, path, suffix)) return;
         }
 

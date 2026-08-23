@@ -77,22 +77,16 @@ pub fn listFiles(
     ref: []const u8,
     repo_path: []const u8,
     limit: usize,
-) ![]const []const u8 {
+) !?[]u8 {
     const result = try run(io, gpa, dir, &.{ "git", "ls-tree", "-r", "--name-only", ref, "--", repo_path }, limit);
-    defer gpa.free(result.stdout);
     gpa.free(result.stderr);
 
-    if ((exitCode(result.term) orelse 1) != 0) return &.{};
-
-    var files: std.ArrayList([]const u8) = .empty;
-    var lines = std.mem.splitScalar(u8, result.stdout, '\n');
-    while (lines.next()) |line| {
-        if (line.len == 0) continue;
-
-        try files.append(gpa, try gpa.dupe(u8, line));
+    if ((exitCode(result.term) orelse 1) != 0) {
+        gpa.free(result.stdout);
+        return null;
     }
 
-    return files.toOwnedSlice(gpa);
+    return result.stdout;
 }
 
 fn run(
