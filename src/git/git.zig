@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const ignore = @import("ignore.zig");
+
 const max_control_bytes: usize = std.fs.max_path_bytes + 1;
 
 pub fn verifyRef(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, ref: []const u8) !void {

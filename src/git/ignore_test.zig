@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const gitignore = @import("gitignore.zig");
+const gitignore = @import("git").ignore;
 
 const Expected = struct {
     negated: bool = false,

@@ -1,9 +1,11 @@
 const std = @import("std");
 
+const git = @import("git");
 const lint = @import("engine");
 const file = @import("file.zig");
-const gitignore = @import("gitignore.zig");
 const paths = @import("path");
+
+const gitignore = git.ignore;
 
 const language = lint.language;
 

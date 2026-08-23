@@ -1,8 +1,8 @@
 const std = @import("std");
 
 const lint = @import("engine");
-const gitignore = @import("gitignore.zig");
-const source = @import("source.zig");
+const gitignore = @import("git").ignore;
+const source = @import("../fs/source.zig");
 const test_fixture = @import("../test_fixture.zig");
 
 const FileSpec = struct {
