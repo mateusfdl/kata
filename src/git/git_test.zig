@@ -76,6 +76,60 @@ test "git: repoPrefix is empty at the root and the relative dir inside" {
     try std.testing.expectEqualStrings("sub/", sub_prefix);
 }
 
+test "git: findRoot returns the directory holding a .git dir" {
+    const io = std.testing.io;
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, ".git");
+    try tmp.dir.createDirPath(io, "sub/inner");
+
+    var path_buf: [256]u8 = undefined;
+    const tmp_rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    var sub_buf: [256]u8 = undefined;
+    const nested = try std.fmt.bufPrint(&sub_buf, "{s}/sub/inner", .{tmp_rel});
+
+    const root = (try git.findRoot(io, arena.allocator(), nested)) orelse return error.TestUnexpectedResult;
+
+    try std.testing.expectEqualStrings(tmp_rel, root);
+}
+
+test "git: findRoot accepts a .git gitdir file" {
+    const io = std.testing.io;
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = ".git", .data = "gitdir: /elsewhere\n" });
+
+    var path_buf: [256]u8 = undefined;
+    const tmp_rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    const root = (try git.findRoot(io, arena.allocator(), tmp_rel)) orelse return error.TestUnexpectedResult;
+
+    try std.testing.expectEqualStrings(tmp_rel, root);
+}
+
+test "git: findRoot returns null when no ancestor has .git" {
+    const io = std.testing.io;
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var path_buf: [256]u8 = undefined;
+    const tmp_rel = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+
+    try std.testing.expectEqual(@as(?[]const u8, null), try git.findRoot(io, arena.allocator(), tmp_rel));
+}
+
 test "git: outside a work tree errors NotAWorkTree" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;

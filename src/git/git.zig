@@ -1,8 +1,19 @@
 const std = @import("std");
 
+const paths = @import("path");
+
 pub const ignore = @import("ignore.zig");
 
 const max_control_bytes: usize = std.fs.max_path_bytes + 1;
+
+pub fn findRoot(io: std.Io, arena: std.mem.Allocator, path: []const u8) !?[]const u8 {
+    var root: []const u8 = path;
+    while (true) {
+        const marker = try paths.join(arena, root, ".git");
+        if (std.Io.Dir.cwd().statFile(io, marker, .{})) |_| return root else |_| {}
+        root = std.fs.path.dirname(root) orelse return null;
+    }
+}
 
 pub fn verifyRef(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, ref: []const u8) !void {
     const spec = try std.fmt.allocPrint(gpa, "{s}^{{commit}}", .{ref});

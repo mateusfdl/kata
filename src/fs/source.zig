@@ -152,12 +152,7 @@ fn loadAncestorScopes(
         break :blk try std.fs.path.resolve(arena, &.{ cwd, target });
     };
 
-    var root: []const u8 = abs;
-    while (true) {
-        const marker = try paths.join(arena, root, ".git");
-        if (file.stat(io, marker)) |_| break else |_| {}
-        root = std.fs.path.dirname(root) orelse return "";
-    }
+    const root = (try git.findRoot(io, arena, abs)) orelse return "";
     if (root.len == abs.len) return "";
     const prefix = abs[root.len + 1 ..];
 
