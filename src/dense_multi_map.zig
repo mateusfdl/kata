@@ -24,22 +24,28 @@ pub fn DenseMultiMapType(comptime Value: type) type {
             std.debug.assert(key_count < std.math.maxInt(usize));
 
             const counts = try memory.scratch().alloc(usize, key_count);
+
             @memset(counts, 0);
 
             for (entries) |entry| {
                 if (entry.key >= key_count) return error.KeyOutOfRange;
+
                 std.debug.assert(entry.key < key_count);
+
                 counts[entry.key] += 1;
             }
 
             const offsets = try memory.output().alloc(usize, key_count + 1);
             errdefer memory.output().free(offsets);
+
             offsets[0] = 0;
             for (counts, 0..) |count, key| {
                 offsets[key + 1] = offsets[key] + count;
+
                 std.debug.assert(offsets[key] <= offsets[key + 1]);
                 std.debug.assert(offsets[key + 1] <= entries.len);
             }
+
             std.debug.assert(offsets[key_count] == entries.len);
 
             const cursors = try memory.scratch().dupe(usize, offsets[0..key_count]);
@@ -48,9 +54,11 @@ pub fn DenseMultiMapType(comptime Value: type) type {
             for (entries) |entry| {
                 std.debug.assert(cursors[entry.key] < offsets[entry.key + 1]);
                 std.debug.assert(cursors[entry.key] < values.len);
+
                 values[cursors[entry.key]] = entry.value;
                 cursors[entry.key] += 1;
             }
+
             for (cursors, 0..) |cursor, key| {
                 std.debug.assert(cursor == offsets[key + 1]);
             }
@@ -64,6 +72,7 @@ pub fn DenseMultiMapType(comptime Value: type) type {
 
         pub fn get(self: Self, key: usize) []const Value {
             if (key >= self.keyCount()) return &.{};
+
             return self.values[self.offsets[key]..self.offsets[key + 1]];
         }
     };

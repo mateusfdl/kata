@@ -193,6 +193,7 @@ fn contextKind(id: u16) ?diagnostic.ContextKind {
 fn contextName(allocator: std.mem.Allocator, node: Node, source: []const u8) std.mem.Allocator.Error![]const u8 {
     if (try family.nameFromField(allocator, node, source)) |name| return name;
     if (try family.nameFromFirstNamedChild(allocator, node, source)) |name| return name;
+
     return allocator.dupe(u8, "<anonymous>");
 }
 

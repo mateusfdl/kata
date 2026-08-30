@@ -43,6 +43,7 @@ pub fn Selector(
 
                 if (stack.items.len > 0) {
                     const open = intervalOf(items[stack.items[stack.items.len - 1]]);
+
                     std.debug.assert(open.containsInterval(current));
                 }
 
@@ -51,8 +52,11 @@ pub fn Selector(
                 while (open_index > 0) {
                     open_index -= 1;
                     const candidate_index = stack.items[open_index];
+
                     if (!intervalOf(items[candidate_index]).strictlyContains(current)) continue;
+
                     owners[index] = candidate_index;
+
                     break;
                 }
 
@@ -67,6 +71,7 @@ pub fn Selector(
             for (items[1..], 1..) |item, index| {
                 const previous = intervalOf(items[index - 1]);
                 const current = intervalOf(item);
+
                 std.debug.assert(previous.start < current.start or
                     (previous.start == current.start and current.end <= previous.end));
             }

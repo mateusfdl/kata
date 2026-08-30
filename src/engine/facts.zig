@@ -163,7 +163,7 @@ pub fn extract(
                 .constructor_prefix = adapter.constructor_prefix,
                 .lists = &lists,
             };
-            try query.streamAtWithWorkspace(&workspace, pattern, role_count, candidate, &sink);
+            try query.streamAtWithWorkspace(&workspace, pattern, role_count, source, candidate, &sink);
         }
     }
 

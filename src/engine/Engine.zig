@@ -561,7 +561,7 @@ fn dispatchTree(
                 .eval_scratch = eval_scratch,
                 .out = out,
             };
-            try query.streamAtWithWorkspace(workspace, &cp.pattern, cp.capture_count, candidate, &sink);
+            try query.streamAtWithWorkspace(workspace, &cp.pattern, cp.capture_count, ctx.source, candidate, &sink);
         }
     }
 }

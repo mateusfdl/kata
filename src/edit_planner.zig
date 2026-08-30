@@ -43,15 +43,18 @@ pub const Plan = struct {
         for (self.accepted) |planned| {
             const edit = planned.edit;
             const unchanged = source[source_cursor..edit.start];
+
             @memcpy(output[output_cursor..][0..unchanged.len], unchanged);
             output_cursor += unchanged.len;
             @memcpy(output[output_cursor..][0..edit.text.len], edit.text);
+
             output_cursor += edit.text.len;
             source_cursor = edit.end;
         }
 
         const remaining = source[source_cursor..];
         @memcpy(output[output_cursor..][0..remaining.len], remaining);
+
         return output;
     }
 };
@@ -61,13 +64,16 @@ pub fn plan(allocator: std.mem.Allocator, list: []const Edit) !Plan {
     // For one start offset, this gives the shortest range priority; for an
     // identical range, the first producer wins.
     const ordered = try allocator.alloc(PlannedEdit, list.len);
+
     for (list, 0..) |edit, priority| {
         ordered[priority] = .{ .edit = edit, .priority = priority };
     }
+
     std.sort.pdq(PlannedEdit, ordered, {}, lessThan);
 
     const accepted = try allocator.alloc(PlannedEdit, list.len);
     const rejected = try allocator.alloc(RejectedEdit, list.len);
+
     var accepted_len: usize = 0;
     var rejected_len: usize = 0;
 
@@ -75,6 +81,7 @@ pub fn plan(allocator: std.mem.Allocator, list: []const Edit) !Plan {
         if (accepted_len == 0) {
             accepted[accepted_len] = candidate;
             accepted_len += 1;
+
             continue;
         }
 
@@ -83,9 +90,11 @@ pub fn plan(allocator: std.mem.Allocator, list: []const Edit) !Plan {
         const previous = accepted[accepted_len - 1];
         const overlaps = candidate.edit.start < previous.edit.end;
         const same_start = candidate.edit.start == previous.edit.start;
+
         if (!overlaps and !same_start) {
             accepted[accepted_len] = candidate;
             accepted_len += 1;
+
             continue;
         }
 
@@ -94,6 +103,7 @@ pub fn plan(allocator: std.mem.Allocator, list: []const Edit) !Plan {
             .priority = candidate.priority,
             .reason = if (equal(candidate.edit, previous.edit)) .duplicate else .conflict,
         };
+
         rejected_len += 1;
     }
 
@@ -106,7 +116,9 @@ pub fn plan(allocator: std.mem.Allocator, list: []const Edit) !Plan {
 fn lessThan(context: void, a: PlannedEdit, b: PlannedEdit) bool {
     _ = context;
     if (a.edit.start != b.edit.start) return a.edit.start < b.edit.start;
+
     if (a.edit.end != b.edit.end) return a.edit.end < b.edit.end;
+
     return a.priority < b.priority;
 }
 

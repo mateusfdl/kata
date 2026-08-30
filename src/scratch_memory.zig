@@ -22,6 +22,7 @@ pub const ScratchMemory = struct {
     pub fn reset(self: *Self) void {
         std.debug.assert(self.generation_value != std.math.maxInt(u64));
         _ = self.arena.reset(.retain_capacity);
+
         self.generation_value += 1;
     }
 

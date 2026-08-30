@@ -176,7 +176,7 @@ fn evalHas(
     // A sink can run a nested predicate before this scan returns. Each active scan needs a separate workspace.
     var workspace = MatchWorkspace.init(ctx.allocator);
     defer workspace.deinit();
-    try query.streamWithWorkspace(&workspace, &pred.matcher.pattern, pred.matcher.capture_count, subject, &sink);
+    try query.streamWithWorkspace(&workspace, &pred.matcher.pattern, pred.matcher.capture_count, ctx.source, subject, &sink);
 
     return sink.found != negate;
 }
@@ -206,7 +206,7 @@ fn evalInside(
     var current = subject.parent();
     while (current) |candidate| : (current = candidate.parent()) {
         var sink: EnclosingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx, .require_strict = true };
-        try query.streamAtWithWorkspace(&workspace, &pred.matcher.pattern, pred.matcher.capture_count, candidate, &sink);
+        try query.streamAtWithWorkspace(&workspace, &pred.matcher.pattern, pred.matcher.capture_count, ctx.source, candidate, &sink);
         if (sink.found) return !negate;
         if (std.mem.indexOfScalar(u16, pred.until_kinds, candidate.kindId()) != null) break;
     }
@@ -226,7 +226,7 @@ fn evalParent(
     var sink: EnclosingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx };
     var workspace = MatchWorkspace.init(ctx.allocator);
     defer workspace.deinit();
-    try query.streamAtWithWorkspace(&workspace, &pred.matcher.pattern, pred.matcher.capture_count, parent, &sink);
+    try query.streamAtWithWorkspace(&workspace, &pred.matcher.pattern, pred.matcher.capture_count, ctx.source, parent, &sink);
 
     return sink.found != negate;
 }
@@ -336,7 +336,7 @@ fn candidateMatches(
     ctx: EvalContext,
 ) std.mem.Allocator.Error!bool {
     var sink: EnclosingSink = .{ .matcher = nested, .subject = candidate, .ctx = ctx };
-    try query.streamAtWithWorkspace(workspace, &nested.pattern, nested.capture_count, candidate, &sink);
+    try query.streamAtWithWorkspace(workspace, &nested.pattern, nested.capture_count, ctx.source, candidate, &sink);
 
     return sink.found;
 }
@@ -351,7 +351,7 @@ fn evalCount(
     var sink: CountingSink = .{ .matcher = pred.matcher, .subject = subject, .ctx = ctx };
     var workspace = MatchWorkspace.init(ctx.allocator);
     defer workspace.deinit();
-    try query.streamWithWorkspace(&workspace, &pred.matcher.pattern, pred.matcher.capture_count, subject, &sink);
+    try query.streamWithWorkspace(&workspace, &pred.matcher.pattern, pred.matcher.capture_count, ctx.source, subject, &sink);
 
     return compareCount(pred.compare.op, sink.total, pred.compare.value);
 }

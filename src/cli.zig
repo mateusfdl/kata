@@ -136,18 +136,24 @@ pub fn baselineRef(flag: ?[]const u8, environ: *std.process.Environ.Map) ?[]cons
 pub fn main(init: std.process.Init) u8 {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
+
     const io = init.io;
 
     var stdout_buf: [io_buffer_size]u8 = undefined;
     var stderr_buf: [io_buffer_size]u8 = undefined;
+
     var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
     var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buf);
+
     const stdout = &stdout_writer.interface;
     const stderr = &stderr_writer.interface;
 
     const argv = init.minimal.args.toSlice(arena) catch |err| return die(stderr, "read args", err);
+
     const user_args = if (argv.len > 0) argv[1..] else argv;
+
     const subcommand = parseSubcommand(user_args);
+
     const configured: ConfiguredCommand = switch (subcommand) {
         .version => return runVersion(stdout) catch |err| die(stderr, "kata", err),
         .query => |opts| return runQuery(io, gpa, opts, stdout, stderr) catch |err| die(stderr, "kata", err),

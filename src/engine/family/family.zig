@@ -14,6 +14,13 @@ pub const Family = enum {
     go,
 };
 
+pub fn of(fam: Family) *const Adapter {
+    return switch (fam) {
+        .ts_family => &@import("ts_family.zig").adapter,
+        .go => &@import("go.zig").adapter,
+    };
+}
+
 pub const Adapter = struct {
     supertypes: []const node_kinds.Supertype,
     kind_count: u16,
@@ -35,21 +42,16 @@ pub const Adapter = struct {
     relative_import_specifiers: bool,
 };
 
-pub fn of(fam: Family) *const Adapter {
-    return switch (fam) {
-        .ts_family => &@import("ts_family.zig").adapter,
-        .go => &@import("go.zig").adapter,
-    };
-}
-
 pub fn nameFromField(allocator: std.mem.Allocator, node: Node, source: []const u8) std.mem.Allocator.Error!?[]const u8 {
     const name = node.childByFieldName("name") orelse return null;
     const text = name.text(source) orelse return null;
+
     return try allocator.dupe(u8, text);
 }
 
 pub fn nameFromFirstNamedChild(allocator: std.mem.Allocator, node: Node, source: []const u8) std.mem.Allocator.Error!?[]const u8 {
     const first_child = node.namedChild(0) orelse return null;
+
     return nameFromField(allocator, first_child, source);
 }
 

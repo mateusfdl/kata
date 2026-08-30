@@ -13,6 +13,7 @@ fn logFn(
     args: anytype,
 ) void {
     if (scope == .mvzr) return;
+
     std.log.defaultLog(level, scope, fmt, args);
 }
 

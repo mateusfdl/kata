@@ -20,26 +20,31 @@ pub fn StackType(comptime T: type) type {
 
         pub fn count(self: *const Self) usize {
             self.assertInvariants();
+
             return self.count_value;
         }
 
         pub fn capacity(self: *const Self) usize {
             self.assertInvariants();
+
             return self.capacity_value;
         }
 
         pub fn empty(self: *const Self) bool {
             self.assertInvariants();
+
             return self.count_value == 0;
         }
 
         pub fn push(self: *Self, node: *T) void {
             self.assertInvariants();
+
             std.debug.assert(self.count_value < self.capacity_value);
             std.debug.assert(node.link.next == null);
             std.debug.assert(!self.contains(node));
 
             node.link.next = self.head;
+
             self.head = &node.link;
             self.count_value += 1;
             self.assertInvariants();
@@ -47,6 +52,7 @@ pub fn StackType(comptime T: type) type {
 
         pub fn pop(self: *Self) *T {
             std.debug.assert(!self.empty());
+
             return self.popOrNull().?;
         }
 

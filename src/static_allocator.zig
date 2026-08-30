@@ -29,18 +29,20 @@ pub const StaticAllocator = struct {
     pub fn deinit(self: *Self) void {
         if (self.state == .static) @panic("static allocator requires a deinit transition");
         if (self.state != .init and self.state != .deinit) @panic("invalid allocator state");
+
         self.* = undefined;
     }
 
     pub fn transition_from_init_to_static(self: *Self) void {
         if (self.state != .init) @panic("invalid allocator state transition");
-        // The owner finished construction. Freeze addresses and reject all
+        // the owner finished construction. freeze addresses and reject all
         // allocation, resize, remap, and free operations until teardown.
         self.state = .static;
     }
 
     pub fn transition_from_static_to_deinit(self: *Self) void {
         if (self.state != .static) @panic("invalid allocator state transition");
+
         self.state = .deinit;
     }
 
@@ -51,6 +53,7 @@ pub const StaticAllocator = struct {
     fn alloc(context: *anyopaque, len: usize, alignment: std.mem.Alignment, return_address: usize) ?[*]u8 {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.state != .init) return null;
+
         return self.parent_allocator.rawAlloc(len, alignment, return_address);
     }
 
@@ -63,6 +66,7 @@ pub const StaticAllocator = struct {
     ) bool {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.state != .init) return false;
+
         return self.parent_allocator.rawResize(memory, alignment, new_len, return_address);
     }
 
@@ -75,6 +79,7 @@ pub const StaticAllocator = struct {
     ) ?[*]u8 {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.state != .init) return null;
+
         return self.parent_allocator.rawRemap(memory, alignment, new_len, return_address);
     }
 
@@ -87,7 +92,7 @@ pub const StaticAllocator = struct {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.state == .static) @panic("cannot free static memory");
         if (self.state != .init and self.state != .deinit) @panic("invalid allocator state");
-        // A free during construction can come from error cleanup. Treat it as
+        // a free during construction can come from error cleanup. treat it as
         // the start of teardown so later allocations cannot reuse stable data.
         self.state = .deinit;
         self.parent_allocator.rawFree(memory, alignment, return_address);

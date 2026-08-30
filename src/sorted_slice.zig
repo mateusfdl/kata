@@ -24,6 +24,7 @@ pub fn Type(
 
         pub fn contains(items: []const T, key: T) bool {
             const end = upperBound(items, key);
+
             return end > 0 and equivalent(items[end - 1], key);
         }
 

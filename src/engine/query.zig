@@ -45,6 +45,7 @@ pub const Field = struct {
 
 pub const Pattern = struct {
     kind: Kind,
+    text: ?[]const u8 = null,
     capture: ?CaptureId = null,
     fields: []const Field = &.{},
     absent_fields: []const u16 = &.{},
@@ -80,19 +81,21 @@ pub fn streamWithWorkspace(
     workspace: *MatchWorkspace,
     pattern: *const Pattern,
     capture_count: usize,
+    source: []const u8,
     root: Node,
     sink: anytype,
 ) Error!void {
     // The sink borrows active bindings and may not start a scan with this same
     // workspace. A reentrant scan would reset bindings still in use by emit.
     try workspace.reset(capture_count);
-    _ = try walk(pattern, root, workspace.active(), sink);
+    _ = try walk(pattern, source, root, workspace.active(), sink);
 }
 
 pub fn streamAtWithWorkspace(
     workspace: *MatchWorkspace,
     pattern: *const Pattern,
     capture_count: usize,
+    source: []const u8,
     n: Node,
     sink: anytype,
 ) Error!void {
@@ -100,14 +103,14 @@ pub fn streamAtWithWorkspace(
     // streamWithWorkspace, but offers only n as a root candidate.
     try workspace.reset(capture_count);
     const emit: Cont = .emit;
-    _ = try matchNode(pattern, n, workspace.active(), &emit, sink);
+    _ = try matchNode(pattern, source, n, workspace.active(), &emit, sink);
 }
 
-fn walk(pattern: *const Pattern, n: Node, scratch: []?Node, collector: anytype) Error!ScanControl {
+fn walk(pattern: *const Pattern, source: []const u8, n: Node, scratch: []?Node, collector: anytype) Error!ScanControl {
     var nodes = n.preorder();
     while (nodes.next()) |candidate| {
         const emit: Cont = .emit;
-        const control = try matchNode(pattern, candidate, scratch, &emit, collector);
+        const control = try matchNode(pattern, source, candidate, scratch, &emit, collector);
         if (control == .stop) return .stop;
     }
     return .continue_scan;
@@ -115,11 +118,17 @@ fn walk(pattern: *const Pattern, n: Node, scratch: []?Node, collector: anytype) 
 
 fn matchNode(
     pattern: *const Pattern,
+    source: []const u8,
     n: Node,
     bindings: []?Node,
     cont: *const Cont,
     collector: anytype,
 ) Error!ScanControl {
+    if (pattern.text) |expected| {
+        const actual = n.text(source) orelse return .continue_scan;
+        if (!std.mem.eql(u8, actual, expected)) return .continue_scan;
+    }
+
     if (pattern.kind == .alternation) {
         var saved: ?Node = undefined;
         if (pattern.capture) |c| {
@@ -131,7 +140,7 @@ fn matchNode(
         };
 
         for (pattern.kind.alternation) |*branch| {
-            const control = try matchNode(branch, n, bindings, cont, collector);
+            const control = try matchNode(branch, source, n, bindings, cont, collector);
             if (control == .stop) return .stop;
         }
 
@@ -154,7 +163,7 @@ fn matchNode(
         if (n.childByFieldId(field_id) != null) return .continue_scan;
     }
 
-    return matchFields(pattern.fields, 0, n, 0, bindings, cont, collector);
+    return matchFields(pattern.fields, 0, source, n, 0, bindings, cont, collector);
 }
 
 /// `min_child` is the lowest named-child index the next unanchored child may
@@ -164,13 +173,14 @@ fn matchNode(
 fn matchFields(
     fields: []const Field,
     index: usize,
+    source: []const u8,
     parent: Node,
     min_child: u32,
     bindings: []?Node,
     next: *const Cont,
     collector: anytype,
 ) Error!ScanControl {
-    if (index == fields.len) return invoke(next, bindings, collector);
+    if (index == fields.len) return invoke(next, source, bindings, collector);
 
     const field = &fields[index];
 
@@ -178,7 +188,7 @@ fn matchFields(
         .field => |field_id| {
             const child = parent.childByFieldId(field_id) orelse return .continue_scan;
             const cont = fieldsCont(fields, index, parent, min_child, next);
-            return matchNode(&field.pattern, child, bindings, &cont, collector);
+            return matchNode(&field.pattern, source, child, bindings, &cont, collector);
         },
         .child => {
             var children = parent.namedChildren();
@@ -187,12 +197,12 @@ fn matchFields(
             while (skipped < min_child) : (skipped += 1) _ = children.next() orelse return .continue_scan;
             while (children.next()) |child| : (k += 1) {
                 const cont = fieldsCont(fields, index, parent, k + 1, next);
-                const control = try matchNode(&field.pattern, child, bindings, &cont, collector);
+                const control = try matchNode(&field.pattern, source, child, bindings, &cont, collector);
                 if (control == .stop) return .stop;
             }
             return .continue_scan;
         },
-        .children => return matchChildren(&field.pattern, parent, index, fields, min_child, bindings, next, collector),
+        .children => return matchChildren(&field.pattern, source, parent, index, fields, min_child, bindings, next, collector),
     }
 }
 
@@ -211,6 +221,7 @@ fn fieldsCont(fields: []const Field, index: usize, parent: Node, min_child: u32,
 /// pattern (or none) and resumes once, since `*` is always satisfiable.
 fn matchChildren(
     pattern: *const Pattern,
+    source: []const u8,
     parent: Node,
     index: usize,
     fields: []const Field,
@@ -223,25 +234,25 @@ fn matchChildren(
     var children = parent.namedChildren();
     var k: u32 = min_child;
     var skipped: u32 = 0;
-    while (skipped < min_child) : (skipped += 1) _ = children.next() orelse return matchFields(fields, index + 1, parent, min_child, bindings, next, collector);
+    while (skipped < min_child) : (skipped += 1) _ = children.next() orelse return matchFields(fields, index + 1, source, parent, min_child, bindings, next, collector);
     while (children.next()) |child| : (k += 1) {
         var cont = fieldsCont(fields, index, parent, k + 1, next);
         cont.fields.fired = &fired;
-        const control = try matchNode(pattern, child, bindings, &cont, collector);
+        const control = try matchNode(pattern, source, child, bindings, &cont, collector);
         if (control == .stop) return .stop;
         if (fired) return .continue_scan;
     }
 
-    return matchFields(fields, index + 1, parent, min_child, bindings, next, collector);
+    return matchFields(fields, index + 1, source, parent, min_child, bindings, next, collector);
 }
 
-fn invoke(cont: *const Cont, bindings: []?Node, collector: anytype) Error!ScanControl {
+fn invoke(cont: *const Cont, source: []const u8, bindings: []?Node, collector: anytype) Error!ScanControl {
     return switch (cont.*) {
         .emit => collector.emit(bindings),
         .fields => |f| {
             if (f.fired) |flag| flag.* = true;
 
-            return matchFields(f.fields, f.index, f.parent, f.min_child, bindings, f.next, collector);
+            return matchFields(f.fields, f.index, source, f.parent, f.min_child, bindings, f.next, collector);
         },
     };
 }

@@ -11,9 +11,11 @@ pub const OwnedArena = struct {
 
     pub fn create(backing_allocator: std.mem.Allocator) std.mem.Allocator.Error!*Self {
         const self = try backing_allocator.create(Self);
+
         self.backing_allocator = backing_allocator;
         self.static_allocator = .init(backing_allocator);
         self.arena = .init(self.static_allocator.allocator());
+
         return self;
     }
 
@@ -30,8 +32,10 @@ pub const OwnedArena = struct {
         if (self.static_allocator.state == .static) {
             self.static_allocator.transition_from_static_to_deinit();
         }
+
         self.arena.deinit();
         self.static_allocator.deinit();
+
         backing_allocator.destroy(self);
     }
 };

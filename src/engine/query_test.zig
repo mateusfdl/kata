@@ -22,12 +22,13 @@ fn runMatches(
     arena: std.mem.Allocator,
     pattern: *const Pattern,
     capture_count: usize,
+    source: []const u8,
     root: Node,
 ) std.mem.Allocator.Error![]query.Match {
     var workspace = match_workspace.MatchWorkspace.init(arena);
     defer workspace.deinit();
     var collector: Collector = .{ .arena = arena };
-    try query.streamWithWorkspace(&workspace, pattern, capture_count, root, &collector);
+    try query.streamWithWorkspace(&workspace, pattern, capture_count, source, root, &collector);
     return collector.matches.toOwnedSlice(arena);
 }
 
@@ -40,7 +41,7 @@ test "query: symbol capture matches every occurrence" {
     defer t.deinit(std.testing.allocator);
 
     const pattern: Pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 };
-    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
 
     try std.testing.expectEqual(@as(usize, 2), matches.len);
     try std.testing.expectEqualStrings("a", matches[0].get(0).?.text(src).?);
@@ -62,10 +63,94 @@ test "query: field relation binds the field child" {
             .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 },
         }},
     };
-    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("a", matches[0].get(0).?.text(src).?);
+}
+
+test "query: text predicate gates a field pattern" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const src = "foo(); bar();";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const all_pattern: Pattern = .{
+        .kind = .{ .symbol = t.sym("call_expression") },
+        .fields = &.{.{
+            .relation = .{ .field = t.field("function") },
+            .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 },
+        }},
+    };
+    const all_matches = try runMatches(arena.allocator(), &all_pattern, 1, src, t.root());
+    try std.testing.expectEqual(@as(usize, 2), all_matches.len);
+
+    const foo_pattern: Pattern = .{
+        .kind = .{ .symbol = t.sym("call_expression") },
+        .fields = &.{.{
+            .relation = .{ .field = t.field("function") },
+            .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0, .text = "foo" },
+        }},
+    };
+    const foo_matches = try runMatches(arena.allocator(), &foo_pattern, 1, src, t.root());
+    try std.testing.expectEqual(@as(usize, 1), foo_matches.len);
+    try std.testing.expectEqual(@as(u32, 0), foo_matches[0].get(0).?.startByte());
+    try std.testing.expectEqualStrings("foo", foo_matches[0].get(0).?.text(src).?);
+
+    const baz_pattern: Pattern = .{
+        .kind = .{ .symbol = t.sym("call_expression") },
+        .fields = &.{.{
+            .relation = .{ .field = t.field("function") },
+            .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0, .text = "baz" },
+        }},
+    };
+    const baz_matches = try runMatches(arena.allocator(), &baz_pattern, 1, src, t.root());
+    try std.testing.expectEqual(@as(usize, 0), baz_matches.len);
+}
+
+test "query: text predicate gates the streamed root pattern" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const src = "foo(); bar();";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{
+        .kind = .{ .symbol = t.sym("identifier") },
+        .capture = 0,
+        .text = "bar",
+    };
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
+
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+    try std.testing.expectEqual(@as(u32, 7), matches[0].get(0).?.startByte());
+    try std.testing.expectEqualStrings("bar", matches[0].get(0).?.text(src).?);
+}
+
+test "query: text predicate gates an alternation pattern" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const src = "foo(); bar();";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{
+        .kind = .{ .alternation = &.{
+            .{ .kind = .{ .symbol = t.sym("identifier") } },
+            .{ .kind = .{ .symbol = t.sym("property_identifier") } },
+        } },
+        .capture = 0,
+        .text = "bar",
+    };
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
+
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+    try std.testing.expectEqualStrings("bar", matches[0].get(0).?.text(src).?);
+    try std.testing.expectEqual(@as(u32, 7), matches[0].get(0).?.startByte());
 }
 
 test "query: unanchored child yields one match per satisfying child" {
@@ -83,7 +168,7 @@ test "query: unanchored child yields one match per satisfying child" {
             .pattern = .{ .kind = .{ .symbol = t.sym("method_definition") }, .capture = 0 },
         }},
     };
-    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
 
     try std.testing.expectEqual(@as(usize, 2), matches.len);
     try std.testing.expect(std.mem.startsWith(u8, matches[0].get(0).?.text(src).?, "foo"));
@@ -105,7 +190,7 @@ test "query: alternation matches any branch kind" {
         } },
         .capture = 0,
     };
-    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
 
     try std.testing.expectEqual(@as(usize, 2), matches.len);
 }
@@ -126,7 +211,7 @@ test "query: anonymous token under a field" {
             .pattern = .{ .kind = .{ .anonymous = t.tok("&&") } },
         }},
     };
-    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("a && b", matches[0].get(0).?.text(src).?);
@@ -151,7 +236,7 @@ test "query: symbols set matches any member kind with fields applied once" {
             .pattern = .{ .kind = .{ .symbol = t.sym("type_identifier") }, .capture = 1 },
         }},
     };
-    const matches = try runMatches(arena.allocator(), &pattern, 2, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 2, src, t.root());
 
     try std.testing.expectEqual(@as(usize, 2), matches.len);
     try std.testing.expect(std.mem.startsWith(u8, matches[0].get(0).?.text(src).?, "class C"));
@@ -173,7 +258,7 @@ test "query: absent field excludes nodes that have it" {
         .capture = 0,
         .absent_fields = &.{t.field("value")},
     };
-    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("x", matches[0].get(0).?.text(src).?);
@@ -201,7 +286,7 @@ test "query: children relation rejects a child failing its nested constraint" {
             },
         }},
     };
-    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expect(matches[0].get(0) == null);
@@ -229,7 +314,7 @@ test "query: children relation binds a later child when an earlier one fails" {
             },
         }},
     };
-    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("return g();", matches[0].get(0).?.text(src).?);
@@ -256,7 +341,7 @@ test "query: a repeated capture keeps its first binding" {
             },
         },
     };
-    const matches = try runMatches(arena.allocator(), &pattern, 1, t.root());
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
 
     try std.testing.expectEqual(@as(usize, 1), matches.len);
     try std.testing.expectEqualStrings("a", matches[0].get(0).?.text(src).?);
@@ -281,7 +366,7 @@ test "query: stream stops enumeration when the sink requests it" {
     var workspace = match_workspace.MatchWorkspace.init(std.testing.allocator);
     defer workspace.deinit();
     var sink: FirstOnly = .{};
-    try query.streamWithWorkspace(&workspace, &pattern, 1, t.root(), &sink);
+    try query.streamWithWorkspace(&workspace, &pattern, 1, src, t.root(), &sink);
 
     try std.testing.expectEqual(@as(usize, 1), sink.emits);
 }
@@ -310,7 +395,7 @@ test "query: stop exits alternation before the next branch" {
     var workspace = match_workspace.MatchWorkspace.init(std.testing.allocator);
     defer workspace.deinit();
     var sink: FirstOnly = .{};
-    try query.streamWithWorkspace(&workspace, &pattern, 1, t.root(), &sink);
+    try query.streamWithWorkspace(&workspace, &pattern, 1, src, t.root(), &sink);
 
     try std.testing.expectEqual(@as(usize, 1), sink.emits);
 }
@@ -339,7 +424,7 @@ test "query: stop exits child enumeration before the next child" {
     var workspace = match_workspace.MatchWorkspace.init(std.testing.allocator);
     defer workspace.deinit();
     var sink: FirstOnly = .{};
-    try query.streamWithWorkspace(&workspace, &pattern, 1, t.root(), &sink);
+    try query.streamWithWorkspace(&workspace, &pattern, 1, src, t.root(), &sink);
 
     try std.testing.expectEqual(@as(usize, 1), sink.emits);
 }
@@ -364,7 +449,7 @@ test "query: streamAt only offers the anchored node" {
     var root_workspace = match_workspace.MatchWorkspace.init(std.testing.allocator);
     defer root_workspace.deinit();
     var root_sink: Counter = .{};
-    try query.streamAtWithWorkspace(&root_workspace, &pattern, 1, t.root(), &root_sink);
+    try query.streamAtWithWorkspace(&root_workspace, &pattern, 1, src, t.root(), &root_sink);
     try std.testing.expectEqual(@as(usize, 0), root_sink.emits);
 
     var nodes = t.root().preorder();
@@ -379,6 +464,6 @@ test "query: streamAt only offers the anchored node" {
     var identifier_workspace = match_workspace.MatchWorkspace.init(std.testing.allocator);
     defer identifier_workspace.deinit();
     var identifier_sink: Counter = .{};
-    try query.streamAtWithWorkspace(&identifier_workspace, &pattern, 1, identifier.?, &identifier_sink);
+    try query.streamAtWithWorkspace(&identifier_workspace, &pattern, 1, src, identifier.?, &identifier_sink);
     try std.testing.expectEqual(@as(usize, 1), identifier_sink.emits);
 }
