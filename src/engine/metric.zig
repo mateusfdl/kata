@@ -65,21 +65,18 @@ const Container = struct {
     end: u32,
 };
 
-pub fn classify(table: []const ?MetricKind, node: Node) ?MetricKind {
+pub fn classify(compiled: *const Compiled, node: Node) ?MetricKind {
     const id = node.kindId();
-    if (id >= table.len) return null;
-    const mk = table[id] orelse return null;
+    if (id >= compiled.table.len) return null;
+    const mk = compiled.table[id] orelse return null;
     if (mk == .bool_op) {
         const op = node.childByFieldName("operator") orelse return null;
-        if (!isLogicalOperator(op.kind())) return null;
+        for (compiled.logical_operators) |logical_operator| {
+            if (std.mem.eql(u8, op.kind(), logical_operator)) return mk;
+        }
+        return null;
     }
     return mk;
-}
-
-fn isLogicalOperator(op: []const u8) bool {
-    return std.mem.eql(u8, op, "&&") or
-        std.mem.eql(u8, op, "||") or
-        std.mem.eql(u8, op, "??");
 }
 
 fn isComplexityPoint(kind: MetricKind) bool {
@@ -98,6 +95,7 @@ fn isNestingConstruct(kind: MetricKind) bool {
 
 pub const Compiled = struct {
     table: []const ?MetricKind,
+    logical_operators: []const []const u8,
 
     pub fn deinit(self: *Compiled, allocator: std.mem.Allocator) void {
         allocator.free(self.table);
@@ -108,7 +106,11 @@ pub fn compile(
     allocator: std.mem.Allocator,
     fam: family_mod.Family,
 ) std.mem.Allocator.Error!Compiled {
-    return .{ .table = try family_mod.of(fam).buildMetricTable(allocator) };
+    const adapter = family_mod.of(fam);
+    return .{
+        .table = try adapter.buildMetricTable(allocator),
+        .logical_operators = adapter.logical_operators,
+    };
 }
 
 const Span = struct {
@@ -195,11 +197,7 @@ pub fn lengthOf(node: Node) u32 {
 }
 
 pub fn paramsOf(node: Node, fam: family_mod.Family) ?u32 {
-    if (node.childByFieldName("parameters")) |params| {
-        return family_mod.of(fam).paramCount(params);
-    }
-    if (node.childByFieldName("parameter") != null) return 1;
-    return null;
+    return family_mod.of(fam).paramCount(node);
 }
 
 pub fn countNonExtraNamed(node: Node) u32 {
@@ -225,7 +223,7 @@ fn collectSpans(
 ) !void {
     var nodes = root.preorder();
     while (nodes.next()) |node| {
-        if (classify(compiled.table, node)) |kind| {
+        if (classify(compiled, node)) |kind| {
             try spans.append(allocator, .{
                 .kind = kind,
                 .start = node.startByte(),

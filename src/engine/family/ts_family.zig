@@ -27,7 +27,10 @@ pub const adapter: family.Adapter = .{
     .buildKindRemap = kinds.buildKindRemap,
     .buildFieldRemap = kinds.buildFieldRemap,
     .buildMetricTable = metric_table.build,
+    .logical_operators = &.{ "&&", "||", "??" },
     .contextKind = contextKind,
+    .contextName = contextName,
+    .extraContext = null,
     .paramCount = paramCount,
     .fact_patterns = fact_patterns,
     .resolveContainers = resolveContainers,
@@ -191,6 +194,20 @@ fn contextKind(id: u16) ?diagnostic.ContextKind {
     };
 }
 
+fn contextName(allocator: std.mem.Allocator, node: Node, source: []const u8) std.mem.Allocator.Error![]const u8 {
+    if (try family.nameFromField(allocator, node, source)) |name| return name;
+
+    if (node.parent()) |parent| {
+        if (std.mem.eql(u8, parent.kind(), "variable_declarator")) {
+            if (try family.nameFromField(allocator, parent, source)) |name| return name;
+        }
+    }
+
+    if (try family.nameFromFirstNamedChild(allocator, node, source)) |name| return name;
+
+    return allocator.dupe(u8, "<anonymous>");
+}
+
 fn classifyMetric(k: kinds.Kind) ?metric.MetricKind {
     return switch (k) {
         .function_declaration,
@@ -215,6 +232,8 @@ fn classifyMetric(k: kinds.Kind) ?metric.MetricKind {
     };
 }
 
-fn paramCount(params: Node) u32 {
-    return metric.countNonExtraNamed(params);
+fn paramCount(node: Node) ?u32 {
+    if (node.childByFieldName("parameters")) |params| return metric.countNonExtraNamed(params);
+    if (node.childByFieldName("parameter") != null) return 1;
+    return null;
 }

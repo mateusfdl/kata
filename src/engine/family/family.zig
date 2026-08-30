@@ -24,8 +24,11 @@ pub const Adapter = struct {
     buildKindRemap: *const fn (grammar: *const ts.Language, gpa: std.mem.Allocator) std.mem.Allocator.Error![]u16,
     buildFieldRemap: *const fn (grammar: *const ts.Language, gpa: std.mem.Allocator) std.mem.Allocator.Error![]u16,
     buildMetricTable: *const fn (gpa: std.mem.Allocator) std.mem.Allocator.Error![]?metric.MetricKind,
+    logical_operators: []const []const u8,
     contextKind: *const fn (id: u16) ?diagnostic.ContextKind,
-    paramCount: *const fn (params: Node) u32,
+    contextName: *const fn (allocator: std.mem.Allocator, node: Node, source: []const u8) std.mem.Allocator.Error![]const u8,
+    extraContext: ?*const fn (allocator: std.mem.Allocator, node: Node, kind: diagnostic.ContextKind, source: []const u8) std.mem.Allocator.Error!?diagnostic.Context,
+    paramCount: *const fn (node: Node) ?u32,
     fact_patterns: []const query.Pattern,
     resolveContainers: *const fn (classes: []const facts.ClassDef, methods: []facts.MethodDef, calls: []facts.Call) void,
     constructor_prefix: ?[]const u8,
@@ -37,6 +40,17 @@ pub fn of(fam: Family) *const Adapter {
         .ts_family => &@import("ts_family.zig").adapter,
         .go => &@import("go.zig").adapter,
     };
+}
+
+pub fn nameFromField(allocator: std.mem.Allocator, node: Node, source: []const u8) std.mem.Allocator.Error!?[]const u8 {
+    const name = node.childByFieldName("name") orelse return null;
+    const text = name.text(source) orelse return null;
+    return try allocator.dupe(u8, text);
+}
+
+pub fn nameFromFirstNamedChild(allocator: std.mem.Allocator, node: Node, source: []const u8) std.mem.Allocator.Error!?[]const u8 {
+    const first_child = node.namedChild(0) orelse return null;
+    return nameFromField(allocator, first_child, source);
 }
 
 /// indexed by kata kind id: the enum field value is the id, so the table is a

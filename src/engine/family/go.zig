@@ -27,7 +27,10 @@ pub const adapter: family.Adapter = .{
     .buildKindRemap = kinds.buildKindRemap,
     .buildFieldRemap = kinds.buildFieldRemap,
     .buildMetricTable = metric_table.build,
+    .logical_operators = &.{ "&&", "||" },
     .contextKind = contextKind,
+    .contextName = contextName,
+    .extraContext = extraContext,
     .paramCount = paramCount,
     .fact_patterns = fact_patterns,
     .resolveContainers = resolveContainers,
@@ -187,6 +190,42 @@ fn contextKind(id: u16) ?diagnostic.ContextKind {
     };
 }
 
+fn contextName(allocator: std.mem.Allocator, node: Node, source: []const u8) std.mem.Allocator.Error![]const u8 {
+    if (try family.nameFromField(allocator, node, source)) |name| return name;
+    if (try family.nameFromFirstNamedChild(allocator, node, source)) |name| return name;
+    return allocator.dupe(u8, "<anonymous>");
+}
+
+fn extraContext(
+    allocator: std.mem.Allocator,
+    node: Node,
+    kind: diagnostic.ContextKind,
+    source: []const u8,
+) std.mem.Allocator.Error!?diagnostic.Context {
+    if (kind != .method) return null;
+
+    const receiver = node.childByFieldName("receiver") orelse return null;
+    const parameter = receiver.namedChild(0) orelse return null;
+    const receiver_type = parameter.childByFieldName("type") orelse return null;
+    const name_node = findNamedKind(receiver_type, "type_identifier") orelse receiver_type;
+    const name = name_node.text(source) orelse return null;
+
+    return .{
+        .kind = .class,
+        .name = try allocator.dupe(u8, name),
+        .range = receiver_type.range(),
+    };
+}
+
+fn findNamedKind(node: Node, kind: []const u8) ?Node {
+    var nodes = node.preorder();
+    while (nodes.next()) |candidate| {
+        if (std.mem.eql(u8, candidate.kind(), kind)) return candidate;
+    }
+
+    return null;
+}
+
 fn classifyMetric(k: kinds.Kind) ?metric.MetricKind {
     return switch (k) {
         .function_declaration,
@@ -208,7 +247,8 @@ fn classifyMetric(k: kinds.Kind) ?metric.MetricKind {
     };
 }
 
-fn paramCount(params: Node) u32 {
+fn paramCount(node: Node) ?u32 {
+    const params = node.childByFieldName("parameters") orelse return null;
     var total: u32 = 0;
     var children = params.namedChildren();
     while (children.next()) |decl| {

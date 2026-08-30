@@ -707,18 +707,19 @@ fn enclosingContext(allocator: std.mem.Allocator, node: Node, source: []const u8
     var current = node.parent();
 
     while (current) |ancestor| : (current = ancestor.parent()) {
-        const kind = family_mod.of(ancestor.tree.family).contextKind(ancestor.kindId()) orelse continue;
+        const adapter = family_mod.of(ancestor.tree.family);
+        const kind = adapter.contextKind(ancestor.kindId()) orelse continue;
         entries[count] = .{
             .kind = kind,
-            .name = try contextName(allocator, ancestor, source),
+            .name = try adapter.contextName(allocator, ancestor, source),
             .range = ancestor.range(),
         };
         count += 1;
         if (count == entries.len) break;
 
-        if (kind == .method and ancestor.tree.family == .go) {
-            if (try goReceiverContext(allocator, ancestor, source)) |receiver| {
-                entries[count] = receiver;
+        if (adapter.extraContext) |extra_context| {
+            if (try extra_context(allocator, ancestor, kind, source)) |extra| {
+                entries[count] = extra;
                 count += 1;
                 if (count == entries.len) break;
             }
@@ -731,49 +732,4 @@ fn enclosingContext(allocator: std.mem.Allocator, node: Node, source: []const u8
     for (0..count) |index| context[index] = entries[count - index - 1];
 
     return context;
-}
-
-fn goReceiverContext(allocator: std.mem.Allocator, method: Node, source: []const u8) !?diagnostic.Context {
-    const receiver = method.childByFieldName("receiver") orelse return null;
-    const parameter = receiver.namedChild(0) orelse return null;
-    const receiver_type = parameter.childByFieldName("type") orelse return null;
-    const name_node = findNamedKind(receiver_type, "type_identifier") orelse receiver_type;
-    const name = name_node.text(source) orelse return null;
-
-    return .{
-        .kind = .class,
-        .name = try allocator.dupe(u8, name),
-        .range = receiver_type.range(),
-    };
-}
-
-fn findNamedKind(node: Node, kind: []const u8) ?Node {
-    var nodes = node.preorder();
-    while (nodes.next()) |candidate| {
-        if (std.mem.eql(u8, candidate.kind(), kind)) return candidate;
-    }
-
-    return null;
-}
-
-fn contextName(allocator: std.mem.Allocator, node: Node, source: []const u8) ![]const u8 {
-    if (node.childByFieldName("name")) |name| {
-        if (name.text(source)) |text| return allocator.dupe(u8, text);
-    }
-
-    if (node.parent()) |parent| {
-        if (std.mem.eql(u8, parent.kind(), "variable_declarator")) {
-            if (parent.childByFieldName("name")) |name| {
-                if (name.text(source)) |text| return allocator.dupe(u8, text);
-            }
-        }
-    }
-
-    if (node.namedChild(0)) |first_child| {
-        if (first_child.childByFieldName("name")) |name| {
-            if (name.text(source)) |text| return allocator.dupe(u8, text);
-        }
-    }
-
-    return allocator.dupe(u8, "<anonymous>");
 }

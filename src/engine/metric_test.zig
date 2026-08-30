@@ -23,10 +23,19 @@ fn collectBinary(n: Node, out: *std.ArrayList(Node), gpa: std.mem.Allocator) !vo
     while (children.next()) |c| try collectBinary(c, out, gpa);
 }
 
-fn walkClassifyAll(n: Node, table: []const ?MetricKind) void {
-    _ = metric.classify(table, n);
+fn firstOfKind(n: Node, kind: []const u8) ?Node {
+    if (std.mem.eql(u8, n.kind(), kind)) return n;
     var children = n.children();
-    while (children.next()) |c| walkClassifyAll(c, table);
+    while (children.next()) |child| {
+        if (firstOfKind(child, kind)) |found| return found;
+    }
+    return null;
+}
+
+fn walkClassifyAll(n: Node, compiled: *const metric.Compiled) void {
+    _ = metric.classify(compiled, n);
+    var children = n.children();
+    while (children.next()) |c| walkClassifyAll(c, compiled);
 }
 
 test "metric: ts table classifies decision points by kind" {
@@ -75,8 +84,8 @@ test "metric: go table classifies decision points by kind" {
 
 test "metric: bool-op refinement counts only logical binary operators in ts" {
     const gpa = std.testing.allocator;
-    const table = try family.of(.ts_family).buildMetricTable(gpa);
-    defer gpa.free(table);
+    var compiled = try metric.compile(gpa, .ts_family);
+    defer compiled.deinit(gpa);
 
     var t = test_tree.build(gpa, .ts, "const x = a && b || (c ?? d); const y = a + b;");
     defer t.deinit(gpa);
@@ -89,7 +98,7 @@ test "metric: bool-op refinement counts only logical binary operators in ts" {
     var arithmetic: usize = 0;
     for (binaries.items) |bin| {
         const op = bin.childByFieldName("operator").?.kind();
-        const result = metric.classify(table, bin);
+        const result = metric.classify(&compiled, bin);
         if (std.mem.eql(u8, op, "+")) {
             arithmetic += 1;
             try std.testing.expectEqual(@as(?MetricKind, null), result);
@@ -104,8 +113,8 @@ test "metric: bool-op refinement counts only logical binary operators in ts" {
 
 test "metric: bool-op refinement counts only logical binary operators in go" {
     const gpa = std.testing.allocator;
-    const table = try family.of(.go).buildMetricTable(gpa);
-    defer gpa.free(table);
+    var compiled = try metric.compile(gpa, .go);
+    defer compiled.deinit(gpa);
 
     var t = test_tree.build(gpa, .go, "package main\nfunc f(a bool, b int) {\n\t_ = a && a\n\t_ = b + b\n}\n");
     defer t.deinit(gpa);
@@ -117,7 +126,7 @@ test "metric: bool-op refinement counts only logical binary operators in go" {
     try std.testing.expectEqual(@as(usize, 2), binaries.items.len);
     for (binaries.items) |bin| {
         const op = bin.childByFieldName("operator").?.kind();
-        const result = metric.classify(table, bin);
+        const result = metric.classify(&compiled, bin);
         if (std.mem.eql(u8, op, "&&")) {
             try std.testing.expectEqual(MetricKind.bool_op, result.?);
         } else {
@@ -126,13 +135,35 @@ test "metric: bool-op refinement counts only logical binary operators in go" {
     }
 }
 
+test "metric: params preserves ts single-parameter fields" {
+    const gpa = std.testing.allocator;
+    var t = test_tree.build(gpa, .ts, "const f = value => value;");
+    defer t.deinit(gpa);
+
+    const arrow = firstOfKind(t.root(), "arrow_function").?;
+    try std.testing.expectEqual(@as(?u32, 1), metric.paramsOf(arrow, .ts_family));
+}
+
+test "metric: ts nullish coalescing increases complexity" {
+    const gpa = std.testing.allocator;
+    var t = test_tree.build(gpa, .ts, "function f(a, b) { return a ?? b; }");
+    defer t.deinit(gpa);
+
+    var compiled = try metric.compile(gpa, .ts_family);
+    defer compiled.deinit(gpa);
+    var analysis = try metric.analyze(gpa, &compiled, t.root().namedChild(0).?);
+    defer analysis.deinit();
+
+    try std.testing.expectEqual(metric.Measures{ .complexity = 2, .nesting = 0 }, try analysis.measures());
+}
+
 test "metric: classify tolerates error nodes without indexing out of range" {
     const gpa = std.testing.allocator;
-    const table = try family.of(.ts_family).buildMetricTable(gpa);
-    defer gpa.free(table);
+    var compiled = try metric.compile(gpa, .ts_family);
+    defer compiled.deinit(gpa);
 
     var t = test_tree.build(gpa, .ts, "function (");
     defer t.deinit(gpa);
 
-    walkClassifyAll(t.root(), table);
+    walkClassifyAll(t.root(), &compiled);
 }

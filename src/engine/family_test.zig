@@ -4,6 +4,19 @@ const node_kinds = @import("node_kinds");
 
 const family = @import("family/family.zig");
 
+test "family: adapters expose exact logical operator lists" {
+    const ts_expected = [_][]const u8{ "&&", "||", "??" };
+    const go_expected = [_][]const u8{ "&&", "||" };
+
+    const ts_actual = family.of(.ts_family).logical_operators;
+    try std.testing.expectEqual(ts_expected.len, ts_actual.len);
+    for (ts_expected, ts_actual) |expected, actual| try std.testing.expectEqualStrings(expected, actual);
+
+    const go_actual = family.of(.go).logical_operators;
+    try std.testing.expectEqual(go_expected.len, go_actual.len);
+    for (go_expected, go_actual) |expected, actual| try std.testing.expectEqualStrings(expected, actual);
+}
+
 test "family: kindId resolves named kinds to kata enum ids" {
     try std.testing.expectEqual(
         @intFromEnum(node_kinds.ts_family.Kind.call_expression),
