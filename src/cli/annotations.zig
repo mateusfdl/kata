@@ -33,7 +33,7 @@ pub const FixExpectation = struct {
     replacement: []const u8,
     matched: bool = false,
 
-    // Fix annotations do not name a rule. The first fixed diagnostic on the
+    // fix annotations do not name a rule. the first fixed diagnostic on the
     // target line claims the next unmatched expectation.
     pub fn claim(expectations: []FixExpectation, line: u32) ?*FixExpectation {
         for (expectations) |*e| {
@@ -161,7 +161,7 @@ pub const Parser = struct {
 
     fn targetLine(parser: *const Parser, line: u32, total: u32) ?u32 {
         var target = line + 1;
-        // Adjacent expect and expect-fix lines form one annotation block. Every
+        // adjacent expect and expect-fix lines form one annotation block. every
         // annotation in the block targets the first source line below it.
         while (parser.coversLine(target)) target += 1;
         if (target >= total) {

@@ -90,8 +90,8 @@ pub fn match(
     defer scratch.deinit();
     const arena = scratch.allocator();
 
-    // Exact fingerprints survive source movement and are strongest. Normalized
-    // rule spans are next. State consumption prevents a strong match from being
+    // exact fingerprints survive source movement and are strongest. normalized
+    // rule spans are next. state consumption prevents a strong match from being
     // reused by a weaker stage.
     const fingerprint_groups = try fingerprints.candidateGroups(arena);
     _ = state.applyExactGroups(fingerprints.current, fingerprint_groups);
@@ -99,8 +99,8 @@ pub fn match(
     const span_groups = try spans.candidateGroups(arena);
     _ = state.applyExactGroups(spans.current, span_groups);
 
-    // A containing block is intentionally weak: repeated blocks can describe
-    // unrelated findings. Use it only when the key is unique on both remaining
+    // a containing block is intentionally weak: repeated blocks can describe
+    // unrelated findings. use it only when the key is unique on both remaining
     // sides.
     const current_block_groups = try blocks.remainingCurrentGroups(arena, &state);
     const candidate_block_groups = try blocks.remainingCandidateGroups(arena, &state);

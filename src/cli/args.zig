@@ -78,12 +78,12 @@ pub fn parser(comptime specs: []const Spec) type {
                     const flag = flag_prefix ++ spec.name;
                     if (std.mem.eql(u8, arg, flag)) {
                         switch (spec.kind) {
-                            // Store a one-based position instead of a boolean. Zero means
+                            // store a one-based position instead of a boolean. zero means
                             // absent, and callers can select the last conflicting flag.
                             .boolean => @field(result.flags, spec.name) = i + 1,
                             .arg => {
-                                // A separate token beginning with "--" starts another flag.
-                                // Use --name=value when the value itself begins with "--".
+                                // a separate token beginning with "--" starts another flag.
+                                // use --name=value when the value itself begins with "--".
                                 if (i + 1 >= args.len or Spec.isFlag(args[i + 1])) {
                                     if (result.missing == null) result.missing = arg;
                                 } else {

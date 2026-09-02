@@ -48,8 +48,8 @@ pub const Baseline = struct {
         path: []const u8,
         diagnostics: []lint.diagnostic.Diagnostic,
     ) !void {
-        // Rules added or raised after the baseline ref had no enforcing error.
-        // Demote them before matching historical findings.
+        // rules added or raised after the baseline ref had no enforcing error.
+        // demote them before matching historical findings.
         var has_error = false;
         for (diagnostics) |*d| {
             if (d.severity != .@"error") continue;
@@ -65,7 +65,7 @@ pub const Baseline = struct {
 
         const repo_path = try std.fmt.allocPrint(arena, "{s}{s}", .{ baseline.prefix, path });
 
-        // A file absent at the ref has no historical findings to demote.
+        // a file absent at the ref has no historical findings to demote.
         const baseline_source = (try git.showFile(io, arena, baseline.dir, baseline.ref, repo_path, fs.source.max_file_bytes)) orelse return;
         const before = try engine.lint(arena, baseline_source, lang, path);
         try lint.fingerprint.assign(arena, path, baseline_source, before);
