@@ -210,9 +210,8 @@ pub fn countNonExtraNamed(node: Node) u32 {
     return count;
 }
 
-pub fn argsOf(node: Node) ?u32 {
-    const arguments = node.childByFieldName("arguments") orelse return null;
-    return countNonExtraNamed(arguments);
+pub fn argsOf(node: Node, fam: family_mod.Family) ?u32 {
+    return family_mod.of(fam).argCount(node);
 }
 
 fn collectSpans(

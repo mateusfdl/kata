@@ -54,7 +54,7 @@ const NodeMeasures = struct {
             .length => metric.lengthOf(node),
             .text => self.numericText(node),
             .params => metric.paramsOf(node, self.ctx.fam),
-            .args => metric.argsOf(node),
+            .args => metric.argsOf(node, self.ctx.fam),
             .position => metric.positionOf(node),
             .siblings => metric.siblingsOf(node),
         };

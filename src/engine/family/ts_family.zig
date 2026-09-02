@@ -1,11 +1,9 @@
 const std = @import("std");
 const node_kinds = @import("node_kinds");
 
-const containing_interval = @import("shared").containing_interval;
 const diagnostic = @import("../diagnostic.zig");
 const facts = @import("../facts.zig");
 const family = @import("family.zig");
-const interval = @import("shared").interval;
 const metric = @import("../metric.zig");
 const query = @import("../query.zig");
 const Node = @import("../node.zig").Node;
@@ -14,8 +12,14 @@ const kinds = node_kinds.ts_family;
 const fields = family.FieldFns(kinds.Field);
 const kind_fns = family.KindFns(kinds.Kind, &kinds.anon_names, kinds.anon_base);
 const metric_table = family.MetricTable(kinds.Kind, kinds.kind_count, classifyMetric);
-const ByteInterval = interval.Type(u32, .half_open);
-const ClassSelector = containing_interval.Selector(facts.ClassDef, ByteInterval, classInterval);
+const patterns = family.PatternFns(kinds.Kind, kinds.Field);
+const pat = patterns.pat;
+const patC = patterns.patC;
+const patF = patterns.patF;
+const patCF = patterns.patCF;
+const field = patterns.field;
+const child = patterns.child;
+const cap = facts.cap;
 
 pub const adapter: family.Adapter = .{
     .supertypes = &kinds.supertypes,
@@ -32,45 +36,12 @@ pub const adapter: family.Adapter = .{
     .contextName = contextName,
     .extraContext = null,
     .paramCount = paramCount,
+    .argCount = argCount,
     .fact_patterns = fact_patterns,
-    .resolveContainers = resolveContainers,
+    .resolveContainers = family.resolveContainersByEnclosingClass,
     .constructor_prefix = null,
-    .relative_import_specifiers = true,
+    .isRelativeImport = isRelativeImport,
 };
-
-fn sym(comptime name: []const u8) u16 {
-    return @intFromEnum(@field(kinds.Kind, name));
-}
-
-fn fld(comptime field_: kinds.Field) u16 {
-    return @intFromEnum(field_);
-}
-
-const cap = facts.cap;
-
-fn pat(comptime name: []const u8) query.Pattern {
-    return .{ .kind = .{ .symbol = sym(name) } };
-}
-
-fn patC(comptime name: []const u8, capture: query.CaptureId) query.Pattern {
-    return .{ .kind = .{ .symbol = sym(name) }, .capture = capture };
-}
-
-fn patF(comptime name: []const u8, comptime fields_: []const query.Field) query.Pattern {
-    return .{ .kind = .{ .symbol = sym(name) }, .fields = fields_ };
-}
-
-fn patCF(comptime name: []const u8, capture: query.CaptureId, comptime fields_: []const query.Field) query.Pattern {
-    return .{ .kind = .{ .symbol = sym(name) }, .capture = capture, .fields = fields_ };
-}
-
-fn field(comptime name: kinds.Field, pattern: query.Pattern) query.Field {
-    return .{ .relation = .{ .field = fld(name) }, .pattern = pattern };
-}
-
-fn child(pattern: query.Pattern) query.Field {
-    return .{ .relation = .child, .pattern = pattern };
-}
 
 fn typeAnnotation(comptime capture: query.CaptureId) query.Pattern {
     return patF("type_annotation", &.{
@@ -152,24 +123,8 @@ const fact_patterns: []const query.Pattern = &.{
     }),
 };
 
-fn resolveContainers(classes: []const facts.ClassDef, methods: []facts.MethodDef, calls: []facts.Call) void {
-    for (methods) |*m| {
-        if (m.container.len == 0) m.container = innermostClassName(classes, m.start, m.end) orelse "";
-    }
-
-    for (calls) |*c| {
-        std.debug.assert(c.start < std.math.maxInt(u32));
-        c.container = innermostClassName(classes, c.start, c.start + 1) orelse "";
-    }
-}
-
-fn innermostClassName(classes: []const facts.ClassDef, start: u32, end: u32) ?[]const u8 {
-    const index = ClassSelector.innermost(classes, .init(start, end)) orelse return null;
-    return classes[index].name;
-}
-
-fn classInterval(class: facts.ClassDef) ByteInterval {
-    return .init(class.start, class.end);
+fn isRelativeImport(specifier: []const u8) bool {
+    return std.mem.startsWith(u8, specifier, "./") or std.mem.startsWith(u8, specifier, "../");
 }
 
 fn contextKind(id: u16) ?diagnostic.ContextKind {
@@ -236,4 +191,9 @@ fn paramCount(node: Node) ?u32 {
     if (node.childByFieldName("parameters")) |params| return metric.countNonExtraNamed(params);
     if (node.childByFieldName("parameter") != null) return 1;
     return null;
+}
+
+fn argCount(node: Node) ?u32 {
+    const arguments = node.childByFieldName("arguments") orelse return null;
+    return metric.countNonExtraNamed(arguments);
 }

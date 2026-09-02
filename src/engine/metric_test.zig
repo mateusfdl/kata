@@ -144,6 +144,24 @@ test "metric: params preserves ts single-parameter fields" {
     try std.testing.expectEqual(@as(?u32, 1), metric.paramsOf(arrow, .ts_family));
 }
 
+test "metric: ts args count exact values" {
+    const gpa = std.testing.allocator;
+    var t = test_tree.build(gpa, .ts, "foo(1, 2);");
+    defer t.deinit(gpa);
+
+    const call = firstOfKind(t.root(), "call_expression").?;
+    try std.testing.expectEqual(@as(?u32, 2), metric.argsOf(call, .ts_family));
+}
+
+test "metric: go args count exact values" {
+    const gpa = std.testing.allocator;
+    var t = test_tree.build(gpa, .go, "package main\nfunc init() { f(a, b, c) }\n");
+    defer t.deinit(gpa);
+
+    const call = firstOfKind(t.root(), "call_expression").?;
+    try std.testing.expectEqual(@as(?u32, 3), metric.argsOf(call, .go));
+}
+
 test "metric: ts nullish coalescing increases complexity" {
     const gpa = std.testing.allocator;
     var t = test_tree.build(gpa, .ts, "function f(a, b) { return a ?? b; }");

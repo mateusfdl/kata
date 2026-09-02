@@ -122,14 +122,9 @@ pub fn resolveImportSource(
     importer_path: []const u8,
     specifier: []const u8,
 ) std.mem.Allocator.Error!?[]const u8 {
-    if (!family_mod.of(fam).relative_import_specifiers) return specifier;
-    if (!isRelativeSpecifier(specifier)) return specifier;
+    if (!family_mod.of(fam).isRelativeImport(specifier)) return specifier;
 
     return lexical_path.resolveRelativeToFile(allocator, importer_path, specifier);
-}
-
-fn isRelativeSpecifier(specifier: []const u8) bool {
-    return std.mem.startsWith(u8, specifier, "./") or std.mem.startsWith(u8, specifier, "../");
 }
 
 pub fn extract(

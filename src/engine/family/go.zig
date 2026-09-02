@@ -14,6 +14,14 @@ const kinds = node_kinds.go;
 const fields = family.FieldFns(kinds.Field);
 const kind_fns = family.KindFns(kinds.Kind, &kinds.anon_names, kinds.anon_base);
 const metric_table = family.MetricTable(kinds.Kind, kinds.kind_count, classifyMetric);
+const patterns = family.PatternFns(kinds.Kind, kinds.Field);
+const patC = patterns.patC;
+const patF = patterns.patF;
+const patCF = patterns.patCF;
+const field = patterns.field;
+const child = patterns.child;
+const either = patterns.either;
+const cap = facts.cap;
 const ByteInterval = interval.Type(u32, .half_open);
 const MethodSelector = containing_interval.Selector(facts.MethodDef, ByteInterval, methodInterval);
 
@@ -32,49 +40,12 @@ pub const adapter: family.Adapter = .{
     .contextName = contextName,
     .extraContext = extraContext,
     .paramCount = paramCount,
+    .argCount = argCount,
     .fact_patterns = fact_patterns,
     .resolveContainers = resolveContainers,
     .constructor_prefix = "New",
-    .relative_import_specifiers = false,
+    .isRelativeImport = family.neverRelativeImport,
 };
-
-fn sym(comptime name: []const u8) u16 {
-    return @intFromEnum(@field(kinds.Kind, name));
-}
-
-fn fld(comptime field_: kinds.Field) u16 {
-    return @intFromEnum(field_);
-}
-
-const cap = facts.cap;
-
-fn pat(comptime name: []const u8) query.Pattern {
-    return .{ .kind = .{ .symbol = sym(name) } };
-}
-
-fn patC(comptime name: []const u8, capture: query.CaptureId) query.Pattern {
-    return .{ .kind = .{ .symbol = sym(name) }, .capture = capture };
-}
-
-fn patF(comptime name: []const u8, comptime fields_: []const query.Field) query.Pattern {
-    return .{ .kind = .{ .symbol = sym(name) }, .fields = fields_ };
-}
-
-fn patCF(comptime name: []const u8, capture: query.CaptureId, comptime fields_: []const query.Field) query.Pattern {
-    return .{ .kind = .{ .symbol = sym(name) }, .capture = capture, .fields = fields_ };
-}
-
-fn field(comptime name: kinds.Field, pattern: query.Pattern) query.Field {
-    return .{ .relation = .{ .field = fld(name) }, .pattern = pattern };
-}
-
-fn child(pattern: query.Pattern) query.Field {
-    return .{ .relation = .child, .pattern = pattern };
-}
-
-fn either(comptime branches: []const query.Pattern) query.Pattern {
-    return .{ .kind = .{ .alternation = branches } };
-}
 
 fn typeOrPointer(comptime capture: query.CaptureId) query.Pattern {
     return either(&.{
@@ -258,6 +229,11 @@ fn paramCount(node: Node) ?u32 {
         total += if (names == 0) 1 else names;
     }
     return total;
+}
+
+fn argCount(node: Node) ?u32 {
+    const arguments = node.childByFieldName("arguments") orelse return null;
+    return metric.countNonExtraNamed(arguments);
 }
 
 fn isParameterDeclaration(node: Node) bool {
