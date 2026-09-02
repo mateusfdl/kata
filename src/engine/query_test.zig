@@ -153,6 +153,128 @@ test "query: text predicate gates an alternation pattern" {
     try std.testing.expectEqual(@as(u32, 7), matches[0].get(0).?.startByte());
 }
 
+test "query: first child relation binds the first named child" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const src = "foo(a, b);";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{
+        .kind = .{ .symbol = t.sym("call_expression") },
+        .fields = &.{.{
+            .relation = .{ .field = t.field("arguments") },
+            .pattern = .{
+                .kind = .{ .symbol = t.sym("arguments") },
+                .fields = &.{
+                    .{
+                        .relation = .first_child,
+                        .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 },
+                    },
+                },
+            },
+        }},
+    };
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
+
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+    try std.testing.expectEqualStrings("a", matches[0].get(0).?.text(src).?);
+}
+
+test "query: first child relation rejects a match on a later child" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const src = "foo(1, a);";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{
+        .kind = .{ .symbol = t.sym("call_expression") },
+        .fields = &.{.{
+            .relation = .{ .field = t.field("arguments") },
+            .pattern = .{
+                .kind = .{ .symbol = t.sym("arguments") },
+                .fields = &.{
+                    .{
+                        .relation = .first_child,
+                        .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 },
+                    },
+                },
+            },
+        }},
+    };
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
+
+    try std.testing.expectEqual(@as(usize, 0), matches.len);
+}
+
+test "query: first child relation anchors the following child after it" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const src = "foo(a, b, c);";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{
+        .kind = .{ .symbol = t.sym("call_expression") },
+        .fields = &.{.{
+            .relation = .{ .field = t.field("arguments") },
+            .pattern = .{
+                .kind = .{ .symbol = t.sym("arguments") },
+                .fields = &.{
+                    .{
+                        .relation = .first_child,
+                        .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 },
+                    },
+                    .{
+                        .relation = .child,
+                        .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 1 },
+                    },
+                },
+            },
+        }},
+    };
+    const matches = try runMatches(arena.allocator(), &pattern, 2, src, t.root());
+
+    try std.testing.expectEqual(@as(usize, 2), matches.len);
+    try std.testing.expectEqualStrings("a", matches[0].get(0).?.text(src).?);
+    try std.testing.expectEqualStrings("b", matches[0].get(1).?.text(src).?);
+    try std.testing.expectEqualStrings("a", matches[1].get(0).?.text(src).?);
+    try std.testing.expectEqualStrings("c", matches[1].get(1).?.text(src).?);
+}
+
+test "query: first child relation skips a leading comment" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const src = "foo(/* c */ a);";
+    var t = test_tree.build(std.testing.allocator, .ts, src);
+    defer t.deinit(std.testing.allocator);
+
+    const pattern: Pattern = .{
+        .kind = .{ .symbol = t.sym("call_expression") },
+        .fields = &.{.{
+            .relation = .{ .field = t.field("arguments") },
+            .pattern = .{
+                .kind = .{ .symbol = t.sym("arguments") },
+                .fields = &.{
+                    .{
+                        .relation = .first_child,
+                        .pattern = .{ .kind = .{ .symbol = t.sym("identifier") }, .capture = 0 },
+                    },
+                },
+            },
+        }},
+    };
+    const matches = try runMatches(arena.allocator(), &pattern, 1, src, t.root());
+
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+    try std.testing.expectEqualStrings("a", matches[0].get(0).?.text(src).?);
+}
+
 test "query: unanchored child yields one match per satisfying child" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

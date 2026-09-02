@@ -30,11 +30,13 @@ pub const Kind = union(enum) {
 
 /// how a field pattern relates to its parent. `field` is a tree-sitter
 /// field-tagged child, keyed by its field id (resolved at lower time);
-/// `child` is any immediate named child (unanchored); `children` is zero-or-more
+/// `child` is any immediate named child (unanchored); `first_child` is the first
+/// immediate named child that is not an extra; `children` is zero-or-more
 /// immediate named children.
 pub const Relation = union(enum) {
     field: u16,
     child,
+    first_child,
     children,
 };
 
@@ -199,6 +201,16 @@ fn matchFields(
                 const cont = fieldsCont(fields, index, parent, k + 1, next);
                 const control = try matchNode(&field.pattern, source, child, bindings, &cont, collector);
                 if (control == .stop) return .stop;
+            }
+            return .continue_scan;
+        },
+        .first_child => {
+            var children = parent.namedChildren();
+            var k: u32 = 0;
+            while (children.next()) |child| : (k += 1) {
+                if (child.isExtra()) continue;
+                const cont = fieldsCont(fields, index, parent, k + 1, next);
+                return matchNode(&field.pattern, source, child, bindings, &cont, collector);
             }
             return .continue_scan;
         },
