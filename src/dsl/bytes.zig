@@ -1,4 +1,14 @@
 const std = @import("std");
+pub const call_matches = "matches";
+pub const call_glob = "glob";
+pub const call_any_of = "anyOf";
+pub const call_none_of = "noneOf";
+pub const call_starts_with = "startsWith";
+pub const call_ends_with = "endsWith";
+pub const call_contains = "contains";
+pub const call_text = "text";
+pub const call_capture = "capture";
+pub const call_field = "field";
 
 pub const LexemeByte = enum(u8) {
     space = ' ',
@@ -61,17 +71,6 @@ pub fn decodedEscape(c: u8) ?u8 {
 pub fn isLexemeByte(c: u8, expected: LexemeByte) bool {
     return c == @intFromEnum(expected);
 }
-
-pub const call_matches = "matches";
-pub const call_glob = "glob";
-pub const call_any_of = "anyOf";
-pub const call_none_of = "noneOf";
-pub const call_starts_with = "startsWith";
-pub const call_ends_with = "endsWith";
-pub const call_contains = "contains";
-pub const call_text = "text";
-pub const call_capture = "capture";
-pub const call_field = "field";
 
 pub const MessageToken = union(enum) {
     literal: []const u8,
