@@ -302,14 +302,14 @@ fn writeOutput(io: std.Io, output_path: []const u8, families: []const Family) !v
 }
 
 fn writeFamily(w: *std.Io.Writer, family: Family) !void {
-    try w.print("pub const {s} = struct {{\n", .{family.name});
+    try w.print("pub const {f} = struct {{\n", .{std.zig.fmtId(family.name)});
 
     try w.writeAll("    pub const Kind = enum(u16) {\n        unknown = 0,\n");
-    for (family.named) |kind| try w.print("        {s},\n", .{kind});
+    for (family.named) |kind| try w.print("        {f},\n", .{std.zig.fmtId(kind)});
     try w.writeAll("    };\n\n");
 
     try w.writeAll("    pub const Field = enum(u16) {\n        none = 0,\n");
-    for (family.fields) |field| try w.print("        {s},\n", .{field});
+    for (family.fields) |field| try w.print("        {f},\n", .{std.zig.fmtId(field)});
     try w.writeAll("    };\n\n");
 
     try w.print("    pub const named_count: u16 = {d};\n", .{family.named.len});
