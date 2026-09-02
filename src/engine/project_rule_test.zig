@@ -228,6 +228,47 @@ test "project rule: go constructor channel resolves receivers" {
     try std.testing.expectEqual(@as(u32, 4), violations[0].diagnostic.range.start.line);
 }
 
+test "project rule: zig constructor channel resolves receivers" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.zig}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    const repository_zig =
+        "const UserRepository = struct {\n" ++
+        "    pub fn find(self: *UserRepository, id: u32) void {\n" ++
+        "        _ = self;\n" ++
+        "        _ = id;\n" ++
+        "    }\n" ++
+        "};\n";
+    const service_zig =
+        "const UserRepository = @import(\"../repo/user.zig\").UserRepository;\n" ++
+        "const OrderService = struct {\n" ++
+        "    pub fn create(self: *OrderService) void {\n" ++
+        "        _ = self;\n" ++
+        "        const r = UserRepository{};\n" ++
+        "        r.find(1);\n" ++
+        "    }\n" ++
+        "};\n";
+    try index.put(try f.engine.extractFacts(gpa, repository_zig, .zig, "src/repo/user.zig"));
+    try index.put(try f.engine.extractFacts(gpa, service_zig, .zig, "src/service/order.zig"));
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{repository_isolation}, &.{}, &index, null);
+
+    try std.testing.expectEqual(@as(usize, 1), violations.len);
+    try std.testing.expectEqualStrings("src/service/order.zig", violations[0].path);
+    try std.testing.expectEqualStrings(
+        "call to UserRepository.find is restricted to *Repository callers",
+        violations[0].diagnostic.message,
+    );
+    try std.testing.expectEqual(@as(u32, 5), violations[0].diagnostic.range.start.line);
+}
+
 test "project rule: top-level callers are not repositories" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
@@ -379,6 +420,60 @@ test "project rule: import-boundary resolves ts relative specifiers" {
         v.diagnostic.message,
     );
     try std.testing.expectEqual(@as(u32, 0), v.diagnostic.range.start.line);
+}
+
+const app_no_infra: project_rule.ProjectRule = .{
+    .id = "app-no-infra",
+    .kind = .{ .import_boundary = .{
+        .from = "src/**",
+        .deny = "src/infra/**",
+    } },
+};
+
+test "project rule: import-boundary resolves zig imports without a dot prefix" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.zig}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    const app = "const db = @import(\"infra/db.zig\");\nconst std = @import(\"std\");\n";
+    const infra_db = "pub const Conn = struct {};\n";
+    try index.put(try f.engine.extractFacts(gpa, app, .zig, "src/app.zig"));
+    try index.put(try f.engine.extractFacts(gpa, infra_db, .zig, "src/infra/db.zig"));
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{app_no_infra}, &.{}, &index, null);
+
+    try std.testing.expectEqual(@as(usize, 1), violations.len);
+    try std.testing.expectEqualStrings("src/app.zig", violations[0].path);
+    try std.testing.expectEqual(@as(u32, 0), violations[0].diagnostic.range.start.line);
+}
+
+test "project rule: import-boundary resolves zig relative imports" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.zig}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    const domain_order = "const db = @import(\"../infra/db.zig\");\nconst Conn = db.Conn;\n";
+    const infra_db = "pub const Conn = struct {};\n";
+    try index.put(try f.engine.extractFacts(gpa, domain_order, .zig, "src/domain/order.zig"));
+    try index.put(try f.engine.extractFacts(gpa, infra_db, .zig, "src/infra/db.zig"));
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const violations = try project_rule.evaluate(arena_state.allocator(), &.{domain_no_infra}, &.{}, &index, null);
+
+    try std.testing.expectEqual(@as(usize, 1), violations.len);
+    try std.testing.expectEqualStrings("src/domain/order.zig", violations[0].path);
+    try std.testing.expectEqual(@as(u32, 0), violations[0].diagnostic.range.start.line);
 }
 
 test "project rule: import-boundary matches go import strings" {

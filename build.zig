@@ -35,6 +35,12 @@ pub fn build(b: *std.Build) void {
     });
     const go_lib = ts_go_dep.artifact("ts_go");
 
+    const ts_zig_dep = b.dependency("tree_sitter_zig", .{
+        .target = target,
+        .optimize = native_optimize,
+    });
+    const zig_lib = ts_zig_dep.artifact("ts_zig");
+
     const gen_dep = b.dependency("gen_embedded_rules", .{});
     const gen_exe = gen_dep.artifact("gen_embedded_rules");
 
@@ -52,10 +58,12 @@ pub fn build(b: *std.Build) void {
     run_gen_kinds.addFileArg(ts_typescript_dep.namedLazyPath("tsx_node_types"));
     run_gen_kinds.addArgs(&.{ "go", "1" });
     run_gen_kinds.addFileArg(ts_go_dep.namedLazyPath("go_node_types"));
+    run_gen_kinds.addArgs(&.{ "zig", "1" });
+    run_gen_kinds.addFileArg(ts_zig_dep.namedLazyPath("zig_node_types"));
 
     const strip = b.option(bool, "strip", "Strip debug info from the executable") orelse false;
 
-    const grammar_libs: []const *std.Build.Step.Compile = &.{ typescript_lib, tsx_lib, go_lib };
+    const grammar_libs: []const *std.Build.Step.Compile = &.{ typescript_lib, tsx_lib, go_lib, zig_lib };
 
     const path_module = b.createModule(.{
         .root_source_file = b.path("src/fs/path.zig"),

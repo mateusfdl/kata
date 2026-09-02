@@ -15,6 +15,7 @@ fn remapFor(lang: language.Name, grammar: *const ts.Language) ![]u16 {
     return switch (lang) {
         .ts, .tsx => nk.ts_family.buildKindRemap(grammar, std.testing.allocator),
         .go => nk.go.buildKindRemap(grammar, std.testing.allocator),
+        .zig => nk.zig.buildKindRemap(grammar, std.testing.allocator),
     };
 }
 
@@ -54,6 +55,10 @@ test "node_kinds: id-space layout per family" {
     try std.testing.expectEqual(@as(u16, 106), nk.go.named_count);
     try std.testing.expectEqual(@as(u16, 107), nk.go.anon_base);
     try std.testing.expectEqual(@as(u16, 107 + 76), nk.go.kind_count);
+    try std.testing.expectEqual(@as(u16, 0), @intFromEnum(nk.zig.Kind.unknown));
+    try std.testing.expectEqual(@as(u16, 95), nk.zig.named_count);
+    try std.testing.expectEqual(@as(u16, 96), nk.zig.anon_base);
+    try std.testing.expectEqual(@as(u16, 96 + 143), nk.zig.kind_count);
 }
 
 test "node_kinds: name routes to kind_names and anon_names" {
@@ -62,6 +67,7 @@ test "node_kinds: name routes to kind_names and anon_names" {
     try std.testing.expectEqualStrings("&&", nk.ts_family.name(anonId(nk.ts_family, "&&")));
     try std.testing.expectEqualStrings("ERROR", nk.ts_family.name(nk.ts_family.kind_count));
     try std.testing.expectEqualStrings("source_file", nk.go.name(@intFromEnum(nk.go.Kind.source_file)));
+    try std.testing.expectEqualStrings("source_file", nk.zig.name(@intFromEnum(nk.zig.Kind.source_file)));
 }
 
 test "node_kinds: ts kind remap maps grammar symbols to kata ids" {
@@ -116,6 +122,7 @@ test "node_kinds: remap round-trips for every parsed node (alias guard)" {
     try roundTrip(.ts, "class C { foo() { if (a && b) return a ? b : c; for (;;) {} switch (a) {} } }");
     try roundTrip(.tsx, "const x = <div className={y}>{z}</div>; function f<T>(a: T): T { return a; }");
     try roundTrip(.go, "package main\nimport \"x\"\nfunc f() { if a && b { for {} switch {} } }\n");
+    try roundTrip(.zig, "const std = @import(\"std\");\nfn f(a: bool) void { if (a and a) {} }\n");
 }
 
 test "node_kinds: go remap is its own id space" {
@@ -125,4 +132,13 @@ test "node_kinds: go remap is its own id space" {
 
     try std.testing.expectEqual(@intFromEnum(nk.go.Kind.short_var_declaration), remap[grammar.idForNodeKind("short_var_declaration", true)]);
     try std.testing.expectEqual(anonId(nk.go, "&&"), remap[grammar.idForNodeKind("&&", false)]);
+}
+
+test "node_kinds: zig remap is its own id space" {
+    const grammar = language.grammar(.zig);
+    const remap = try nk.zig.buildKindRemap(grammar, std.testing.allocator);
+    defer std.testing.allocator.free(remap);
+
+    try std.testing.expectEqual(@intFromEnum(nk.zig.Kind.function_declaration), remap[grammar.idForNodeKind("function_declaration", true)]);
+    try std.testing.expectEqual(anonId(nk.zig, "and"), remap[grammar.idForNodeKind("and", false)]);
 }

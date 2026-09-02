@@ -7,6 +7,7 @@ const family_mod = @import("family/family.zig");
 extern fn tree_sitter_typescript() callconv(.c) *const ts.Language;
 extern fn tree_sitter_tsx() callconv(.c) *const ts.Language;
 extern fn tree_sitter_go() callconv(.c) *const ts.Language;
+extern fn tree_sitter_zig() callconv(.c) *const ts.Language;
 
 const Info = struct {
     canonical: []const u8,
@@ -18,12 +19,14 @@ const infos: std.EnumArray(Name, Info) = .init(.{
     .ts = .{ .canonical = "ts", .extension = ".ts", .grammar = tree_sitter_typescript },
     .tsx = .{ .canonical = "tsx", .extension = ".tsx", .grammar = tree_sitter_tsx },
     .go = .{ .canonical = "go", .extension = ".go", .grammar = tree_sitter_go },
+    .zig = .{ .canonical = "zig", .extension = ".zig", .grammar = tree_sitter_zig },
 });
 
 pub const Name = enum {
     ts,
     tsx,
     go,
+    zig,
 
     pub fn toString(self: Name) []const u8 {
         return infos.get(self).canonical;
@@ -49,6 +52,7 @@ pub const Name = enum {
         return switch (self) {
             .ts, .tsx => .ts_family,
             .go => .go,
+            .zig => .zig,
         };
     }
 };
@@ -61,6 +65,18 @@ pub const supported_list = blk: {
 
     for (names, 0..) |n, i| {
         if (i > 0) text = text ++ (if (i == names.len - 1) ", or " else ", ");
+
+        text = text ++ infos.get(n).canonical;
+    }
+
+    break :blk text;
+};
+
+pub const pipe_list = blk: {
+    var text: []const u8 = "";
+
+    for (std.enums.values(Name), 0..) |n, i| {
+        if (i > 0) text = text ++ "|";
 
         text = text ++ infos.get(n).canonical;
     }

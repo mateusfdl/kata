@@ -342,7 +342,7 @@ fn daemonReport(c: Command, arena: std.mem.Allocator, request: protocol.Request)
 
 fn runUnknown(stderr: *std.Io.Writer, cmd: []const u8) !u8 {
     try stderr.print("unknown subcommand: \"{s}\"\n", .{cmd});
-    try stderr.writeAll("usage: kata [daemon [--root <dir>] | check <path> | facts <file> | test <rules-dir> | query <rule> [path] --lang=<lang> | stop | new-rule <lang> <id> | --lang=<ts|tsx|go>]\n");
+    try stderr.writeAll("usage: kata [daemon [--root <dir>] | check <path> | facts <file> | test <rules-dir> | query <rule> [path] --lang=<lang> | stop | new-rule <lang> <id> | --lang=<" ++ lint.language.pipe_list ++ ">]\n");
     try stderr.flush();
     return exit.usage;
 }

@@ -17,12 +17,14 @@ const ClassSelector = containing_interval.Selector(facts.ClassDef, ByteInterval,
 pub const Family = enum {
     ts_family,
     go,
+    zig,
 };
 
 pub fn of(fam: Family) *const Adapter {
     return switch (fam) {
         .ts_family => &@import("ts_family.zig").adapter,
         .go => &@import("go.zig").adapter,
+        .zig => &@import("zig.zig").adapter,
     };
 }
 

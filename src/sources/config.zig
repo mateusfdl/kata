@@ -490,6 +490,7 @@ fn parseScopeKey(content: []const u8) ParseError!Scope {
 
 fn scopeFromKey(key: []const u8) ?Scope {
     if (std.mem.eql(u8, key, "go")) return .{ .langs = &.{.go}, .project = false };
+    if (std.mem.eql(u8, key, "zig")) return .{ .langs = &.{.zig}, .project = false };
     if (std.mem.eql(u8, key, "ts")) return .{ .langs = &.{.ts}, .project = false };
     if (std.mem.eql(u8, key, "tsx")) return .{ .langs = &.{.tsx}, .project = false };
     if (std.mem.eql(u8, key, "typescript")) return .{ .langs = &.{ .ts, .tsx }, .project = false };

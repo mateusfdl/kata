@@ -327,6 +327,59 @@ test "engine: go diagnostics carry type and method contexts" {
     try expectContextEntry(method_diagnostics[0].context[1], .method, "m");
 }
 
+test "engine: zig diagnostics carry container and function contexts" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rule =
+        \\rule no-print {
+        \\  lang zig
+        \\  match call_expression @match
+        \\  emit @match { message "no print" }
+        \\}
+    ;
+    var f = try Fixture.init(gpa, &.{.zig}, "no-print", rule);
+    defer f.deinit();
+    const source =
+        \\const std = @import("std");
+        \\const Repo = struct {
+        \\    pub fn find(self: *Repo) void {
+        \\        std.debug.print("x", .{});
+        \\    }
+        \\};
+    ;
+
+    const diagnostics = try f.engine.lint(arena.allocator(), source, .zig, null);
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 2), diagnostics[0].context.len);
+    try expectContextEntry(diagnostics[0].context[0], .class, "Repo");
+    try expectContextEntry(diagnostics[0].context[1], .function, "find");
+}
+
+test "engine: zig diagnostics name test contexts" {
+    const gpa = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rule =
+        \\rule no-print {
+        \\  lang zig
+        \\  match call_expression @match
+        \\  emit @match { message "no print" }
+        \\}
+    ;
+    var f = try Fixture.init(gpa, &.{.zig}, "no-print", rule);
+    defer f.deinit();
+    const source =
+        \\const std = @import("std");
+        \\test "adds" { std.debug.print("x", .{}); }
+    ;
+
+    const diagnostics = try f.engine.lint(arena.allocator(), source, .zig, null);
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 1), diagnostics[0].context.len);
+    try expectContextEntry(diagnostics[0].context[0], .function, "adds");
+}
+
 test "engine: detects `as any`" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa, &.{.ts});

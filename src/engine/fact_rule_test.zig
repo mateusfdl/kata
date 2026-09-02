@@ -287,6 +287,37 @@ test "fact rule: go import specifiers pass through verbatim" {
     try std.testing.expectEqual(@as(u32, 1), violations[0].diagnostic.range.start.line);
 }
 
+test "fact rule: zig import specifiers resolve relative to the importer" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.zig}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    var index = ProjectIndex.init(gpa);
+    defer index.deinit();
+
+    const source = "const db = @import(\"../infra/db.zig\");\n";
+    try index.put(try f.engine.extractFacts(gpa, source, .zig, "src/domain/order.zig"));
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const boundary: fact_rule.CompiledFactRule = .{
+        .id = "domain-no-infra",
+        .fact = .import,
+        .predicates = &.{
+            scalar(.glob, &.{ rootField(.path), .{ .literal = "**/domain/**" } }),
+            scalar(.glob, &.{ .{ .helper = .{ .id = .resolved_import_source, .capture = 0 } }, .{ .literal = "**/infra/**" } }),
+        },
+        .message = &.{.{ .literal = "infra import from domain" }},
+    };
+    const violations = try fact_rule.evaluate(arena_state.allocator(), &.{boundary}, &.{}, &index, null);
+
+    try std.testing.expectEqual(@as(usize, 1), violations.len);
+    try std.testing.expectEqualStrings("src/domain/order.zig", violations[0].path);
+    try std.testing.expectEqualStrings("zig", violations[0].diagnostic.language);
+    try std.testing.expectEqual(@as(u32, 0), violations[0].diagnostic.range.start.line);
+}
+
 test "fact rule: relative imports escaping the root emit nothing" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);

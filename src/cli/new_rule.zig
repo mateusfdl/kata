@@ -22,7 +22,7 @@ pub const Options = struct {
         opts: Options,
     ) Error!u8 {
         if (opts.args.len != 3)
-            return output.message(opts.stderr, "usage: kata new-rule <ts|tsx|go> <rule-id>\n", exit.usage);
+            return output.message(opts.stderr, "usage: kata new-rule <" ++ language.pipe_list ++ "> <rule-id>\n", exit.usage);
 
         const lang_str = opts.args[1];
         const id = opts.args[2];

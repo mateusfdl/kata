@@ -904,6 +904,14 @@ test "rules: typescript expands to ts and tsx" {
     }
 }
 
+test "rules: zig scope yields a zig setting" {
+    var cfg = try expectParseOk("rules:\n  zig:\n    no-panic:\n");
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(usize, 1), cfg.settings.len);
+    try std.testing.expectEqual(@as(?language.Name, .zig), cfg.settings[0].lang);
+    try std.testing.expectEqualStrings("no-panic", cfg.settings[0].id);
+}
+
 test "rules: double-quoted exclude item is unquoted" {
     var cfg = try expectParseOk("rules:\n  go:\n    no-panic:\n      exclude:\n        - \"cmd/**\"\n");
     defer cfg.deinit();

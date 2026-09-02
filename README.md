@@ -8,7 +8,7 @@ Rules live under `rules/<lang>/<id>.kata` (embedded at build time) and may be
 extended with user rules under `$XDG_CONFIG_HOME/kata/rules/` and per-project
 rules under `<project>/.kata/rules/`. A rule file makes a rule available; it
 only runs once declared under `rules:` in `rules.yaml`. Supported languages:
-`ts`, `tsx`, `go`.
+`ts`, `tsx`, `go`, `zig`.
 
 ## Build
 
@@ -31,7 +31,7 @@ make test             # unit tests
 | `kata query '<kata rule>' [path] --lang=<lang>` | Evaluate an inline rule against a file or directory (default `.`). Ignores configured rules. |
 | `kata stop` | Tell a running daemon to shut down. |
 | `kata new-rule <lang> <id>` | Scaffold a `.kata` template under `$XDG_CONFIG_HOME/kata/rules/<lang>/<id>.kata`. Refuses to overwrite. |
-| `kata --lang=<ts\|tsx\|go> < src` | One-shot: read source on stdin, emit a JSON report. `--filename=<path>` infers the language. |
+| `kata --lang=<ts\|tsx\|go\|zig> < src` | One-shot: read source on stdin, emit a JSON report. `--filename=<path>` infers the language. |
 
 One-shot mode runs the same pipeline the daemon serves for a single buffer:
 configured rules, ratchet demotion when `ratchet: true`, and match caps. Cross-file
@@ -416,7 +416,7 @@ Schema:
 - Top-level keys: `rules`, `project-rules`, `ratchet`, `max-matches-per-file`,
   `daemon-autostart`, `cache`.
 - `rules:` nests scope keys, each scope nests rule ids: `go`, `ts`, `tsx`,
-  `typescript` (both `ts` and `tsx`), and `project` (DSL project rules).
+  `zig`, `typescript` (both `ts` and `tsx`), and `project` (DSL project rules).
 - A listed rule is active. `enabled: false` deactivates it; `enabled: true`
   is accepted but redundant.
 - `severity: error | warn` overrides the rule's own severity in both
@@ -586,6 +586,27 @@ Every rule block in a `.kata` file carries the id of the file name, and the
 repeat the rule block to bundle pattern variants under one id. The node the
 `emit` clause names drives the diagnostic position. The emit block may also
 carry `fix` and `suggest` clauses after `message` (see Autofix).
+
+Node kinds and field names come from each language's tree-sitter grammar. A name
+that the grammar does not define is rejected at load with
+`node kind or field is invalid for the grammar`. A Zig `call_expression` has no
+`arguments` field; its arguments are direct children matched with `child:`.
+Builtins such as `@panic` and `@import` are `builtin_function` nodes with a
+`builtin_identifier` child, not calls.
+
+```kata
+rule no-panic {
+  lang zig
+
+  match builtin_function @match {
+    child: builtin_identifier @id
+  }
+
+  where { text(@id) == "@panic" }
+
+  emit @match { message "panic is not allowed" }
+}
+```
 
 A rule block may skip files by glob with an `exclude paths` clause:
 
@@ -808,9 +829,9 @@ rule unlock-follows-lock {
 ```
 
 Two consequences follow from siblings-only, anchored matching. Capture the
-statement, not the expression inside it: both grammars wrap a call statement
-(`block` - `expression_statement` - `call_expression` in go), so a rule that
-captures the `call_expression` sees the wrapper as its parent and an empty
+statement, not the expression inside it: every grammar wraps a call statement
+(`block` - `expression_statement` - `call_expression` in go and zig), so a rule
+that captures the `call_expression` sees the wrapper as its parent and an empty
 sibling set. And a match nested deeper in a later sibling does not count: an
 `Unlock` inside a closure in a following statement leaves the `Lock` flagged,
 because `follows` never descends. Neither predicate takes an `until` boundary.
@@ -948,6 +969,14 @@ facts and their fields:
 | `call` | `receiver`, `method`, `container` |
 | `import` | `name`, `source` |
 
+In Zig, `class` is a `const` bound to a `struct`, `enum`, `union`, or `opaque`;
+the const name is the class name. `method` is every `fn`, and its `container` is
+the innermost enclosing container or empty at top level. `typedDecl` covers
+parameters, container fields, typed `const` and `var` declarations, and `T{}` or
+`&T{}` initializers; `*T`, `?T`, `?*T`, `[]T`, `[]const T`, and `pkg.T` reduce to
+`T`. `call` is `a.b()` or `self.a.b()`. `import` is `const x = @import("...")` or
+`const T = @import("...").T`.
+
 Every fact also has `path` and `lang`. `field(@x, name)` reads a field;
 fields the extractor could not attribute are empty strings, never missing.
 There is no `lang` clause on project rules - filter with
@@ -1032,7 +1061,11 @@ Two helpers derive values a raw field cannot give:
   project; ambiguous or unknown receivers are missing and the predicate fails.
 - `resolvedImportSource(@import)` resolves `./` and `../` specifiers against
   the importing file (`src/domain/user.ts` + `../infra/db` gives
-  `src/infra/db`); Go and non-relative specifiers pass through verbatim.
+  `src/infra/db`); a Zig `@import` specifier that ends in `.zig` resolves against
+  the importing file whether or not it starts with `./` (`src/domain/order.zig` +
+  `../infra/db.zig` gives `src/infra/db.zig`, `src/app.zig` + `infra/db.zig` gives
+  `src/infra/db.zig`); Zig package names, Go, and other non-relative specifiers
+  pass through verbatim.
 
 ```kata
 rule no-infra-from-domain {

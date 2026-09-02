@@ -170,7 +170,7 @@ test "query: unsupported language in a list is usage" {
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(query.Outcome.usage, r.outcome);
-    try std.testing.expectEqualStrings("kata query: unsupported language: \"python\" (expected ts, tsx, or go)\n", r.stderr);
+    try std.testing.expectEqualStrings("kata query: unsupported language: \"python\" (expected ts, tsx, go, or zig)\n", r.stderr);
 }
 
 test "query: missing --lang is usage" {
@@ -180,7 +180,7 @@ test "query: missing --lang is usage" {
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(query.Outcome.usage, r.outcome);
-    try std.testing.expectEqualStrings("kata query: --lang is required (expected ts, tsx, or go)\n", r.stderr);
+    try std.testing.expectEqualStrings("kata query: --lang is required (expected ts, tsx, go, or zig)\n", r.stderr);
 }
 
 test "query: unsupported --lang is usage" {
@@ -190,7 +190,7 @@ test "query: unsupported --lang is usage" {
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(query.Outcome.usage, r.outcome);
-    try std.testing.expectEqualStrings("kata query: unsupported language: \"python\" (expected ts, tsx, or go)\n", r.stderr);
+    try std.testing.expectEqualStrings("kata query: unsupported language: \"python\" (expected ts, tsx, go, or zig)\n", r.stderr);
 }
 
 test "query: empty query text is usage" {
@@ -200,7 +200,7 @@ test "query: empty query text is usage" {
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(query.Outcome.usage, r.outcome);
-    try std.testing.expectEqualStrings("usage: kata query '<kata rule>' [path] --lang=<ts|tsx|go>\n", r.stderr);
+    try std.testing.expectEqualStrings("usage: kata query '<kata rule>' [path] --lang=<ts|tsx|go|zig>\n", r.stderr);
 }
 
 test "query: invalid query text is usage" {

@@ -15,6 +15,58 @@ const comment_rule =
     \\}
 ;
 
+test "facts: zig import sources resolve against the importing file" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    try std.testing.expectEqualStrings("src/domain/sibling.zig", (try facts.resolveImportSource(allocator, .zig, "src/domain/order.zig", "sibling.zig")).?);
+    try std.testing.expectEqualStrings("src/infra/db.zig", (try facts.resolveImportSource(allocator, .zig, "src/main.zig", "infra/db.zig")).?);
+    try std.testing.expectEqualStrings("src/infra/db.zig", (try facts.resolveImportSource(allocator, .zig, "src/domain/order.zig", "../infra/db.zig")).?);
+    try std.testing.expectEqualStrings("std", (try facts.resolveImportSource(allocator, .zig, "src/domain/order.zig", "std")).?);
+    try std.testing.expectEqualStrings("pkg", (try facts.resolveImportSource(allocator, .zig, "src/domain/order.zig", "pkg")).?);
+    try std.testing.expectEqual(@as(?[]const u8, null), try facts.resolveImportSource(allocator, .zig, "order.zig", "../escape.zig"));
+}
+
+test "facts: zig typed decls see through optional pointers, slices, and qualified initializers" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.zig}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    const src =
+        "const db = @import(\"../infra/db.zig\");\n" ++
+        "const Node = struct {\n" ++
+        "    parent: ?*Node,\n" ++
+        "    items: []const Node,\n" ++
+        "    names: []Node,\n" ++
+        "    conn: ?*db.Conn,\n" ++
+        "    pub fn make() void {\n" ++
+        "        const pr = db.Conn{};\n" ++
+        "        const pp = &db.Conn{};\n" ++
+        "        _ = pr;\n" ++
+        "        _ = pp;\n" ++
+        "    }\n" ++
+        "};\n";
+
+    var ff = try f.engine.extractFacts(gpa, src, .zig, "src/tree/node.zig");
+    defer ff.deinit();
+
+    const expected_decls = [_]struct { name: []const u8, type_name: []const u8, line: u32 }{
+        .{ .name = "parent", .type_name = "Node", .line = 2 },
+        .{ .name = "items", .type_name = "Node", .line = 3 },
+        .{ .name = "names", .type_name = "Node", .line = 4 },
+        .{ .name = "conn", .type_name = "Conn", .line = 5 },
+        .{ .name = "pr", .type_name = "Conn", .line = 7 },
+        .{ .name = "pp", .type_name = "Conn", .line = 8 },
+    };
+    try std.testing.expectEqual(expected_decls.len, ff.typed_decls.len);
+    for (expected_decls, ff.typed_decls) |want, got| {
+        try std.testing.expectEqualStrings(want.name, got.name);
+        try std.testing.expectEqualStrings(want.type_name, got.type_name);
+        try std.testing.expectEqual(want.line, got.range.start.line);
+    }
+}
+
 test "facts: ts extraction covers classes, methods, decls, calls, and imports" {
     const gpa = std.testing.allocator;
     var f = try Fixture.init(gpa, &.{.ts}, "no-comments", comment_rule);
@@ -167,6 +219,108 @@ test "facts: go extraction covers types, methods, decls, calls, and imports" {
     try std.testing.expectEqual(@as(usize, 1), ff.imports.len);
     try std.testing.expectEqualStrings("", ff.imports[0].name);
     try std.testing.expectEqualStrings("example.com/repo", ff.imports[0].source);
+}
+
+test "facts: zig extraction covers containers, methods, decls, calls, and imports" {
+    const gpa = std.testing.allocator;
+    var f = try Fixture.init(gpa, &.{.zig}, "no-comments", comment_rule);
+    defer f.deinit();
+
+    const src =
+        "const std = @import(\"std\");\n" ++
+        "const db = @import(\"../infra/db.zig\");\n" ++
+        "const Pool = @import(\"../infra/pool.zig\").Pool;\n" ++
+        "const UserRepository = struct {\n" ++
+        "    pub fn find(self: *UserRepository, id: u32) void {\n" ++
+        "        _ = self;\n" ++
+        "        _ = id;\n" ++
+        "    }\n" ++
+        "};\n" ++
+        "const OrderService = struct {\n" ++
+        "    repo: UserRepository,\n" ++
+        "    conn: ?db.Conn,\n" ++
+        "    pub fn create(self: *OrderService) void {\n" ++
+        "        self.repo.save();\n" ++
+        "        const r = UserRepository{};\n" ++
+        "        r.find(1);\n" ++
+        "        const u = &UserRepository{};\n" ++
+        "        u.find(2);\n" ++
+        "        r.repo.save();\n" ++
+        "    }\n" ++
+        "};\n" ++
+        "fn helper(conn: *db.Conn, pool: Pool) void {\n" ++
+        "    const local: db.Conn = conn.*;\n" ++
+        "    local.close();\n" ++
+        "    pool.drain();\n" ++
+        "    const again: Pool = pool;\n" ++
+        "}\n";
+
+    var ff = try f.engine.extractFacts(gpa, src, .zig, "src/service/order.zig");
+    defer ff.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), ff.classes.len);
+    try std.testing.expectEqualStrings("UserRepository", ff.classes[0].name);
+    try std.testing.expectEqual(@as(u32, 3), ff.classes[0].range.start.line);
+    try std.testing.expectEqualStrings("OrderService", ff.classes[1].name);
+    try std.testing.expectEqual(@as(u32, 9), ff.classes[1].range.start.line);
+
+    const expected_methods = [_]struct { name: []const u8, container: []const u8, line: u32 }{
+        .{ .name = "find", .container = "UserRepository", .line = 4 },
+        .{ .name = "create", .container = "OrderService", .line = 12 },
+        .{ .name = "helper", .container = "", .line = 21 },
+    };
+    try std.testing.expectEqual(expected_methods.len, ff.methods.len);
+    for (expected_methods, ff.methods) |want, got| {
+        try std.testing.expectEqualStrings(want.name, got.name);
+        try std.testing.expectEqualStrings(want.container, got.container);
+        try std.testing.expectEqual(want.line, got.range.start.line);
+    }
+
+    const expected_decls = [_]struct { name: []const u8, type_name: []const u8, line: u32 }{
+        .{ .name = "self", .type_name = "UserRepository", .line = 4 },
+        .{ .name = "repo", .type_name = "UserRepository", .line = 10 },
+        .{ .name = "conn", .type_name = "Conn", .line = 11 },
+        .{ .name = "self", .type_name = "OrderService", .line = 12 },
+        .{ .name = "r", .type_name = "UserRepository", .line = 14 },
+        .{ .name = "u", .type_name = "UserRepository", .line = 16 },
+        .{ .name = "conn", .type_name = "Conn", .line = 21 },
+        .{ .name = "pool", .type_name = "Pool", .line = 21 },
+        .{ .name = "local", .type_name = "Conn", .line = 22 },
+        .{ .name = "again", .type_name = "Pool", .line = 25 },
+    };
+    try std.testing.expectEqual(expected_decls.len, ff.typed_decls.len);
+    for (expected_decls, ff.typed_decls) |want, got| {
+        try std.testing.expectEqualStrings(want.name, got.name);
+        try std.testing.expectEqualStrings(want.type_name, got.type_name);
+        try std.testing.expectEqual(want.line, got.range.start.line);
+    }
+
+    const expected_calls = [_]struct { receiver: []const u8, method: []const u8, container: []const u8, line: u32 }{
+        .{ .receiver = "repo", .method = "save", .container = "OrderService", .line = 13 },
+        .{ .receiver = "r", .method = "find", .container = "OrderService", .line = 15 },
+        .{ .receiver = "u", .method = "find", .container = "OrderService", .line = 17 },
+        .{ .receiver = "local", .method = "close", .container = "", .line = 23 },
+        .{ .receiver = "pool", .method = "drain", .container = "", .line = 24 },
+    };
+    try std.testing.expectEqual(expected_calls.len, ff.calls.len);
+    for (expected_calls, ff.calls) |want, got| {
+        try std.testing.expectEqualStrings(want.receiver, got.receiver);
+        try std.testing.expectEqualStrings(want.method, got.method);
+        try std.testing.expectEqualStrings(want.container, got.container);
+        try std.testing.expectEqual(want.line, got.range.start.line);
+    }
+
+    const expected_imports = [_]struct { name: []const u8, source: []const u8, line: u32 }{
+        .{ .name = "std", .source = "std", .line = 0 },
+        .{ .name = "db", .source = "../infra/db.zig", .line = 1 },
+        .{ .name = "Pool", .source = "../infra/pool.zig", .line = 2 },
+    };
+    try std.testing.expectEqual(expected_imports.len, ff.imports.len);
+    for (expected_imports, ff.imports) |want, got| {
+        try std.testing.expectEqualStrings(want.name, got.name);
+        try std.testing.expectEqualStrings(want.source, got.source);
+        try std.testing.expectEqual(want.line, got.range.start.line);
+    }
 }
 
 test "facts: multi-name short var declarations bind only the first name" {

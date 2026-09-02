@@ -17,6 +17,10 @@ fn goId(comptime name: []const u8) u16 {
     return @intFromEnum(@field(nk.go.Kind, name));
 }
 
+fn zigId(comptime name: []const u8) u16 {
+    return @intFromEnum(@field(nk.zig.Kind, name));
+}
+
 fn collectBinary(n: Node, out: *std.ArrayList(Node), gpa: std.mem.Allocator) !void {
     if (std.mem.eql(u8, n.kind(), "binary_expression")) try out.append(gpa, n);
     var children = n.children();
@@ -80,6 +84,117 @@ test "metric: go table classifies decision points by kind" {
     try std.testing.expectEqual(MetricKind.case, table[goId("communication_case")].?);
     try std.testing.expectEqual(MetricKind.bool_op, table[goId("binary_expression")].?);
     try std.testing.expectEqual(@as(?MetricKind, null), table[goId("identifier")]);
+}
+
+test "metric: zig table classifies decision points by kind" {
+    const gpa = std.testing.allocator;
+    const table = try family.of(.zig).buildMetricTable(gpa);
+    defer gpa.free(table);
+
+    try std.testing.expectEqual(MetricKind.function, table[zigId("function_declaration")].?);
+    try std.testing.expectEqual(MetricKind.function, table[zigId("test_declaration")].?);
+    try std.testing.expectEqual(MetricKind.branch, table[zigId("if_statement")].?);
+    try std.testing.expectEqual(MetricKind.ternary, table[zigId("if_expression")].?);
+    try std.testing.expectEqual(MetricKind.loop, table[zigId("while_statement")].?);
+    try std.testing.expectEqual(MetricKind.loop, table[zigId("for_statement")].?);
+    try std.testing.expectEqual(MetricKind.switch_stmt, table[zigId("switch_expression")].?);
+    try std.testing.expectEqual(MetricKind.case, table[zigId("switch_case")].?);
+    try std.testing.expectEqual(MetricKind.catch_clause, table[zigId("catch_expression")].?);
+    try std.testing.expectEqual(MetricKind.bool_op, table[zigId("binary_expression")].?);
+    try std.testing.expectEqual(@as(?MetricKind, null), table[zigId("identifier")]);
+    try std.testing.expectEqual(@as(?MetricKind, null), table[zigId("try_expression")]);
+    try std.testing.expectEqual(@as(?MetricKind, null), table[zigId("null_coercion_expression")]);
+}
+
+test "metric: bool-op refinement counts only logical binary operators in zig" {
+    const gpa = std.testing.allocator;
+    var compiled = try metric.compile(gpa, .zig);
+    defer compiled.deinit(gpa);
+
+    var t = test_tree.build(gpa, .zig, "fn f(a: bool, b: u32, c: ?u32) void { _ = a and a; _ = a or a; _ = b + b; _ = c orelse 0; }");
+    defer t.deinit(gpa);
+
+    var binaries: std.ArrayList(Node) = .empty;
+    defer binaries.deinit(gpa);
+    try collectBinary(t.root(), &binaries, gpa);
+
+    try std.testing.expectEqual(@as(usize, 4), binaries.items.len);
+    for (binaries.items) |bin| {
+        const op = bin.childByFieldName("operator").?.kind();
+        const result = metric.classify(&compiled, bin);
+        if (std.mem.eql(u8, op, "+")) {
+            try std.testing.expectEqual(@as(?MetricKind, null), result);
+        } else {
+            try std.testing.expectEqual(MetricKind.bool_op, result.?);
+        }
+    }
+}
+
+test "metric: zig complexity and nesting" {
+    const gpa = std.testing.allocator;
+    const source =
+        \\fn f(a: bool, b: bool) u32 {
+        \\    if (a and b) {
+        \\        while (a) {
+        \\            if (b or a) {}
+        \\        }
+        \\    }
+        \\    const x: u32 = if (a) 1 else 2;
+        \\    switch (x) {
+        \\        1 => {},
+        \\        2 => {},
+        \\        else => {},
+        \\    }
+        \\    const y = g() catch 0;
+        \\    for (0..3) |_| {}
+        \\    const z: ?u32 = null;
+        \\    return z orelse y;
+        \\}
+    ;
+    var t = test_tree.build(gpa, .zig, source);
+    defer t.deinit(gpa);
+
+    var compiled = try metric.compile(gpa, .zig);
+    defer compiled.deinit(gpa);
+    const function = firstOfKind(t.root(), "function_declaration").?;
+    var analysis = try metric.analyze(gpa, &compiled, function);
+    defer analysis.deinit();
+
+    try std.testing.expectEqual(metric.Measures{ .complexity = 13, .nesting = 3 }, try analysis.measures());
+}
+
+test "metric: zig params and args" {
+    const gpa = std.testing.allocator;
+
+    var params_tree = test_tree.build(gpa, .zig, "fn f(self: *Self, a: u32, comptime T: type, args: anytype) void {}");
+    defer params_tree.deinit(gpa);
+    const params_function = firstOfKind(params_tree.root(), "function_declaration").?;
+    try std.testing.expectEqual(@as(?u32, 4), metric.paramsOf(params_function, .zig));
+
+    var no_params_tree = test_tree.build(gpa, .zig, "fn g() void {}");
+    defer no_params_tree.deinit(gpa);
+    const no_params_function = firstOfKind(no_params_tree.root(), "function_declaration").?;
+    try std.testing.expectEqual(@as(?u32, 0), metric.paramsOf(no_params_function, .zig));
+
+    var args_tree = test_tree.build(gpa, .zig, "const x = foo(1, 2, 3);");
+    defer args_tree.deinit(gpa);
+    const args_call = firstOfKind(args_tree.root(), "call_expression").?;
+    try std.testing.expectEqual(@as(?u32, 3), metric.argsOf(args_call, .zig));
+
+    var no_args_tree = test_tree.build(gpa, .zig, "const x = foo();");
+    defer no_args_tree.deinit(gpa);
+    const no_args_call = firstOfKind(no_args_tree.root(), "call_expression").?;
+    try std.testing.expectEqual(@as(?u32, 0), metric.argsOf(no_args_call, .zig));
+
+    var import_tree = test_tree.build(gpa, .zig, "const std = @import(\"std\");");
+    defer import_tree.deinit(gpa);
+    const import = firstOfKind(import_tree.root(), "builtin_function").?;
+    try std.testing.expectEqual(@as(?u32, 1), metric.argsOf(import, .zig));
+
+    var panic_tree = test_tree.build(gpa, .zig, "fn f() void { @panic(\"x\"); }");
+    defer panic_tree.deinit(gpa);
+    const panic = firstOfKind(panic_tree.root(), "builtin_function").?;
+    try std.testing.expectEqual(@as(?u32, 1), metric.argsOf(panic, .zig));
 }
 
 test "metric: bool-op refinement counts only logical binary operators in ts" {

@@ -79,7 +79,7 @@ pub const prepare = Options.prepare;
 pub const serve = Options.serve;
 pub const report = Options.report;
 
-const usage_line = "usage: kata --lang=<ts|tsx|go> [--filename=<path>] < source\n";
+const usage_line = "usage: kata --lang=<" ++ language.pipe_list ++ "> [--filename=<path>] < source\n";
 
 pub const Prepared = union(enum) {
     ready: protocol.Request,

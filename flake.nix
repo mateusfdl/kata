@@ -127,7 +127,7 @@
                   go.no-panic.severity = "warn";
                   typescript.simple-repositories.exclude = [ "test/**/*.ts" ];
                 };
-                description = "Rules to activate, keyed by scope (go, ts, tsx, typescript, project) then rule id.";
+                description = "Rules to activate, keyed by scope (go, ts, tsx, typescript, zig, project) then rule id.";
               };
 
               projectRules = lib.mkOption {
@@ -222,7 +222,7 @@
 
             zigDeps = zig.fetchDeps {
               inherit (finalAttrs) pname version src;
-              hash = "sha256-CgyvBABSygnMmKFeUCNM9FFPkdBNNWWJ6Hxs55ozdUw=";
+              hash = "sha256-MDXyvUtQgSn5iE5oDQPmgzoBXfjox4hv7EDmtzqHIFE=";
             };
 
             nativeBuildInputs = [ zig.hook ];

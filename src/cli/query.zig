@@ -98,6 +98,6 @@ pub const Options = struct {
 
 pub const run = Options.run;
 
-const usage_line = "usage: kata query '<kata rule>' [path] --lang=<ts|tsx|go>\n";
+const usage_line = "usage: kata query '<kata rule>' [path] --lang=<" ++ language.pipe_list ++ ">\n";
 
 const rule_id = "query";
