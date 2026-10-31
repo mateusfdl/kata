@@ -60,7 +60,6 @@ const Keyword = enum {
     maturity,
     experimental,
     stable,
-    deprecated,
     exclude,
     paths,
     match,
@@ -325,7 +324,6 @@ pub const Parser = struct {
         const value = try self.expectSymbol(error.ExpectedSymbol);
         if (isKeyword(value, .experimental)) return .experimental;
         if (isKeyword(value, .stable)) return .stable;
-        if (isKeyword(value, .deprecated)) return .deprecated;
 
         self.failAt(value);
         return error.InvalidMaturity;

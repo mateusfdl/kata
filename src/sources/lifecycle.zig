@@ -50,7 +50,6 @@ fn registerRule(table: *Table, scope: ?language.Name, raw: lint.rule.RawRule) er
     try table.scopeMut(scope).maturities.put(table.arena, raw.id, switch (parsed.maturity) {
         .experimental => .experimental,
         .stable => .stable,
-        .deprecated => .deprecated,
     });
 }
 

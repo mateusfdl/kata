@@ -30,7 +30,6 @@ pub const Severity = enum {
 pub const Maturity = enum {
     experimental,
     stable,
-    deprecated,
 };
 
 pub const Match = union(enum) {

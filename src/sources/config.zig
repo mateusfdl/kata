@@ -727,7 +727,6 @@ fn shouldKeep(
                 return false;
             }
         },
-        .deprecated => try set.warnings.append(set.allocator, .{ .kind = .deprecated, .lang = scope, .id = id }),
     }
 
     return true;

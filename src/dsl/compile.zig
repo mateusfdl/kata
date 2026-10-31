@@ -411,7 +411,6 @@ fn compilePattern(ctx: *Compiler, r: ast.Rule) Error!rule.PatternMeta {
         .maturity = switch (r.maturity) {
             .experimental => .experimental,
             .stable => .stable,
-            .deprecated => .deprecated,
         },
     };
 }

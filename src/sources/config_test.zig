@@ -314,27 +314,6 @@ test "selection: experimental rule with explicit enabled false stays silent" {
     try std.testing.expectEqual(@as(usize, 0), fx.set.warnings.items.len);
 }
 
-test "selection: deprecated rule activates with a warning" {
-    var fx = RuleFixture.init();
-    defer fx.deinit();
-    fx.set = .{ .allocator = fx.arena() };
-    try fx.set.append(.ts, .{ .id = "legacy", .source = dslRule("legacy", "ts", "  maturity deprecated\n") });
-    const table = try buildTable(&fx);
-
-    var cfg = try expectParseOk("rules:\n  ts:\n    legacy:\n");
-    defer cfg.deinit();
-    const resolved = try config.resolve(fx.arena(), &cfg, null);
-    try config.applySelection(&fx.set, resolved, &table);
-
-    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
-    try std.testing.expect(hasId(fx.set.get(.ts), "legacy"));
-    try std.testing.expectEqual(@as(usize, 1), fx.set.warnings.items.len);
-    const w = fx.set.warnings.items[0];
-    try std.testing.expectEqual(lint.Warning.Kind.deprecated, w.kind);
-    try std.testing.expectEqual(language.Name.ts, w.lang.?);
-    try std.testing.expectEqualStrings("legacy", w.id);
-}
-
 test "config: parses an import-boundary project rule" {
     const src =
         \\project-rules:

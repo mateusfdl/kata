@@ -298,7 +298,7 @@ test "compile: applies severity and exclude paths" {
         \\rule no-console {
         \\  lang ts
         \\  severity warn
-        \\  maturity deprecated
+        \\  maturity experimental
         \\  exclude paths "vendor/**"
         \\  match call_expression @match {
         \\    function: member_expression {
@@ -312,7 +312,7 @@ test "compile: applies severity and exclude paths" {
     defer compiled.deinit();
 
     try std.testing.expectEqual(diagnostic.Severity.warn, compiled.patterns[0].meta.severity);
-    try std.testing.expectEqual(diagnostic.Maturity.deprecated, compiled.patterns[0].meta.maturity);
+    try std.testing.expectEqual(diagnostic.Maturity.experimental, compiled.patterns[0].meta.maturity);
 
     const excluded = try runCompiled(gpa, &compiled, .ts, "console.log(1);\n", "vendor/x.ts");
     defer gpa.free(excluded);

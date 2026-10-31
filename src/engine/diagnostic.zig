@@ -23,7 +23,6 @@ pub const Safety = enum {
 pub const Maturity = enum {
     experimental,
     stable,
-    deprecated,
 };
 
 pub const ContextKind = enum {

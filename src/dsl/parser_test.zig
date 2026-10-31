@@ -228,7 +228,6 @@ test "parser: parses maturity clause values" {
     const cases = [_]struct { line: []const u8, expected: ast.Maturity }{
         .{ .line = "maturity experimental", .expected = .experimental },
         .{ .line = "maturity stable", .expected = .stable },
-        .{ .line = "maturity deprecated", .expected = .deprecated },
     };
     for (cases) |case| {
         const source = try std.fmt.allocPrint(arena.allocator(),

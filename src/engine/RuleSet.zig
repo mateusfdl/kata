@@ -11,7 +11,7 @@ pub const Warning = struct {
     lang: ?language.Name,
     id: []const u8,
 
-    pub const Kind = enum { override, experimental, deprecated };
+    pub const Kind = enum { override, experimental };
 };
 
 pub const RuleSet = struct {

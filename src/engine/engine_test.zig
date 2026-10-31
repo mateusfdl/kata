@@ -884,12 +884,12 @@ test "engine: severity defaults to error" {
     try std.testing.expectEqual(diagnostic.Maturity.stable, diags[0].maturity);
 }
 
-test "engine: maturity deprecated stamps diagnostics" {
+test "engine: maturity experimental stamps diagnostics" {
     const gpa = std.testing.allocator;
     const rule =
         \\rule no-comments {
         \\  lang go
-        \\  maturity deprecated
+        \\  maturity experimental
         \\  match comment @match
         \\  emit @match { message "no comments" }
         \\}
@@ -901,7 +901,7 @@ test "engine: maturity deprecated stamps diagnostics" {
     defer gpa.free(diags);
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
-    try std.testing.expectEqual(diagnostic.Maturity.deprecated, diags[0].maturity);
+    try std.testing.expectEqual(diagnostic.Maturity.experimental, diags[0].maturity);
 }
 
 test "engine: set severity warn stamps warn on diagnostics" {
