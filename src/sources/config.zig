@@ -684,21 +684,13 @@ pub fn loadFromDisk(
     return try parse(gpa, source, diag);
 }
 
-pub fn applySelection(
-    arena: std.mem.Allocator,
-    set: *loader.RuleSet,
-    resolved: *Resolved,
-    table: *const lifecycle.Table,
-    diag: *rule.Diagnostic,
-) !void {
-    resolved.settings = try resolveFormerIds(arena, set, resolved.settings, table, diag);
-
+pub fn applySelection(set: *loader.RuleSet, resolved: Resolved, table: *const lifecycle.Table) !void {
     for (std.enums.values(language.Name)) |lang| {
         const list = set.by_lang.getPtr(lang);
         var i: usize = 0;
 
         while (i < list.items.len) {
-            if (try shouldKeep(set, lang, list.items[i].id, resolved.*, table)) {
+            if (try shouldKeep(set, lang, list.items[i].id, resolved, table)) {
                 i += 1;
             } else {
                 _ = list.swapRemove(i);
@@ -708,7 +700,7 @@ pub fn applySelection(
 
     var i: usize = 0;
     while (i < set.project.items.len) {
-        if (try shouldKeep(set, null, set.project.items[i].id, resolved.*, table)) {
+        if (try shouldKeep(set, null, set.project.items[i].id, resolved, table)) {
             i += 1;
         } else {
             _ = set.project.swapRemove(i);
@@ -750,48 +742,3 @@ fn findSelectionSetting(scope: ?language.Name, id: []const u8, resolved: Resolve
     return null;
 }
 
-fn resolveFormerIds(
-    arena: std.mem.Allocator,
-    set: *loader.RuleSet,
-    settings: []const RuleSetting,
-    table: *const lifecycle.Table,
-    diag: *rule.Diagnostic,
-) ![]const RuleSetting {
-    const rewritten = try arena.dupe(RuleSetting, settings);
-    for (rewritten) |*setting| {
-        const scope: ?language.Name = if (setting.project) null else setting.lang orelse continue;
-        switch (table.resolve(scope, setting.id)) {
-            .renamed => |canonical| {
-                try appendRenamedWarning(set, setting.lang, setting.id, canonical);
-                setting.id = canonical;
-            },
-            .removed => |reason| {
-                diag.* = .{
-                    .lang = setting.lang,
-                    .rule_id = setting.id,
-                    .detail = try std.fmt.allocPrint(arena, "removed: {s}", .{reason}),
-                };
-
-                return error.RetiredRuleRemoved;
-            },
-            .unchanged => {},
-        }
-    }
-
-    return rewritten;
-}
-
-fn appendRenamedWarning(set: *loader.RuleSet, lang: ?language.Name, id: []const u8, canonical: []const u8) !void {
-    for (set.warnings.items) |w| {
-        if (w.kind != .renamed) continue;
-        if (!std.mem.eql(u8, w.id, id)) continue;
-        if (std.mem.eql(u8, w.canonical.?, canonical)) return;
-    }
-
-    try set.warnings.append(set.allocator, .{
-        .kind = .renamed,
-        .lang = lang,
-        .id = id,
-        .canonical = canonical,
-    });
-}

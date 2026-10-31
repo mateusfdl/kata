@@ -10,7 +10,6 @@ pub const Rule = struct {
     languages: []const []const u8 = &.{},
     severity: Severity = .@"error",
     maturity: Maturity = .stable,
-    former_ids: []const []const u8 = &.{},
     exclude_paths: []const []const u8 = &.{},
     match: ?Match = null,
     where: []const Predicate = &.{},

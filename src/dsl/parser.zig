@@ -61,7 +61,6 @@ const Keyword = enum {
     experimental,
     stable,
     deprecated,
-    @"former-ids",
     exclude,
     paths,
     match,
@@ -197,7 +196,6 @@ pub const Parser = struct {
         var languages: []const []const u8 = &.{};
         var severity: ast.Severity = .@"error";
         var maturity: ast.Maturity = .stable;
-        var former_ids: []const []const u8 = &.{};
         var exclude_paths: []const []const u8 = &.{};
         var match_clause: ?ast.Match = null;
         var predicates: []const ast.Predicate = &.{};
@@ -206,7 +204,6 @@ pub const Parser = struct {
         var seen_lang = false;
         var seen_severity = false;
         var seen_maturity = false;
-        var seen_former_ids = false;
         var seen_exclude = false;
         var seen_where = false;
 
@@ -238,10 +235,6 @@ pub const Parser = struct {
                 .maturity => {
                     try self.rejectDuplicate(clause, &seen_maturity);
                     maturity = try self.parseMaturity();
-                },
-                .@"former-ids" => {
-                    try self.rejectDuplicate(clause, &seen_former_ids);
-                    former_ids = try self.parseFormerIds();
                 },
                 .exclude => {
                     try self.rejectDuplicate(clause, &seen_exclude);
@@ -302,7 +295,6 @@ pub const Parser = struct {
             .languages = languages,
             .severity = severity,
             .maturity = maturity,
-            .former_ids = former_ids,
             .exclude_paths = exclude_paths,
             .match = match_clause,
             .where = predicates,
@@ -345,22 +337,6 @@ pub const Parser = struct {
 
     fn parseStringOrSymbolList(self: *Parser) Error![]const []const u8 {
         return self.parseList(parseStringOrSymbol);
-    }
-
-    fn parseFormerIds(self: *Parser) Error![]const []const u8 {
-        return self.parseList(parseFormerId);
-    }
-
-    fn parseFormerId(self: *Parser) Error![]const u8 {
-        const token = self.current;
-        const value = try self.parseStringOrSymbol();
-        if (value.len == 0 or !isRuleId(value)) {
-            self.failAt(token);
-
-            return error.InvalidRuleId;
-        }
-
-        return value;
     }
 
     fn parseList(self: *Parser, comptime parseItem: fn (*Parser) Error![]const u8) Error![]const []const u8 {

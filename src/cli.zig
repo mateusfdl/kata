@@ -253,17 +253,6 @@ fn dispatchSubcommand(c: Command, subcommand: ConfiguredCommand) !u8 {
 
 fn resolveContext(c: Command, anchor: ?[]const u8) !?*context_mod.Context {
     const ctx = c.resolver.resolve(anchor) catch |err| {
-        if (err == error.LifecycleCollision or err == error.RetiredRuleRemoved) {
-            try c.resolver.rule_diag.write("kata", c.stderr);
-            return null;
-        }
-        if (err == error.InvalidRetiredEntry or err == error.MissingRetiredReason) {
-            try c.stderr.print("kata: retired.yaml: line {d}: {s}\n", .{
-                c.resolver.retired_diag.line, sources.retired.errorMessage(err),
-            });
-            try c.stderr.flush();
-            return null;
-        }
         if (c.resolver.diag.line > 0) {
             try c.stderr.print("kata: .kata/rules.yaml: line {d}: {s}\n", .{ c.resolver.diag.line, config.errorMessage(err) });
             try c.stderr.flush();
@@ -563,9 +552,6 @@ fn drainWarnings(stderr: *std.Io.Writer, rule_set: *const loader_mod.RuleSet) vo
         switch (w.kind) {
             .override => stderr.print("kata: warning: {s} rule {s}/{s} overrides previous definition\n", .{
                 @tagName(w.source.?), scope, w.id,
-            }) catch return,
-            .renamed => stderr.print("kata: warning: rule id '{s}' was renamed to '{s}'; update rules.yaml\n", .{
-                w.id, w.canonical.?,
             }) catch return,
             .experimental => stderr.print("kata: warning: rule {s}/{s} is experimental; set 'enabled: true' to activate it\n", .{
                 scope, w.id,

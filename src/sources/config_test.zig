@@ -155,15 +155,12 @@ fn dslRule(comptime id: []const u8, comptime lang: []const u8, comptime clauses:
 }
 
 fn buildTable(fx: *RuleFixture) !lifecycle.Table {
-    var rule_diag: lint.rule.Diagnostic = .{};
-    return lifecycle.build(fx.arena(), &fx.set, &rule_diag);
+    return lifecycle.build(fx.arena(), &fx.set);
 }
 
 fn select(fx: *RuleFixture, resolved: config.Resolved) !void {
-    var r = resolved;
     const table = try buildTable(fx);
-    var diag: lint.rule.Diagnostic = .{};
-    try config.applySelection(fx.arena(), &fx.set, &r, &table, &diag);
+    try config.applySelection(&fx.set, resolved, &table);
 }
 
 test "selection: no configs removes every rule" {
@@ -264,116 +261,6 @@ test "selection: rule entry matching nothing is ignored" {
     try std.testing.expectEqual(@as(usize, 0), fx.countGo());
 }
 
-test "selection: former id activates the canonical rule" {
-    var fx = RuleFixture.init();
-    defer fx.deinit();
-    fx.set = .{ .allocator = fx.arena() };
-    try fx.set.append(.ts, .{ .id = "new-name", .source = dslRule("new-name", "ts", "  former-ids old-name\n") });
-    const table = try buildTable(&fx);
-
-    var cfg = try expectParseOk("rules:\n  ts:\n    old-name:\n      severity: warn\n");
-    defer cfg.deinit();
-    var resolved = try config.resolve(fx.arena(), &cfg, null);
-    var diag: lint.rule.Diagnostic = .{};
-    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
-
-    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
-    try std.testing.expect(hasId(fx.set.get(.ts), "new-name"));
-    try std.testing.expectEqual(@as(usize, 1), resolved.settings.len);
-    try std.testing.expectEqualStrings("new-name", resolved.settings[0].id);
-    try std.testing.expectEqual(@as(?lint.diagnostic.Severity, .warn), resolved.settings[0].severity);
-
-    try std.testing.expectEqual(@as(usize, 1), fx.set.warnings.items.len);
-    const w = fx.set.warnings.items[0];
-    try std.testing.expectEqual(lint.Warning.Kind.renamed, w.kind);
-    try std.testing.expectEqual(language.Name.ts, w.lang.?);
-    try std.testing.expectEqualStrings("old-name", w.id);
-    try std.testing.expectEqualStrings("new-name", w.canonical.?);
-}
-
-test "selection: former id under typescript scope warns once" {
-    var fx = RuleFixture.init();
-    defer fx.deinit();
-    fx.set = .{ .allocator = fx.arena() };
-    try fx.set.append(.ts, .{ .id = "new-name", .source = dslRule("new-name", "ts, tsx", "  former-ids old-name\n") });
-    try fx.set.append(.tsx, .{ .id = "new-name", .source = dslRule("new-name", "ts, tsx", "  former-ids old-name\n") });
-    const table = try buildTable(&fx);
-
-    var cfg = try expectParseOk("rules:\n  typescript:\n    old-name:\n");
-    defer cfg.deinit();
-    var resolved = try config.resolve(fx.arena(), &cfg, null);
-    var diag: lint.rule.Diagnostic = .{};
-    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
-
-    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
-    try std.testing.expectEqual(@as(usize, 1), fx.countTsx());
-    try std.testing.expectEqualStrings("new-name", resolved.settings[0].id);
-    try std.testing.expectEqualStrings("new-name", resolved.settings[1].id);
-    try std.testing.expectEqual(@as(usize, 1), fx.set.warnings.items.len);
-    try std.testing.expectEqual(lint.Warning.Kind.renamed, fx.set.warnings.items[0].kind);
-}
-
-test "selection: replaced retired id activates the replacement" {
-    var fx = RuleFixture.init();
-    defer fx.deinit();
-    fx.set = .{ .allocator = fx.arena() };
-    try fx.set.append(.ts, .{ .id = "new-name", .source = dslRule("new-name", "ts", "") });
-    var table = try buildTable(&fx);
-    try table.retired.put(fx.arena(), "old-name", .{ .replaced = "new-name" });
-
-    var cfg = try expectParseOk("rules:\n  ts:\n    old-name:\n");
-    defer cfg.deinit();
-    var resolved = try config.resolve(fx.arena(), &cfg, null);
-    var diag: lint.rule.Diagnostic = .{};
-    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
-
-    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
-    try std.testing.expect(hasId(fx.set.get(.ts), "new-name"));
-    try std.testing.expectEqualStrings("new-name", resolved.settings[0].id);
-    try std.testing.expectEqual(@as(usize, 1), fx.set.warnings.items.len);
-    const w = fx.set.warnings.items[0];
-    try std.testing.expectEqual(lint.Warning.Kind.renamed, w.kind);
-    try std.testing.expectEqualStrings("old-name", w.id);
-    try std.testing.expectEqualStrings("new-name", w.canonical.?);
-}
-
-test "selection: removed retired id fails with the recorded reason" {
-    var fx = RuleFixture.init();
-    defer fx.deinit();
-    fx.set = .{ .allocator = fx.arena() };
-    try fx.set.append(.ts, .{ .id = "new-name", .source = dslRule("new-name", "ts", "") });
-    var table = try buildTable(&fx);
-    try table.retired.put(fx.arena(), "gone-name", .{ .removed = "superseded by the families seam" });
-
-    var cfg = try expectParseOk("rules:\n  ts:\n    gone-name:\n");
-    defer cfg.deinit();
-    var resolved = try config.resolve(fx.arena(), &cfg, null);
-    var diag: lint.rule.Diagnostic = .{};
-    try std.testing.expectError(error.RetiredRuleRemoved, config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag));
-
-    try std.testing.expectEqual(language.Name.ts, diag.lang.?);
-    try std.testing.expectEqualStrings("gone-name", diag.rule_id);
-    try std.testing.expectEqualStrings("removed: superseded by the families seam", diag.detail);
-}
-
-test "selection: live id never consults the retired registry" {
-    var fx = RuleFixture.init();
-    defer fx.deinit();
-    fx.set = .{ .allocator = fx.arena() };
-    try fx.set.append(.ts, .{ .id = "no-console", .source = dslRule("no-console", "ts", "") });
-    var table = try buildTable(&fx);
-    try table.retired.put(fx.arena(), "no-console", .{ .removed = "should never be consulted" });
-
-    var cfg = try expectParseOk("rules:\n  ts:\n    no-console:\n");
-    defer cfg.deinit();
-    var resolved = try config.resolve(fx.arena(), &cfg, null);
-    var diag: lint.rule.Diagnostic = .{};
-    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
-
-    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
-    try std.testing.expectEqual(@as(usize, 0), fx.set.warnings.items.len);
-}
-
 test "selection: experimental rule needs explicit enabled true" {
     var fx = RuleFixture.init();
     defer fx.deinit();
@@ -383,9 +270,8 @@ test "selection: experimental rule needs explicit enabled true" {
 
     var cfg = try expectParseOk("rules:\n  ts:\n    risky:\n");
     defer cfg.deinit();
-    var resolved = try config.resolve(fx.arena(), &cfg, null);
-    var diag: lint.rule.Diagnostic = .{};
-    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
+    const resolved = try config.resolve(fx.arena(), &cfg, null);
+    try config.applySelection(&fx.set, resolved, &table);
 
     try std.testing.expectEqual(@as(usize, 0), fx.countTs());
     try std.testing.expectEqual(@as(usize, 1), fx.set.warnings.items.len);
@@ -404,9 +290,8 @@ test "selection: experimental rule with explicit enabled true activates" {
 
     var cfg = try expectParseOk("rules:\n  ts:\n    risky:\n      enabled: true\n");
     defer cfg.deinit();
-    var resolved = try config.resolve(fx.arena(), &cfg, null);
-    var diag: lint.rule.Diagnostic = .{};
-    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
+    const resolved = try config.resolve(fx.arena(), &cfg, null);
+    try config.applySelection(&fx.set, resolved, &table);
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expect(hasId(fx.set.get(.ts), "risky"));
@@ -422,9 +307,8 @@ test "selection: experimental rule with explicit enabled false stays silent" {
 
     var cfg = try expectParseOk("rules:\n  ts:\n    risky:\n      enabled: false\n");
     defer cfg.deinit();
-    var resolved = try config.resolve(fx.arena(), &cfg, null);
-    var diag: lint.rule.Diagnostic = .{};
-    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
+    const resolved = try config.resolve(fx.arena(), &cfg, null);
+    try config.applySelection(&fx.set, resolved, &table);
 
     try std.testing.expectEqual(@as(usize, 0), fx.countTs());
     try std.testing.expectEqual(@as(usize, 0), fx.set.warnings.items.len);
@@ -439,9 +323,8 @@ test "selection: deprecated rule activates with a warning" {
 
     var cfg = try expectParseOk("rules:\n  ts:\n    legacy:\n");
     defer cfg.deinit();
-    var resolved = try config.resolve(fx.arena(), &cfg, null);
-    var diag: lint.rule.Diagnostic = .{};
-    try config.applySelection(fx.arena(), &fx.set, &resolved, &table, &diag);
+    const resolved = try config.resolve(fx.arena(), &cfg, null);
+    try config.applySelection(&fx.set, resolved, &table);
 
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expect(hasId(fx.set.get(.ts), "legacy"));

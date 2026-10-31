@@ -1,10 +1,6 @@
 const std = @import("std");
 
-const lint = @import("engine");
-const sources = @import("../sources.zig");
 
-const language = lint.language;
-const lifecycle = sources.lifecycle;
 
 pub const expect_marker = "// kata-expect:";
 pub const expect_fix_marker = "// kata-expect-fix:";
@@ -59,7 +55,6 @@ const FixAnnotation = struct {
 };
 
 pub const Parser = struct {
-    table: *const lifecycle.Table,
     stdout: *std.Io.Writer,
     expectations: std.ArrayList(Expectation) = .empty,
     fix_expectations: std.ArrayList(FixExpectation) = .empty,
@@ -68,7 +63,6 @@ pub const Parser = struct {
     pub fn parse(
         parser: *Parser,
         arena: std.mem.Allocator,
-        lang: language.Name,
         source: []const u8,
         path: []const u8,
     ) !usize {
@@ -126,17 +120,7 @@ pub const Parser = struct {
             };
 
             for (annotation.ids) |id| {
-                var rule_id = id;
-                switch (parser.table.resolve(lang, id)) {
-                    .renamed => |canonical| {
-                        try parser.stdout.print("{s}:{d} renamed [{s} -> {s}]\n", .{ path, annotation.line + 1, id, canonical });
-
-                        rule_id = canonical;
-                    },
-                    .unchanged, .removed => {},
-                }
-
-                try parser.expectations.append(arena, .{ .line = target, .rule_id = rule_id });
+                try parser.expectations.append(arena, .{ .line = target, .rule_id = id });
             }
         }
 

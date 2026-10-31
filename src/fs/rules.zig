@@ -27,16 +27,6 @@ pub const FixtureFile = struct {
     path: []const u8,
 };
 
-pub const retired_file_name = "retired.yaml";
-
-pub fn readRetired(io: std.Io, allocator: std.mem.Allocator, rules_dir: []const u8) !?[]u8 {
-    const parent = std.fs.path.dirname(rules_dir) orelse return null;
-    const path = try paths.join(allocator, parent, retired_file_name);
-    defer allocator.free(path);
-
-    return file.readOptionalAlloc(io, allocator, path, source_files.max_file_bytes);
-}
-
 pub fn createNew(io: std.Io, lang_dir: []const u8, file_path: []const u8, body: []const u8) !void {
     try std.Io.Dir.cwd().createDirPath(io, lang_dir);
     var out = try std.Io.Dir.cwd().createFile(io, file_path, .{ .exclusive = true });

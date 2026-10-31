@@ -10,9 +10,8 @@ pub const Warning = struct {
     source: ?Source = null,
     lang: ?language.Name,
     id: []const u8,
-    canonical: ?[]const u8 = null,
 
-    pub const Kind = enum { override, renamed, experimental, deprecated };
+    pub const Kind = enum { override, experimental, deprecated };
 };
 
 pub const RuleSet = struct {

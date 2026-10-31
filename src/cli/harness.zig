@@ -8,7 +8,6 @@ const sources = @import("../sources.zig");
 
 const Engine = lint.Engine;
 const language = lint.language;
-const lifecycle = sources.lifecycle;
 const loader = sources.loader;
 
 const Expectation = annotations.Expectation;
@@ -23,7 +22,6 @@ const Totals = struct {
 
 const Session = struct {
     engine: *Engine,
-    table: *const lifecycle.Table,
     stdout: *std.Io.Writer,
     covered: std.ArrayList([]const u8) = .empty,
 
@@ -42,15 +40,6 @@ const Session = struct {
         };
         defer rule_set.deinit();
 
-        var rule_diag: lint.rule.Diagnostic = .{};
-        const table = lifecycle.build(arena, &rule_set, &rule_diag) catch |err| switch (err) {
-            error.LifecycleCollision => {
-                try rule_diag.write("kata test", stderr);
-                return .invalid;
-            },
-            error.OutOfMemory => return error.OutOfMemory,
-        };
-
         var engine = Engine.init(gpa, &rule_set, dsl.engine_compiler.ruleCompiler(), &.{});
         defer engine.deinit();
         if (!try engine.prewarmOrReport("kata test", stderr)) return .invalid;
@@ -62,7 +51,7 @@ const Session = struct {
             return .invalid;
         };
 
-        var session: Session = .{ .engine = &engine, .table = &table, .stdout = stdout };
+        var session: Session = .{ .engine = &engine, .stdout = stdout };
         for (fixtures) |fixture| {
             totals.fixtures += 1;
             totals.failures += try session.checkFixture(arena, fixture.lang, fixture.source, fixture.path);
@@ -89,8 +78,8 @@ const Session = struct {
     ) !usize {
         const stdout = session.stdout;
 
-        var parser: annotations.Parser = .{ .table = session.table, .stdout = stdout };
-        var failures = try parser.parse(arena, lang, source, path);
+        var parser: annotations.Parser = .{ .stdout = stdout };
+        var failures = try parser.parse(arena, source, path);
 
         const diagnostics = try session.engine.lint(arena, source, lang, path);
 
