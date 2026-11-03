@@ -4,7 +4,6 @@ const fs = @import("../fs.zig");
 const lint = @import("engine");
 const config = @import("config.zig");
 const dsl = @import("dsl");
-const lifecycle = @import("lifecycle.zig");
 const loader = @import("loader.zig");
 const rules_hash = @import("rules_hash.zig");
 
@@ -105,10 +104,8 @@ pub const Resolver = struct {
 
         errdefer rule_set.deinit();
 
-        const table = try lifecycle.build(arena, &rule_set);
-
         const resolved = try config.resolve(arena, self.global_config, if (project_config) |*c| c else null);
-        try config.applySelection(&rule_set, resolved, &table);
+        config.applySelection(&rule_set, resolved);
 
         ctx.* = .{
             .gpa = self.gpa,

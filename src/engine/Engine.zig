@@ -694,7 +694,6 @@ fn emitDiagnostic(
         .message = message,
         .range = n.range(),
         .severity = severity,
-        .maturity = meta.maturity,
         .context = context,
         .fix = fix,
         .suggestions = suggestions,

@@ -1,6 +1,4 @@
 rule unlock-follows-lock {
-  maturity experimental
-
   lang go
 
   match expression_statement @match {

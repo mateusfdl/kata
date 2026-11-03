@@ -2,7 +2,6 @@ const std = @import("std");
 
 const lint = @import("engine");
 const config = @import("config.zig");
-const lifecycle = @import("lifecycle.zig");
 const loader = @import("loader.zig");
 
 const language = lint.language;
@@ -154,13 +153,8 @@ fn dslRule(comptime id: []const u8, comptime lang: []const u8, comptime clauses:
         "}\n";
 }
 
-fn buildTable(fx: *RuleFixture) !lifecycle.Table {
-    return lifecycle.build(fx.arena(), &fx.set);
-}
-
 fn select(fx: *RuleFixture, resolved: config.Resolved) !void {
-    const table = try buildTable(fx);
-    try config.applySelection(&fx.set, resolved, &table);
+    config.applySelection(&fx.set, resolved);
 }
 
 test "selection: no configs removes every rule" {
@@ -259,59 +253,6 @@ test "selection: rule entry matching nothing is ignored" {
     try std.testing.expectEqual(@as(usize, 1), fx.countTs());
     try std.testing.expectEqual(@as(usize, 0), fx.countTsx());
     try std.testing.expectEqual(@as(usize, 0), fx.countGo());
-}
-
-test "selection: experimental rule needs explicit enabled true" {
-    var fx = RuleFixture.init();
-    defer fx.deinit();
-    fx.set = .{ .allocator = fx.arena() };
-    try fx.set.append(.ts, .{ .id = "risky", .source = dslRule("risky", "ts", "  maturity experimental\n") });
-    const table = try buildTable(&fx);
-
-    var cfg = try expectParseOk("rules:\n  ts:\n    risky:\n");
-    defer cfg.deinit();
-    const resolved = try config.resolve(fx.arena(), &cfg, null);
-    try config.applySelection(&fx.set, resolved, &table);
-
-    try std.testing.expectEqual(@as(usize, 0), fx.countTs());
-    try std.testing.expectEqual(@as(usize, 1), fx.set.warnings.items.len);
-    const w = fx.set.warnings.items[0];
-    try std.testing.expectEqual(lint.Warning.Kind.experimental, w.kind);
-    try std.testing.expectEqual(language.Name.ts, w.lang.?);
-    try std.testing.expectEqualStrings("risky", w.id);
-}
-
-test "selection: experimental rule with explicit enabled true activates" {
-    var fx = RuleFixture.init();
-    defer fx.deinit();
-    fx.set = .{ .allocator = fx.arena() };
-    try fx.set.append(.ts, .{ .id = "risky", .source = dslRule("risky", "ts", "  maturity experimental\n") });
-    const table = try buildTable(&fx);
-
-    var cfg = try expectParseOk("rules:\n  ts:\n    risky:\n      enabled: true\n");
-    defer cfg.deinit();
-    const resolved = try config.resolve(fx.arena(), &cfg, null);
-    try config.applySelection(&fx.set, resolved, &table);
-
-    try std.testing.expectEqual(@as(usize, 1), fx.countTs());
-    try std.testing.expect(hasId(fx.set.get(.ts), "risky"));
-    try std.testing.expectEqual(@as(usize, 0), fx.set.warnings.items.len);
-}
-
-test "selection: experimental rule with explicit enabled false stays silent" {
-    var fx = RuleFixture.init();
-    defer fx.deinit();
-    fx.set = .{ .allocator = fx.arena() };
-    try fx.set.append(.ts, .{ .id = "risky", .source = dslRule("risky", "ts", "  maturity experimental\n") });
-    const table = try buildTable(&fx);
-
-    var cfg = try expectParseOk("rules:\n  ts:\n    risky:\n      enabled: false\n");
-    defer cfg.deinit();
-    const resolved = try config.resolve(fx.arena(), &cfg, null);
-    try config.applySelection(&fx.set, resolved, &table);
-
-    try std.testing.expectEqual(@as(usize, 0), fx.countTs());
-    try std.testing.expectEqual(@as(usize, 0), fx.set.warnings.items.len);
 }
 
 test "config: parses an import-boundary project rule" {

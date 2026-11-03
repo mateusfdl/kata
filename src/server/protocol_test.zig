@@ -65,7 +65,6 @@ test "protocol: response round-trips with a populated report" {
         },
         .severity = .warn,
         .demoted = true,
-        .maturity = .experimental,
         .fingerprint = "abc123",
         .context = &context,
         .fix = .{
@@ -120,7 +119,6 @@ test "protocol: response round-trips with a populated report" {
     try std.testing.expectEqual(@as(u32, 24), d.range.end.column);
     try std.testing.expectEqual(diagnostic.Severity.warn, d.severity);
     try std.testing.expectEqual(true, d.demoted);
-    try std.testing.expectEqual(diagnostic.Maturity.experimental, d.maturity);
     try std.testing.expectEqualStrings("abc123", d.fingerprint);
     const fix = d.fix.?;
     try std.testing.expectEqualStrings("unknown", fix.replacement);

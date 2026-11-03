@@ -549,14 +549,9 @@ fn resolveUserRulesDir(arena: std.mem.Allocator, environ: *const std.process.Env
 fn drainWarnings(stderr: *std.Io.Writer, rule_set: *const loader_mod.RuleSet) void {
     for (rule_set.warnings.items) |w| {
         const scope = if (w.lang) |lang| lang.toString() else "project";
-        switch (w.kind) {
-            .override => stderr.print("kata: warning: {s} rule {s}/{s} overrides previous definition\n", .{
-                @tagName(w.source.?), scope, w.id,
-            }) catch return,
-            .experimental => stderr.print("kata: warning: rule {s}/{s} is experimental; set 'enabled: true' to activate it\n", .{
-                scope, w.id,
-            }) catch return,
-        }
+        stderr.print("kata: warning: {s} rule {s}/{s} overrides previous definition\n", .{
+            @tagName(w.source.?), scope, w.id,
+        }) catch return;
     }
 
     stderr.flush() catch {};

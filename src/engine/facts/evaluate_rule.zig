@@ -173,7 +173,6 @@ fn evaluateFact(
             .language = root.file.lang.toString(),
             .rule_scope = .project,
             .severity = r.severity,
-            .maturity = r.maturity,
             .message = try message_rule.render(allocator, r.message, ctx, bindings),
             .range = factRange(root.fact),
         },

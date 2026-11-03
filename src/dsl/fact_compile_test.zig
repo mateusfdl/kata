@@ -167,7 +167,7 @@ test "fact compile: or chains fold to any-of" {
     try std.testing.expect(compiled.predicates[1].scalar.regex != null);
 }
 
-test "fact compile: severity maturity and exclude carry over" {
+test "fact compile: severity and exclude carry over" {
     const gpa = std.testing.allocator;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -176,7 +176,6 @@ test "fact compile: severity maturity and exclude carry over" {
         \\rule no-generated-imports {
         \\  kind project
         \\  severity warn
-        \\  maturity experimental
         \\  exclude paths "src/generated/**"
         \\  match import @import
         \\  where {
@@ -188,7 +187,6 @@ test "fact compile: severity maturity and exclude carry over" {
 
     try std.testing.expectEqual(@as(usize, 1), rules.len);
     try std.testing.expectEqual(diagnostic.Severity.warn, rules[0].severity);
-    try std.testing.expectEqual(diagnostic.Maturity.experimental, rules[0].maturity);
     try std.testing.expectEqual(@as(usize, 1), rules[0].exclude_paths.len);
     try std.testing.expectEqualStrings("src/generated/**", rules[0].exclude_paths[0]);
 }

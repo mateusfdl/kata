@@ -71,7 +71,6 @@ pub const DiagnosticAdapter = struct {
             ),
             .range = first.range,
             .severity = first.severity,
-            .maturity = first.maturity,
             .capped = true,
             .rule_scope = first.rule_scope,
         };

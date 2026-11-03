@@ -2,7 +2,6 @@ const std = @import("std");
 
 const fs = @import("../fs.zig");
 const lint = @import("engine");
-const lifecycle = @import("lifecycle.zig");
 const loader = @import("loader.zig");
 const yaml = @import("yaml.zig");
 
@@ -179,7 +178,6 @@ const PendingRule = struct {
     id: []const u8,
     line: u32,
     enabled: bool = true,
-    enabled_explicit: bool = false,
     severity: ?diagnostic.Severity = null,
     fix: ?rule.FixMode = null,
     max_matches: ?u32 = null,
@@ -526,7 +524,6 @@ fn setRuleProperty(pending: *PendingRule, content: []const u8) ParseError!void {
 
     if (std.mem.eql(u8, key, "enabled")) {
         pending.enabled = try parseBoolValue(value, error.InvalidEnabledValue);
-        pending.enabled_explicit = true;
         return;
     }
 
@@ -608,7 +605,6 @@ fn finalizePendingRule(
             .id = p.id,
             .project = true,
             .enabled = p.enabled,
-            .enabled_explicit = p.enabled_explicit,
             .severity = p.severity,
             .fix = p.fix,
             .max_matches = p.max_matches,
@@ -622,7 +618,6 @@ fn finalizePendingRule(
             .lang = lang,
             .id = p.id,
             .enabled = p.enabled,
-            .enabled_explicit = p.enabled_explicit,
             .severity = p.severity,
             .fix = p.fix,
             .max_matches = p.max_matches,
@@ -684,13 +679,13 @@ pub fn loadFromDisk(
     return try parse(gpa, source, diag);
 }
 
-pub fn applySelection(set: *loader.RuleSet, resolved: Resolved, table: *const lifecycle.Table) !void {
+pub fn applySelection(set: *loader.RuleSet, resolved: Resolved) void {
     for (std.enums.values(language.Name)) |lang| {
         const list = set.by_lang.getPtr(lang);
         var i: usize = 0;
 
         while (i < list.items.len) {
-            if (try shouldKeep(set, lang, list.items[i].id, resolved, table)) {
+            if (isSelected(lang, list.items[i].id, resolved)) {
                 i += 1;
             } else {
                 _ = list.swapRemove(i);
@@ -700,7 +695,7 @@ pub fn applySelection(set: *loader.RuleSet, resolved: Resolved, table: *const li
 
     var i: usize = 0;
     while (i < set.project.items.len) {
-        if (try shouldKeep(set, null, set.project.items[i].id, resolved, table)) {
+        if (isSelected(null, set.project.items[i].id, resolved)) {
             i += 1;
         } else {
             _ = set.project.swapRemove(i);
@@ -708,28 +703,10 @@ pub fn applySelection(set: *loader.RuleSet, resolved: Resolved, table: *const li
     }
 }
 
-fn shouldKeep(
-    set: *loader.RuleSet,
-    scope: ?language.Name,
-    id: []const u8,
-    resolved: Resolved,
-    table: *const lifecycle.Table,
-) !bool {
+fn isSelected(scope: ?language.Name, id: []const u8, resolved: Resolved) bool {
     const setting = findSelectionSetting(scope, id, resolved) orelse return false;
-    if (!setting.enabled) return false;
 
-    switch (table.maturityOf(scope, id)) {
-        .stable => {},
-        .experimental => {
-            if (!setting.enabled_explicit) {
-                try set.warnings.append(set.allocator, .{ .kind = .experimental, .lang = scope, .id = id });
-
-                return false;
-            }
-        },
-    }
-
-    return true;
+    return setting.enabled;
 }
 
 fn findSelectionSetting(scope: ?language.Name, id: []const u8, resolved: Resolved) ?RuleSetting {

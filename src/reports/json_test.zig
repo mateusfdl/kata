@@ -6,7 +6,7 @@ const reports = @import("../reports.zig");
 const diagnostic_json =
     "{\"rule_id\":\"no-console\",\"language\":\"ts\",\"message\":\"console is not allowed\"," ++
     "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
-    "\"severity\":\"error\",\"demoted\":false,\"maturity\":\"stable\",\"fingerprint\":\"\",\"context\":[]," ++
+    "\"severity\":\"error\",\"demoted\":false,\"fingerprint\":\"\",\"context\":[]," ++
     "\"fix\":null,\"suggestions\":[],\"capped\":false}";
 
 fn diagnostic(severity: lint.diagnostic.Severity) lint.diagnostic.Diagnostic {
@@ -91,7 +91,7 @@ test "json: populated context renders its complete shape" {
         "{\"files\":[{\"path\":\"src/app.ts\",\"diagnostics\":[" ++
             "{\"rule_id\":\"no-console\",\"language\":\"ts\",\"message\":\"console is not allowed\"," ++
             "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
-            "\"severity\":\"error\",\"demoted\":false,\"maturity\":\"stable\",\"fingerprint\":\"\",\"context\":[" ++
+            "\"severity\":\"error\",\"demoted\":false,\"fingerprint\":\"\",\"context\":[" ++
             "{\"kind\":\"method\",\"name\":\"render\",\"range\":{\"start\":{\"line\":1,\"column\":2}," ++
             "\"end\":{\"line\":3,\"column\":3}}}],\"fix\":null,\"suggestions\":[]," ++
             "\"capped\":false}]}]," ++
@@ -109,20 +109,6 @@ test "json: warn severity serializes as warn" {
     try reporter.finish(.{ .files = 1, .violations = 0, .warnings = 1 }, &.{});
 
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"severity\":\"warn\"") != null);
-}
-
-test "json: experimental maturity serializes as experimental" {
-    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
-    defer out.deinit();
-
-    var d = diagnostic(.@"error");
-    d.maturity = .experimental;
-
-    var reporter = jsonReporter(&out);
-    try reporter.file("src/app.ts", "console.log(1);\n", &.{d});
-    try reporter.finish(.{ .files = 1, .violations = 1, .warnings = 0 }, &.{});
-
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"maturity\":\"experimental\"") != null);
 }
 
 test "json: output remains valid when values need escaping" {
@@ -165,7 +151,7 @@ test "json: populated fix and suggestions render their complete shape" {
         "{\"files\":[{\"path\":\"src/app.ts\",\"diagnostics\":[" ++
             "{\"rule_id\":\"no-console\",\"language\":\"ts\",\"message\":\"console is not allowed\"," ++
             "\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
-            "\"severity\":\"error\",\"demoted\":false,\"maturity\":\"stable\",\"fingerprint\":\"\",\"context\":[]," ++
+            "\"severity\":\"error\",\"demoted\":false,\"fingerprint\":\"\",\"context\":[]," ++
             "\"fix\":{\"range\":{\"start\":{\"line\":4,\"column\":2},\"end\":{\"line\":4,\"column\":9}}," ++
             "\"replacement\":\"Number.parseInt\",\"safety\":\"safe\"}," ++
             "\"suggestions\":[{\"label\":\"use unknown\"," ++

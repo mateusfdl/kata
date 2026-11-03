@@ -156,7 +156,6 @@ pub const PatternMeta = struct {
     rule_id: []const u8,
     exclude_paths: []const []const u8 = &.{},
     severity: diagnostic.Severity = .@"error",
-    maturity: diagnostic.Maturity = .stable,
     fix: ?Fix = null,
     suggestions: []const Suggestion = &.{},
 };
@@ -276,7 +275,6 @@ pub const RuleSetting = struct {
     id: []const u8,
     project: bool = false,
     enabled: bool = true,
-    enabled_explicit: bool = false,
     severity: ?diagnostic.Severity = null,
     fix: ?FixMode = null,
     max_matches: ?u32 = null,

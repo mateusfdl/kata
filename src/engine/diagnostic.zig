@@ -20,11 +20,6 @@ pub const Safety = enum {
     unsafe,
 };
 
-pub const Maturity = enum {
-    experimental,
-    stable,
-};
-
 pub const ContextKind = enum {
     function,
     method,
@@ -62,7 +57,6 @@ pub const Diagnostic = struct {
     range: Range,
     severity: Severity = .@"error",
     demoted: bool = false,
-    maturity: Maturity = .stable,
     fingerprint: []const u8 = "",
     context: []const Context = &.{},
     fix: ?Fix = null,
@@ -79,7 +73,6 @@ pub const Diagnostic = struct {
             .range = self.range,
             .severity = self.severity,
             .demoted = self.demoted,
-            .maturity = self.maturity,
             .fingerprint = self.fingerprint,
             .context = self.context,
             .fix = self.fix,

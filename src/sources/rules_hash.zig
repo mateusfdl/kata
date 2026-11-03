@@ -46,7 +46,6 @@ fn settings(hasher: *Sha256, setting: rule.RuleSetting) void {
     field(hasher, if (setting.lang) |l| l.toString() else "");
     byte(hasher, @intFromBool(setting.project));
     byte(hasher, @intFromBool(setting.enabled));
-    byte(hasher, @intFromBool(setting.enabled_explicit));
     byte(hasher, if (setting.severity) |s| @as(u8, @intFromEnum(s)) + 1 else 0);
     byte(hasher, if (setting.fix) |f| @as(u8, @intFromEnum(f)) + 1 else 0);
     number(hasher, setting.max_matches orelse std.math.maxInt(u32));

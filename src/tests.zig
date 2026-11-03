@@ -28,7 +28,6 @@ comptime {
     _ = @import("server/replay_test.zig");
     _ = @import("server/daemon_test.zig");
     _ = @import("sources/config_test.zig");
-    _ = @import("sources/lifecycle_test.zig");
     _ = @import("sources/context_test.zig");
     _ = @import("sources/loader_test.zig");
     _ = @import("git/git_test.zig");

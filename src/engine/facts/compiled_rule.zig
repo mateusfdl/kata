@@ -12,7 +12,6 @@ pub const CompiledFactRule = struct {
     predicates: []const predicate_query.Predicate,
     message: []const message_rule.MessageSegment,
     severity: diagnostic.Severity = .@"error",
-    maturity: diagnostic.Maturity = .stable,
     exclude_paths: []const []const u8 = &.{},
 };
 

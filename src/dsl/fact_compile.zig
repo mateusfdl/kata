@@ -337,10 +337,6 @@ fn compileRule(ctx: *Compiler, r: ast.Rule) Error!fact_rule.CompiledFactRule {
             .@"error" => .@"error",
             .warn => .warn,
         },
-        .maturity = switch (r.maturity) {
-            .experimental => .experimental,
-            .stable => .stable,
-        },
         .exclude_paths = try bytes.dupeAll(ctx.arena, r.exclude_paths),
     };
 }

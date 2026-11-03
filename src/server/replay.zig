@@ -206,7 +206,6 @@ fn dupeDiagnostics(
             .range = d.range,
             .severity = d.severity,
             .demoted = d.demoted,
-            .maturity = d.maturity,
             .capped = d.capped,
             .fingerprint = try arena.dupe(u8, d.fingerprint),
             .context = try dupeContext(arena, d.context),

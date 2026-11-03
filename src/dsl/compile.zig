@@ -408,10 +408,6 @@ fn compilePattern(ctx: *Compiler, r: ast.Rule) Error!rule.PatternMeta {
             .@"error" => .@"error",
             .warn => .warn,
         },
-        .maturity = switch (r.maturity) {
-            .experimental => .experimental,
-            .stable => .stable,
-        },
     };
 }
 

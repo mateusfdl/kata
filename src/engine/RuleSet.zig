@@ -6,12 +6,9 @@ const rule = @import("rule.zig");
 pub const Source = rule.Source;
 
 pub const Warning = struct {
-    kind: Kind = .override,
     source: ?Source = null,
     lang: ?language.Name,
     id: []const u8,
-
-    pub const Kind = enum { override, experimental };
 };
 
 pub const RuleSet = struct {

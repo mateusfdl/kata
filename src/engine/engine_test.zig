@@ -881,27 +881,6 @@ test "engine: severity defaults to error" {
 
     try std.testing.expectEqual(@as(usize, 1), diags.len);
     try std.testing.expectEqual(diagnostic.Severity.@"error", diags[0].severity);
-    try std.testing.expectEqual(diagnostic.Maturity.stable, diags[0].maturity);
-}
-
-test "engine: maturity experimental stamps diagnostics" {
-    const gpa = std.testing.allocator;
-    const rule =
-        \\rule no-comments {
-        \\  lang go
-        \\  maturity experimental
-        \\  match comment @match
-        \\  emit @match { message "no comments" }
-        \\}
-    ;
-    var f = try Fixture.init(gpa, &.{.go}, "no-comments", rule);
-    defer f.deinit();
-
-    const diags = try f.engine.lint(gpa, "// hi\n", .go, null);
-    defer gpa.free(diags);
-
-    try std.testing.expectEqual(@as(usize, 1), diags.len);
-    try std.testing.expectEqual(diagnostic.Maturity.experimental, diags[0].maturity);
 }
 
 test "engine: set severity warn stamps warn on diagnostics" {
