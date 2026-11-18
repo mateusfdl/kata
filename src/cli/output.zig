@@ -1,19 +1,35 @@
+//! A failure is explained on stderr once, at the place that understands it, and
+//! then travels as `error.UsageReported` or `error.InternalReported`. `cli.main`
+//! turns the error into the exit code. No return type needs a failure variant.
+
 const std = @import("std");
 
-pub fn message(stderr: *std.Io.Writer, text: []const u8, code: u8) !u8 {
-    try stderr.writeAll(text);
-    try stderr.flush();
+pub fn usage(
+    stderr: *std.Io.Writer,
+    comptime fmt: []const u8,
+    values: anytype,
+) (std.Io.Writer.Error || error{UsageReported}) {
+    stderr.print(fmt, values) catch |err| return err;
+    stderr.flush() catch |err| return err;
 
-    return code;
+    return error.UsageReported;
 }
 
-pub fn format(stderr: *std.Io.Writer, comptime fmt: []const u8, values: anytype, code: u8) !u8 {
-    try stderr.print(fmt, values);
-    try stderr.flush();
+pub fn failure(
+    stderr: *std.Io.Writer,
+    comptime fmt: []const u8,
+    values: anytype,
+) (std.Io.Writer.Error || error{InternalReported}) {
+    stderr.print(fmt, values) catch |err| return err;
+    stderr.flush() catch |err| return err;
 
-    return code;
+    return error.InternalReported;
 }
 
-pub fn internal(stderr: *std.Io.Writer, context: []const u8, err: anyerror, code: u8) !u8 {
-    return format(stderr, "{s}: {s}\n", .{ context, @errorName(err) }, code);
+pub fn internal(
+    stderr: *std.Io.Writer,
+    context: []const u8,
+    err: anyerror,
+) (std.Io.Writer.Error || error{InternalReported}) {
+    return failure(stderr, "{s}: {s}\n", .{ context, @errorName(err) });
 }

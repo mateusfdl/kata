@@ -1,6 +1,8 @@
 const std = @import("std");
 
 const diagnostic = @import("engine").diagnostic;
+const language = @import("engine").language;
+const linting = @import("linting.zig");
 
 pub const max_frame_bytes: usize = 16 * 1024 * 1024;
 
@@ -13,12 +15,39 @@ pub const Request = struct {
     language: ?[]const u8 = null,
     filename: ?[]const u8 = null,
     source: ?[]const u8 = null,
+
+    pub fn fromInput(input: linting.Input) Request {
+        return .{ .language = input.language.toString(), .filename = input.filename, .source = input.source };
+    }
+
+    pub fn lintInput(self: Request) error{ UnexpectedShutdown, MissingLanguage, UnsupportedLanguage, MissingSource }!linting.Input {
+        if (self.shutdown) return error.UnexpectedShutdown;
+        const resolved = switch (language.resolve(self.language orelse "", self.filename orelse "")) {
+            .ok => |name| name,
+            .missing => return error.MissingLanguage,
+            .unsupported_language, .unknown_extension => return error.UnsupportedLanguage,
+        };
+        return .{ .language = resolved, .source = self.source orelse return error.MissingSource, .filename = self.filename };
+    }
 };
 
 pub const Response = struct {
     status: Status,
     report: ?diagnostic.Report = null,
     message: ?[]const u8 = null,
+
+    pub fn lintReport(self: Response) error{ InvalidLintResponse, RemoteLintFailed }!diagnostic.Report {
+        switch (self.status) {
+            .ok => {
+                if (self.message != null) return error.InvalidLintResponse;
+                return self.report orelse error.InvalidLintResponse;
+            },
+            .fail => {
+                if (self.report != null or self.message == null) return error.InvalidLintResponse;
+                return error.RemoteLintFailed;
+            },
+        }
+    }
 };
 
 pub const FrameError = error{

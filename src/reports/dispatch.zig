@@ -19,23 +19,6 @@ pub const Format = enum {
     text,
     json,
     sarif,
-
-    pub fn lastFlag(json_seen: usize, text_seen: usize, sarif_seen: usize) Format {
-        var format: Format = .pretty;
-        var latest: usize = 0;
-        if (json_seen > latest) {
-            latest = json_seen;
-            format = .json;
-        }
-        if (text_seen > latest) {
-            latest = text_seen;
-            format = .text;
-        }
-        if (sarif_seen > latest) {
-            format = .sarif;
-        }
-        return format;
-    }
 };
 
 pub const Error = Sarif.Error;

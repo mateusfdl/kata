@@ -1,19 +1,31 @@
 const std = @import("std");
+const language = @import("engine").language;
 
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
-pub const Key = [Sha256.digest_length * 2]u8;
+const Key = [Sha256.digest_length * 2]u8;
 
 pub const Handle = struct {
     dir: []const u8,
     rules_hash: [32]u8,
 
-    pub fn isClean(self: Handle, io: std.Io, content_hash: [32]u8, path: []const u8) bool {
-        return hasEntry(io, self.dir, key(self.rules_hash, content_hash, path));
+    pub fn entry(self: Handle, input: struct { language: language.Name, source: []const u8, path: []const u8 }) Entry {
+        var content_hash: [32]u8 = undefined;
+        Sha256.hash(input.source, &content_hash, .{});
+        return .{ .dir = self.dir, .key = key(self.rules_hash, input.language, content_hash, input.path) };
+    }
+};
+
+pub const Entry = struct {
+    dir: []const u8,
+    key: Key,
+
+    pub fn isClean(self: Entry, io: std.Io) bool {
+        return hasEntry(io, self.dir, self.key);
     }
 
-    pub fn markClean(self: Handle, io: std.Io, content_hash: [32]u8, path: []const u8) void {
-        writeEntry(io, self.dir, key(self.rules_hash, content_hash, path));
+    pub fn markClean(self: Entry, io: std.Io) void {
+        writeEntry(io, self.dir, self.key);
     }
 };
 
@@ -29,9 +41,12 @@ pub fn dir(
     return null;
 }
 
-pub fn key(rules_hash: [32]u8, content_hash: [32]u8, path: []const u8) Key {
+fn key(rules_hash: [32]u8, lang: language.Name, content_hash: [32]u8, path: []const u8) Key {
     var hasher = Sha256.init(.{});
+    hasher.update("kata-clean-v2\x00");
     hasher.update(&rules_hash);
+    hasher.update(lang.toString());
+    hasher.update("\x00");
     hasher.update(&content_hash);
     hasher.update(&std.mem.toBytes(@as(u32, @intCast(path.len))));
     hasher.update(path);

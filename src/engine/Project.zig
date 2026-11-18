@@ -42,9 +42,10 @@ pub const Project = struct {
         return self.rules.len > 0 or self.fact_rules.len > 0;
     }
 
-    pub fn configure(self: *Project, engine: *Engine) !void {
+    pub fn configure(self: *Project, engine: *Engine, rules: []const project_rule.ProjectRule) !void {
         const fact_rules = try engine.ensureCompiledFact();
         self.engine = engine;
+        self.rules = rules;
         self.fact_rules = fact_rules;
         self.tracks_files = self.tracks_files or self.rules.len > 0 or fact_rules.len > 0;
     }

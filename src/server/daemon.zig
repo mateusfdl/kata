@@ -2,26 +2,13 @@ const std = @import("std");
 
 const fs = @import("../fs.zig");
 const lint = @import("engine");
-const context_cache = @import("context_cache.zig");
+const linting = @import("linting.zig");
 const protocol = @import("protocol.zig");
-const replay = @import("replay.zig");
 
 const diagnostic = lint.diagnostic;
 const language = lint.language;
-const Engine = lint.Engine;
 
-pub const Context = struct {
-    engine: *Engine,
-    io: std.Io,
-    project: ?*lint.Project = null,
-    ratchet: bool = false,
-    cache: ?*context_cache.Cache = null,
-    replay: ?*replay.ReplayCache = null,
-    max_matches: u32 = 25,
-    cache_dir: ?[]const u8 = null,
-    cache_enabled: bool = false,
-    rules_hash: [32]u8 = @splat(0),
-};
+pub const Context = linting.Context;
 
 const IndexVisit = struct {
     io: std.Io,
@@ -204,187 +191,17 @@ fn sendBestEffort(a: std.mem.Allocator, writer: *std.Io.Writer, resp: protocol.R
     protocol.encode(a, writer, resp) catch {};
 }
 
-pub fn handle(
-    ctx: Context,
-    arena: std.mem.Allocator,
-    req: protocol.Request,
-) protocol.Response {
-    const lang = switch (language.resolve(req.language orelse "", req.filename orelse "")) {
-        .ok => |n| n,
-        .missing => return reply(.fail, null, "missing language or filename"),
-        .unknown_extension, .unsupported_language => return reply(.fail, null, "unsupported language"),
-    };
-
-    const source = req.source orelse
-        return reply(.fail, null, "missing source");
-
-    if (req.filename) |filename| {
-        const is_fixture = fs.rules.isFixturePath(ctx.io, filename) catch
-            return reply(.fail, null, "fixture check failed");
-        if (is_fixture)
-            return reply(.ok, .{
-                .language = lang.toString(),
-                .diagnostics = &.{},
-                .clean = true,
-            }, null);
-    }
-
-    var engine = ctx.engine;
-    var ratchet = ctx.ratchet;
-    var replay_cache = ctx.replay;
-    var max_matches = ctx.max_matches;
-    var cache_enabled = ctx.cache_enabled;
-    var rules_hash = ctx.rules_hash;
-
-    if (ctx.cache) |cache| {
-        const per_project = cache.acquire(arena, req.filename) catch
-            return reply(.fail, null, "project context failed");
-
-        if (per_project) |p| {
-            engine = &p.ctx.engine;
-            ratchet = p.ctx.resolved.ratchet;
-            replay_cache = &p.replay;
-            max_matches = p.ctx.resolved.max_matches_per_file;
-            cache_enabled = p.ctx.resolved.cache;
-            rules_hash = p.ctx.rules_hash;
-        }
-    }
-
-    const disk_cache: ?fs.result_cache.Handle = handle: {
-        if (!cache_enabled) break :handle null;
-        if (ctx.project != null) break :handle null;
-        const dir = ctx.cache_dir orelse break :handle null;
-
-        break :handle .{ .dir = dir, .rules_hash = rules_hash };
-    };
-
-    if (ctx.project) |project| {
-        project.configure(engine) catch return reply(.fail, null, "project configuration failed");
-    }
-
-    const replay_generation: u64 = if (ctx.project) |p|
-        (if (p.hasCrossFileRules()) p.indexGeneration() else 0)
-    else
-        0;
-
-    var content_hash: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(source, &content_hash, .{});
-
-    const diagnostics = replayed: {
-        if (replay_cache) |rc| {
-            if (req.filename) |path| {
-                // A generation-matched hit proves the index has not changed
-                // since the entry was stored, so the file's facts are already
-                // indexed for this exact content and re-indexing is redundant.
-                if (rc.get(path, lang, content_hash, replay_generation)) |cached| {
-                    break :replayed arena.dupe(diagnostic.Diagnostic, cached) catch
-                        return reply(.fail, null, "lint failed");
-                }
-            }
-        }
-
-        if (disk_cache) |cache| {
-            if (req.filename) |path| {
-                if (cache.isClean(ctx.io, content_hash, path))
-                    break :replayed arena.alloc(diagnostic.Diagnostic, 0) catch
-                        return reply(.fail, null, "lint failed");
-            }
-        }
-
-        const fresh = if (ctx.project) |project| lint: {
-            const path = req.filename orelse break :lint engine.lint(arena, source, lang, null) catch
-                return reply(.fail, null, "lint failed");
-            break :lint project.lint(arena, source, lang, path) catch
-                return reply(.fail, null, "lint failed");
-        } else engine.lint(arena, source, lang, req.filename) catch
-            return reply(.fail, null, "lint failed");
-
-        lint.fingerprint.assign(arena, req.filename orelse "", source, fresh) catch
-            return reply(.fail, null, "fingerprint failed");
-
-        if (replay_cache) |rc| {
-            // Replay is an optimization. Allocation failure must not turn a
-            // successful lint into a failed request.
-            const post_lint_generation: u64 = if (ctx.project) |p|
-                (if (p.hasCrossFileRules()) p.indexGeneration() else 0)
-            else
-                0;
-            if (req.filename) |path| rc.put(path, lang, content_hash, post_lint_generation, fresh) catch {};
-        }
-
-        if (disk_cache) |cache| {
-            if (req.filename) |path| {
-                if (fresh.len == 0) cache.markClean(ctx.io, content_hash, path);
-            }
-        }
-
-        break :replayed fresh;
-    };
-
-    applyRatchet(ctx, engine, ratchet, arena, lang, req.filename, source, diagnostics) catch
-        return reply(.fail, null, "ratchet baseline failed");
-
-    const all = appendProjectDiagnostics(ctx, arena, req.filename, diagnostics) catch
-        return reply(.fail, null, "project analysis failed");
-
-    lint.fingerprint.assign(arena, req.filename orelse "", source, all) catch
-        return reply(.fail, null, "fingerprint failed");
-
-    const rendered = lint.caps.apply(arena, all, engine.settings, max_matches) catch
-        return reply(.fail, null, "caps failed");
-
-    return reply(.ok, .{
-        .language = lang.toString(),
-        .diagnostics = rendered,
-        .clean = !diagnostic.hasErrors(all),
-    }, null);
-}
-
-fn applyRatchet(
-    ctx: Context,
-    engine: *Engine,
-    ratchet: bool,
-    arena: std.mem.Allocator,
-    lang: language.Name,
-    filename: ?[]const u8,
-    source: []const u8,
-    diagnostics: []diagnostic.Diagnostic,
-) !void {
-    if (!ratchet) return;
-
-    const io = ctx.io;
-    const path = filename orelse return;
-
-    if (!diagnostic.hasErrors(diagnostics)) return;
-
-    const baseline_source = fs.source.read(io, arena, path) catch |err| switch (err) {
-        error.FileNotFound, error.StreamTooLong => return,
-        else => return err,
-    };
-
-    const before = try engine.lint(arena, baseline_source, lang, path);
-    try lint.fingerprint.assign(arena, path, baseline_source, before);
-    _ = try lint.baseline.demote(arena, source, diagnostics, baseline_source, before);
-}
-
-fn appendProjectDiagnostics(
-    ctx: Context,
-    arena: std.mem.Allocator,
-    filename: ?[]const u8,
-    diagnostics: []diagnostic.Diagnostic,
-) ![]diagnostic.Diagnostic {
-    const project = ctx.project orelse return diagnostics;
-    const path = filename orelse return diagnostics;
-
-    const violations = try project.diagnostics(arena, path);
-    var out: std.ArrayList(diagnostic.Diagnostic) = .empty;
-    try out.appendSlice(arena, diagnostics);
-
-    for (violations) |v| try out.append(arena, v.diagnostic);
-
-    std.mem.sort(diagnostic.Diagnostic, out.items, {}, diagnostic.lessThan);
-
-    return out.toOwnedSlice(arena);
+/// The wire adapter validates optional request fields before entering the lint pipeline.
+pub fn handle(ctx: Context, arena: std.mem.Allocator, req: protocol.Request) protocol.Response {
+    const input = req.lintInput() catch |err| return reply(.fail, null, switch (err) {
+        error.MissingLanguage => "missing language or filename",
+        error.UnsupportedLanguage => "unsupported language",
+        error.MissingSource => "missing source",
+        error.UnexpectedShutdown => "unexpected shutdown request",
+    });
+    const report = linting.run(ctx, arena, input) catch |err|
+        return reply(.fail, null, linting.failureMessage(err));
+    return reply(.ok, report, null);
 }
 
 fn reply(

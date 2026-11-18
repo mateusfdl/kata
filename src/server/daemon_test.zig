@@ -17,7 +17,15 @@ fn newFixtureWithSettings(gpa: std.mem.Allocator, settings: []const lint.rule.Ru
 }
 
 fn context(f: *test_fixture.Fixture) daemon.Context {
-    return .{ .engine = &f.engine, .io = std.testing.io };
+    return .{ .policy = .{ .engine = &f.engine }, .io = std.testing.io };
+}
+
+fn indexedContext(project: *lint.Project) daemon.Context {
+    return .{
+        .policy = .{ .engine = project.engine, .resolved = .{ .project_rules = project.rules } },
+        .io = std.testing.io,
+        .project = project,
+    };
 }
 
 test "daemon: clean source replies ok with an empty report" {
@@ -297,8 +305,7 @@ test "daemon: project rules report violations for the linted file only" {
     try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
     try state.replace(order_service_src, .ts, "/proj/other-service.ts");
 
-    var ctx = context(f);
-    ctx.project = &state;
+    const ctx = indexedContext(&state);
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
         .filename = "/proj/order-service.ts",
@@ -329,8 +336,7 @@ test "daemon: project violations demoted by warnings leave the report clean" {
     try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
     try state.replace(order_service_src, .ts, "/proj/other-service.ts");
 
-    var ctx = context(f);
-    ctx.project = &state;
+    const ctx = indexedContext(&state);
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
         .filename = "/proj/order-service.ts",
@@ -355,8 +361,7 @@ test "daemon: lint requests update the project index incrementally" {
     defer state.deinit();
     try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
 
-    var ctx = context(f);
-    ctx.project = &state;
+    const ctx = indexedContext(&state);
 
     const first = daemon.handle(ctx, arena.allocator(), .{
         .filename = "/proj/order-service.ts",
@@ -383,8 +388,7 @@ test "daemon: requests without a filename skip project analysis" {
     defer state.deinit();
     try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
 
-    var ctx = context(f);
-    ctx.project = &state;
+    const ctx = indexedContext(&state);
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
         .language = "ts",
@@ -449,7 +453,7 @@ const ratchet_proposed_replacement = "const b = y as any;\n";
 const ratchet_proposed_growth = "const a = x as any;\nconst b = y as any;\n";
 
 fn ratchetContext(f: *test_fixture.Fixture, io: std.Io) daemon.Context {
-    return .{ .engine = &f.engine, .io = io, .ratchet = true };
+    return .{ .policy = .{ .engine = &f.engine, .resolved = .{ .ratchet = true } }, .io = io };
 }
 
 test "daemon: ratchet demotes an unchanged violation to warn" {
@@ -656,7 +660,7 @@ test "daemon: ratchet without filename leaves severity untouched" {
     defer f.deinit();
 
     var ctx = context(f);
-    ctx.ratchet = true;
+    ctx.policy.resolved.ratchet = true;
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
         .language = "ts",
@@ -698,6 +702,76 @@ const ProjectHarness = struct {
         return self.project.path(sub);
     }
 };
+
+test "daemon: an indexed project keeps its root policy for files in nested projects" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var h = try ProjectHarness.init();
+    defer h.deinit();
+    try h.project.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
+    try h.project.tmp.dir.createDirPath(io, "proj/nested/.kata");
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "rules:\n  ts:\n    flag-zzz:\n" });
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.kata", .data = flag_zzz_kata_rule });
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/nested/.kata/rules.yaml", .data = "rules:\n  ts:\n    no-as-any:\n" });
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/nested/a.ts", .data = "const zzz = 1;\n" });
+
+    var env = @import("../cli/test_env.zig").TestEnv.init("");
+    defer env.deinit();
+    var workspace = try @import("../cli/workspace.zig").Workspace.open(env.env(), try h.path("proj"));
+    defer workspace.deinit();
+    var state = try lint.Project.init(gpa, &workspace.ctx.engine, workspace.ctx.resolved.project_rules);
+    defer state.deinit();
+    var ctx = try workspace.lintContext(env.env());
+    ctx.project = &state;
+    ctx.cache = &h.cache;
+
+    const resp = daemon.handle(ctx, env.arena.allocator(), .{
+        .filename = try h.path("proj/nested/a.ts"),
+        .source = "const zzz = 1;\n",
+    });
+    try std.testing.expectEqual(protocol.Status.ok, resp.status);
+    try std.testing.expectEqual(false, resp.report.?.clean);
+    try std.testing.expectEqual(@as(usize, 1), resp.report.?.diagnostics.len);
+    try std.testing.expectEqualStrings("flag-zzz", resp.report.?.diagnostics[0].rule_id);
+    try std.testing.expectEqualStrings("zzz is banned here", resp.report.?.diagnostics[0].message);
+}
+
+test "daemon: reloading an indexed root replaces its YAML project rules with its engine" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var h = try ProjectHarness.init();
+    defer h.deinit();
+    try h.project.tmp.dir.createDirPath(io, "proj/.kata");
+    const rule = "project-rules:\n  repository-isolation:\n    kind: restricted-callers\n    callee-suffix: Repository\n    caller-suffix: ";
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = rule ++ "Repository\n" });
+
+    var env = @import("../cli/test_env.zig").TestEnv.init("");
+    defer env.deinit();
+    var workspace = try @import("../cli/workspace.zig").Workspace.open(env.env(), try h.path("proj"));
+    defer workspace.deinit();
+    var state = try lint.Project.init(gpa, &workspace.ctx.engine, workspace.ctx.resolved.project_rules);
+    defer state.deinit();
+    try state.replace(user_repository_src, .ts, try h.path("proj/user-repository.ts"));
+    var ctx = try workspace.lintContext(env.env());
+    ctx.project = &state;
+    ctx.cache = &h.cache;
+    const request: protocol.Request = .{
+        .filename = try h.path("proj/order-service.ts"),
+        .source = order_service_src,
+    };
+
+    const before = daemon.handle(ctx, env.arena.allocator(), request);
+    try std.testing.expectEqual(protocol.Status.ok, before.status);
+    try std.testing.expectEqual(false, before.report.?.clean);
+    try std.testing.expectEqual(@as(usize, 1), before.report.?.diagnostics.len);
+    try std.testing.expectEqualStrings("repository-isolation", before.report.?.diagnostics[0].rule_id);
+
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = rule ++ "Service\n" });
+    const after = daemon.handle(ctx, env.arena.allocator(), request);
+    try std.testing.expectEqual(protocol.Status.ok, after.status);
+    try std.testing.expectEqual(true, after.report.?.clean);
+    try std.testing.expectEqual(@as(usize, 0), after.report.?.diagnostics.len);
+}
 
 test "daemon: file outside any project falls back to the daemon engine" {
     const gpa = std.testing.allocator;
@@ -841,8 +915,7 @@ test "daemon: project kata rules flag a write" {
     defer state.deinit();
     try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
 
-    var ctx = context(f);
-    ctx.project = &state;
+    const ctx = indexedContext(&state);
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
         .filename = "/proj/order-service.ts",
@@ -901,8 +974,7 @@ test "daemon: fact queries keep cross-file candidates on replay" {
 
     var cache = try replay.ReplayCache.init(gpa, 16);
     defer cache.deinit();
-    var ctx = context(f);
-    ctx.project = &state;
+    var ctx = indexedContext(&state);
     ctx.replay = &cache;
 
     const request: protocol.Request = .{
@@ -935,8 +1007,7 @@ test "daemon: replay invalidates cross-file diagnostics after another file chang
 
     var cache = try replay.ReplayCache.init(gpa, 16);
     defer cache.deinit();
-    var ctx = context(f);
-    ctx.project = &state;
+    var ctx = indexedContext(&state);
     ctx.replay = &cache;
 
     const request: protocol.Request = .{
@@ -966,8 +1037,7 @@ test "daemon: repeated cross-file replay hits stay byte-identical" {
 
     var cache = try replay.ReplayCache.init(gpa, 16);
     defer cache.deinit();
-    var ctx = context(f);
-    ctx.project = &state;
+    var ctx = indexedContext(&state);
     ctx.replay = &cache;
 
     const request: protocol.Request = .{
@@ -998,8 +1068,7 @@ test "daemon: replay ignores unrelated index changes without cross-file rules" {
 
     var cache = try replay.ReplayCache.init(gpa, 16);
     defer cache.deinit();
-    var ctx = context(f);
-    ctx.project = &state;
+    var ctx = indexedContext(&state);
     ctx.replay = &cache;
 
     const request: protocol.Request = .{
@@ -1186,8 +1255,7 @@ test "daemon: project violations appear on a replay hit" {
 
     var cache = try replay.ReplayCache.init(gpa, 16);
     defer cache.deinit();
-    var ctx = context(f);
-    ctx.project = &state;
+    var ctx = indexedContext(&state);
     ctx.replay = &cache;
 
     const request: protocol.Request = .{
@@ -1219,8 +1287,7 @@ test "daemon: replay restores the facts for the replayed source" {
 
     var cache = try replay.ReplayCache.init(gpa, 16);
     defer cache.deinit();
-    var ctx = context(f);
-    ctx.project = &state;
+    var ctx = indexedContext(&state);
     ctx.replay = &cache;
 
     const violating: protocol.Request = .{
@@ -1256,7 +1323,7 @@ test "daemon: a disk cache hit answers identically to a fresh lint" {
 
     var ctx = context(f);
     ctx.cache_dir = try diskCacheDir(a, &tmp, &buf);
-    ctx.cache_enabled = true;
+    ctx.policy.resolved.cache = true;
 
     const request: protocol.Request = .{
         .language = "ts",
@@ -1289,7 +1356,7 @@ test "daemon: a changed buffer misses the disk cache" {
 
     var ctx = context(f);
     ctx.cache_dir = try diskCacheDir(a, &tmp, &buf);
-    ctx.cache_enabled = true;
+    ctx.policy.resolved.cache = true;
 
     const clean = daemon.handle(ctx, a, .{
         .language = "ts",
@@ -1322,16 +1389,14 @@ test "daemon: a violating buffer is never marked clean" {
 
     var ctx = context(f);
     ctx.cache_dir = try diskCacheDir(a, &tmp, &buf);
-    ctx.cache_enabled = true;
+    ctx.policy.resolved.cache = true;
 
     const source = "const x = (foo[0] as any).bar;";
     _ = daemon.handle(ctx, a, .{ .language = "ts", .filename = "/proj/a.ts", .source = source });
 
-    var content_hash: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(source, &content_hash, .{});
-    const h: fs.result_cache.Handle = .{ .dir = ctx.cache_dir.?, .rules_hash = ctx.rules_hash };
+    const h: fs.result_cache.Handle = .{ .dir = ctx.cache_dir.?, .rules_hash = ctx.policy.rules_hash };
 
-    try std.testing.expectEqual(false, h.isClean(io, content_hash, "/proj/a.ts"));
+    try std.testing.expectEqual(false, h.entry(.{ .language = .ts, .source = source, .path = "/proj/a.ts" }).isClean(io));
 }
 
 test "daemon: the disk cache stays untouched when it is disabled" {
@@ -1353,11 +1418,9 @@ test "daemon: the disk cache stays untouched when it is disabled" {
     const source = "const x: string = \"ok\";";
     _ = daemon.handle(ctx, a, .{ .language = "ts", .filename = "/proj/a.ts", .source = source });
 
-    var content_hash: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(source, &content_hash, .{});
-    const h: fs.result_cache.Handle = .{ .dir = ctx.cache_dir.?, .rules_hash = ctx.rules_hash };
+    const h: fs.result_cache.Handle = .{ .dir = ctx.cache_dir.?, .rules_hash = ctx.policy.rules_hash };
 
-    try std.testing.expectEqual(false, h.isClean(io, content_hash, "/proj/a.ts"));
+    try std.testing.expectEqual(false, h.entry(.{ .language = .ts, .source = source, .path = "/proj/a.ts" }).isClean(io));
 }
 
 test "daemon: a flooding rule is capped in the response but stays unclean" {
@@ -1368,7 +1431,7 @@ test "daemon: a flooding rule is capped in the response but stays unclean" {
     defer f.deinit();
 
     var ctx = context(f);
-    ctx.max_matches = 1;
+    ctx.policy.resolved.max_matches_per_file = 1;
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
         .language = "ts",

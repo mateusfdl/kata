@@ -12,6 +12,14 @@ const language = lint.language;
 
 pub const rules_dir_name = "rules";
 
+/// A borrowed view of one resolved ruleset and all of its lint policy.
+pub const Policy = struct {
+    engine: *Engine,
+    resolved: config.Resolved = .{},
+    rules_hash: [32]u8 = @splat(0),
+    root: ?[]const u8 = null,
+};
+
 pub const Context = struct {
     gpa: std.mem.Allocator,
     arena_ptr: *std.heap.ArenaAllocator,
@@ -21,6 +29,15 @@ pub const Context = struct {
     rule_set: loader.RuleSet,
     rules_hash: [32]u8,
     engine: Engine,
+
+    pub fn policy(self: *Context) Policy {
+        return .{
+            .engine = &self.engine,
+            .resolved = self.resolved,
+            .rules_hash = self.rules_hash,
+            .root = self.root,
+        };
+    }
 
     pub fn deinit(self: *Context) void {
         self.engine.deinit();

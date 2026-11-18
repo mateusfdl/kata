@@ -4,6 +4,32 @@ const diagnostic = @import("engine").diagnostic;
 const protocol = @import("protocol.zig");
 const test_frame = @import("../test_frame.zig");
 
+test "protocol: lint input preserves resolved language and required source" {
+    const request: protocol.Request = .{ .filename = "a.ts", .source = "" };
+    const input = try request.lintInput();
+    try std.testing.expectEqual(@import("engine").language.Name.ts, input.language);
+    try std.testing.expectEqualStrings("", input.source);
+    try std.testing.expectEqualStrings("a.ts", input.filename.?);
+    const absent: protocol.Request = .{ .language = "ts" };
+    try std.testing.expectError(error.MissingSource, absent.lintInput());
+    const shutdown: protocol.Request = .{ .shutdown = true, .language = "ts", .source = "" };
+    try std.testing.expectError(error.UnexpectedShutdown, shutdown.lintInput());
+}
+
+test "protocol: a lint reply cannot mix success and failure fields" {
+    const report: diagnostic.Report = .{ .language = "ts", .diagnostics = &.{}, .clean = true };
+    const valid: protocol.Response = .{ .status = .ok, .report = report };
+    try std.testing.expectEqualDeep(report, try valid.lintReport());
+    const contradictory: protocol.Response = .{ .status = .fail, .report = report, .message = "failed" };
+    try std.testing.expectError(error.InvalidLintResponse, contradictory.lintReport());
+    const ambiguous: protocol.Response = .{ .status = .ok, .report = report, .message = "failed" };
+    try std.testing.expectError(error.InvalidLintResponse, ambiguous.lintReport());
+    const absent: protocol.Response = .{ .status = .ok };
+    try std.testing.expectError(error.InvalidLintResponse, absent.lintReport());
+    const failed: protocol.Response = .{ .status = .fail, .message = "lint failed" };
+    try std.testing.expectError(error.RemoteLintFailed, failed.lintReport());
+}
+
 test "protocol: request round-trips with all fields" {
     const gpa = std.testing.allocator;
 

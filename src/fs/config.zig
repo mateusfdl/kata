@@ -25,6 +25,15 @@ pub fn userRulesPath(arena: std.mem.Allocator, base: []const u8) ![]const u8 {
     return paths.join(arena, base, "rules");
 }
 
+pub fn resolveUserRules(
+    arena: std.mem.Allocator,
+    environ: *const std.process.Environ.Map,
+) !?[]const u8 {
+    const base = (try resolveBase(arena, environ)) orelse return null;
+
+    return try userRulesPath(arena, base);
+}
+
 pub fn readRulesYaml(
     io: std.Io,
     allocator: std.mem.Allocator,

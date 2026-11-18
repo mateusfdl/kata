@@ -3,6 +3,9 @@ const std = @import("std");
 const harness = @import("harness.zig");
 const test_fixture = @import("../test_fixture.zig");
 
+const Exit = @import("exit.zig").Exit;
+const TestEnv = @import("test_env.zig").TestEnv;
+
 const flag_any_rule =
     \\rule flag-any {
     \\  lang ts, tsx
@@ -25,18 +28,13 @@ const no_comments_rule =
 const Setup = struct {
     tmp: std.testing.TmpDir,
     rules_dir: []const u8,
-    out: std.Io.Writer.Allocating,
-    err: std.Io.Writer.Allocating,
-    arena: std.heap.ArenaAllocator,
+    t: TestEnv,
 
     fn init(io: std.Io, rule_file: []const u8, rule_body: []const u8, fixture_name: []const u8, fixture_body: []const u8) !Setup {
-        const gpa = std.testing.allocator;
         var self: Setup = .{
             .tmp = std.testing.tmpDir(.{}),
             .rules_dir = undefined,
-            .out = .init(gpa),
-            .err = .init(gpa),
-            .arena = .init(gpa),
+            .t = .init(""),
         };
         try self.tmp.dir.createDirPath(io, "rules/ts/tests");
         var path_buf: [128]u8 = undefined;
@@ -47,15 +45,24 @@ const Setup = struct {
 
         var rel_buf: [256]u8 = undefined;
         const rel = try test_fixture.relativeTmpPath(&rel_buf, &self.tmp.sub_path);
-        self.rules_dir = try std.fmt.allocPrint(self.arena.allocator(), "{s}/rules", .{rel});
+        self.rules_dir = try std.fmt.allocPrint(self.t.arena.allocator(), "{s}/rules", .{rel});
         return self;
     }
 
     fn deinit(self: *Setup) void {
-        self.out.deinit();
-        self.err.deinit();
+        self.t.deinit();
         self.tmp.cleanup();
-        self.arena.deinit();
+    }
+
+    fn expectOutput(self: *Setup, comptime fmt: []const u8) !void {
+        const fixtures_dir = try std.fmt.allocPrint(self.t.arena.allocator(), "{s}/ts/tests", .{self.rules_dir});
+        const expected = try std.mem.replaceOwned(u8, self.t.arena.allocator(), fmt, "{s}", fixtures_dir);
+
+        try std.testing.expectEqualStrings(expected, self.t.out.written());
+    }
+
+    fn run(self: *Setup) anyerror!Exit {
+        return harness.execute(self.t.env(), .{ .rules_dir = self.rules_dir });
     }
 };
 
@@ -66,10 +73,10 @@ test "harness: fixture with satisfied expectations passes" {
         "const ok: string = \"1\";\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.pass, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+    try std.testing.expectEqual(Exit.clean, try outcome);
+    try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
 test "harness: interleaved rules satisfy expectations regardless of order" {
@@ -97,10 +104,10 @@ test "harness: interleaved rules satisfy expectations regardless of order" {
     defer s.deinit();
     try s.tmp.dir.writeFile(io, .{ .sub_path = "rules/ts/zzz-call.kata", .data = zzz_call_rule });
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.pass, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+    try std.testing.expectEqual(Exit.clean, try outcome);
+    try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
 test "harness: expected rule that never fires reports missing" {
@@ -109,15 +116,15 @@ test "harness: expected rule that never fires reports missing" {
         "const ok: string = \"1\";\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.failures, outcome);
+    try std.testing.expectEqual(Exit.violations, try outcome);
     const expected = try std.fmt.allocPrint(
-        s.arena.allocator(),
+        s.t.arena.allocator(),
         "{s}/ts/tests/sample.ts:2 missing [flag-any]\ntested 1 fixtures, 1 failures\n",
         .{s.rules_dir},
     );
-    try std.testing.expectEqualStrings(expected, s.out.written());
+    try std.testing.expectEqualStrings(expected, s.t.out.written());
 }
 
 test "harness: diagnostic on an unannotated line reports unexpected" {
@@ -125,31 +132,25 @@ test "harness: diagnostic on an unannotated line reports unexpected" {
     var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "const x = foo as any;\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.failures, outcome);
+    try std.testing.expectEqual(Exit.violations, try outcome);
     const expected = try std.fmt.allocPrint(
-        s.arena.allocator(),
+        s.t.arena.allocator(),
         "{s}/ts/tests/sample.ts:1 unexpected [flag-any]\ntested 1 fixtures, 1 failures\n",
         .{s.rules_dir},
     );
-    try std.testing.expectEqualStrings(expected, s.out.written());
+    try std.testing.expectEqualStrings(expected, s.t.out.written());
 }
 
 test "harness: missing rules dir is invalid" {
-    const io = std.testing.io;
-    const gpa = std.testing.allocator;
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-    var out: std.Io.Writer.Allocating = .init(gpa);
-    defer out.deinit();
-    var err: std.Io.Writer.Allocating = .init(gpa);
-    defer err.deinit();
+    var t: TestEnv = .init("");
+    defer t.deinit();
 
-    const outcome = try harness.run(io, gpa, arena.allocator(), "no-such-dir", &out.writer, &err.writer);
+    const outcome = harness.execute(t.env(), .{ .rules_dir = "no-such-dir" });
 
-    try std.testing.expectEqual(harness.Outcome.invalid, outcome);
-    try std.testing.expectEqualStrings("kata test: cannot load rules from \"no-such-dir\": RulesDirMissing\n", err.written());
+    try std.testing.expectError(error.InternalReported, outcome);
+    try std.testing.expectEqualStrings("kata test: cannot load rules from \"no-such-dir\": RulesDirMissing\n", t.err.written());
 }
 
 test "harness: rule that fails to compile is invalid" {
@@ -164,26 +165,21 @@ test "harness: rule that fails to compile is invalid" {
     , "sample.ts", "const ok: string = \"1\";\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.invalid, outcome);
+    try std.testing.expectError(error.InternalReported, outcome);
     try std.testing.expectEqualStrings(
         "kata test: rule ts/broken: unknown capture\n",
-        s.err.written(),
+        s.t.err.written(),
     );
 }
 
 test "harness: combined language dir runs fixtures for each extension" {
     const io = std.testing.io;
-    const gpa = std.testing.allocator;
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    var out: std.Io.Writer.Allocating = .init(gpa);
-    defer out.deinit();
-    var err: std.Io.Writer.Allocating = .init(gpa);
-    defer err.deinit();
+    var t: TestEnv = .init("");
+    defer t.deinit();
 
     try tmp.dir.createDirPath(io, "rules/ts+tsx/tests");
     try tmp.dir.writeFile(io, .{ .sub_path = "rules/ts+tsx/flag-any.kata", .data = flag_any_rule });
@@ -192,12 +188,12 @@ test "harness: combined language dir runs fixtures for each extension" {
 
     var rel_buf: [256]u8 = undefined;
     const rel = try test_fixture.relativeTmpPath(&rel_buf, &tmp.sub_path);
-    const rules_dir = try std.fmt.allocPrint(arena.allocator(), "{s}/rules", .{rel});
+    const rules_dir = try std.fmt.allocPrint(t.arena.allocator(), "{s}/rules", .{rel});
 
-    const outcome = try harness.run(io, gpa, arena.allocator(), rules_dir, &out.writer, &err.writer);
+    const outcome = harness.execute(t.env(), .{ .rules_dir = rules_dir });
 
-    try std.testing.expectEqual(harness.Outcome.pass, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "tested 2 fixtures, 0 failures") != null);
+    try std.testing.expectEqual(Exit.clean, try outcome);
+    try std.testing.expectEqualStrings("tested 2 fixtures, 0 failures\n", t.out.written());
 }
 
 test "harness: annotation lines are exempt from diagnostics" {
@@ -206,10 +202,10 @@ test "harness: annotation lines are exempt from diagnostics" {
         "// a forbidden comment\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.pass, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+    try std.testing.expectEqual(Exit.clean, try outcome);
+    try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
 test "harness: duplicate expectations cover duplicate diagnostics on one line" {
@@ -218,10 +214,10 @@ test "harness: duplicate expectations cover duplicate diagnostics on one line" {
         "const pair = [foo as any, bar as any];\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.pass, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+    try std.testing.expectEqual(Exit.clean, try outcome);
+    try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
 test "harness: stacked annotations bind to the next code line" {
@@ -231,10 +227,10 @@ test "harness: stacked annotations bind to the next code line" {
         "const pair = [foo as any, bar as any];\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.pass, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+    try std.testing.expectEqual(Exit.clean, try outcome);
+    try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
 test "harness: annotation on the last line reports dangling" {
@@ -243,10 +239,10 @@ test "harness: annotation on the last line reports dangling" {
         "// kata-expect: flag-any\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.failures, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:2 dangling kata-expect annotation") != null);
+    try std.testing.expectEqual(Exit.violations, try outcome);
+    try s.expectOutput("{s}/sample.ts:2 dangling kata-expect annotation\ntested 1 fixtures, 1 failures\n");
 }
 
 test "harness: annotation without rule ids reports a failure" {
@@ -255,10 +251,10 @@ test "harness: annotation without rule ids reports a failure" {
         "const ok: string = \"1\";\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.failures, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:1 empty kata-expect annotation") != null);
+    try std.testing.expectEqual(Exit.violations, try outcome);
+    try s.expectOutput("{s}/sample.ts:1 empty kata-expect annotation\ntested 1 fixtures, 1 failures\n");
 }
 
 test "harness: tab-separated annotation ids are recognized" {
@@ -267,9 +263,9 @@ test "harness: tab-separated annotation ids are recognized" {
         "const x = foo as any;\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.pass, outcome);
+    try std.testing.expectEqual(Exit.clean, try outcome);
 }
 
 test "harness: a single expectation does not cover two diagnostics" {
@@ -278,52 +274,10 @@ test "harness: a single expectation does not cover two diagnostics" {
         "const pair = [foo as any, bar as any];\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.failures, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:2 unexpected [flag-any]") != null);
-}
-
-test "harness: unknown expectation id reports missing" {
-    const io = std.testing.io;
-    var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: no-such\n" ++
-        "const ok: string = \"1\";\n");
-    defer s.deinit();
-
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
-
-    try std.testing.expectEqual(harness.Outcome.failures, outcome);
-    const expected = try std.fmt.allocPrint(
-        s.arena.allocator(),
-        "{s}/ts/tests/sample.ts:2 missing [no-such]\ntested 1 fixtures, 1 failures\n",
-        .{s.rules_dir},
-    );
-    try std.testing.expectEqualStrings(expected, s.out.written());
-}
-
-const kata_no_console_rule =
-    \\rule no-console {
-    \\  lang ts
-    \\  match call_expression @match {
-    \\    function: member_expression {
-    \\      object: identifier @receiver
-    \\    }
-    \\  }
-    \\  where { text(@receiver) == "console" }
-    \\  emit @match { message "console is not allowed" }
-    \\}
-;
-
-test "harness: kata rule fixtures run through the same harness" {
-    const io = std.testing.io;
-    var s = try Setup.init(io, "no-console.kata", kata_no_console_rule, "sample.ts", "// kata-expect: no-console\n" ++
-        "console.log(1);\n");
-    defer s.deinit();
-
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
-
-    try std.testing.expectEqual(harness.Outcome.pass, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+    try std.testing.expectEqual(Exit.violations, try outcome);
+    try s.expectOutput("{s}/sample.ts:2 unexpected [flag-any]\ntested 1 fixtures, 1 failures\n");
 }
 
 test "harness: kata rule with invalid syntax is invalid" {
@@ -331,12 +285,12 @@ test "harness: kata rule with invalid syntax is invalid" {
     var s = try Setup.init(io, "broken.kata", "rule broken {\n  lang ts\n", "sample.ts", "const ok = 1;\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.invalid, outcome);
+    try std.testing.expectError(error.InternalReported, outcome);
     try std.testing.expectEqualStrings(
         "kata test: rule ts/broken: line 3, column 1: invalid rule syntax\n",
-        s.err.written(),
+        s.t.err.written(),
     );
 }
 
@@ -360,10 +314,10 @@ test "harness: composition rule fixtures run through the same harness" {
         "try { b(); } catch (e) { rethrow(e); }\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.pass, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+    try std.testing.expectEqual(Exit.clean, try outcome);
+    try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
 const parseint_fix_rule =
@@ -401,10 +355,10 @@ test "harness: matching kata-expect-fix passes" {
         "const n = parseInt(x);\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.pass, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+    try std.testing.expectEqual(Exit.clean, try outcome);
+    try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
 test "harness: wrong fix replacement fails printing got and want" {
@@ -414,11 +368,10 @@ test "harness: wrong fix replacement fails printing got and want" {
         "const n = parseInt(x);\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.failures, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:3 wrong fix \"Number.parseInt\" (expected \"Number.parse\")") != null);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 1 failures") != null);
+    try std.testing.expectEqual(Exit.violations, try outcome);
+    try s.expectOutput("{s}/sample.ts:3 wrong fix \"Number.parseInt\" (expected \"Number.parse\")\ntested 1 fixtures, 1 failures\n");
 }
 
 test "harness: kata-expect-fix without a fix reports missing fix" {
@@ -428,11 +381,10 @@ test "harness: kata-expect-fix without a fix reports missing fix" {
         "const x = foo as any;\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.failures, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:3 missing fix") != null);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 1 failures") != null);
+    try std.testing.expectEqual(Exit.violations, try outcome);
+    try s.expectOutput("{s}/sample.ts:3 missing fix\ntested 1 fixtures, 1 failures\n");
 }
 
 test "harness: empty kata-expect-fix matches a deletion fix" {
@@ -442,10 +394,10 @@ test "harness: empty kata-expect-fix matches a deletion fix" {
         "parseInt(x);\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.pass, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+    try std.testing.expectEqual(Exit.clean, try outcome);
+    try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
 test "harness: dangling kata-expect-fix annotation fails" {
@@ -454,10 +406,13 @@ test "harness: dangling kata-expect-fix annotation fails" {
         "// kata-expect-fix: Number.parseInt\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.failures, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts:2 dangling kata-expect-fix annotation") != null);
+    try std.testing.expectEqual(Exit.violations, try outcome);
+    try s.expectOutput("{s}/sample.ts:2 dangling kata-expect-fix annotation\n" ++
+        "{s}/sample.ts:1 unexpected [prefer-number-parseint]\n" ++
+        "warning: rule prefer-number-parseint declares a fix but no fixture asserts it\n" ++
+        "tested 1 fixtures, 2 failures\n");
 }
 
 const broken_fix_rule =
@@ -495,11 +450,10 @@ test "harness: a fix that breaks parsing fails naming the rule" {
         "const n = parseInt(x);\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.failures, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts fix introduces a syntax error [prefer-number-parseint]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 1 failures") != null);
+    try std.testing.expectEqual(Exit.violations, try outcome);
+    try s.expectOutput("{s}/sample.ts fix introduces a syntax error [prefer-number-parseint]\ntested 1 fixtures, 1 failures\n");
 }
 
 test "harness: a fix that never converges fails naming the rule" {
@@ -509,11 +463,10 @@ test "harness: a fix that never converges fails naming the rule" {
         "const n = parseInt(x);\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.failures, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "sample.ts fixes do not converge [prefer-number-parseint]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 1 failures") != null);
+    try std.testing.expectEqual(Exit.violations, try outcome);
+    try s.expectOutput("{s}/sample.ts fixes do not converge [prefer-number-parseint]\ntested 1 fixtures, 1 failures\n");
 }
 
 test "harness: a fix rule without any kata-expect-fix warns without failing" {
@@ -522,9 +475,8 @@ test "harness: a fix rule without any kata-expect-fix warns without failing" {
         "const n = parseInt(x);\n");
     defer s.deinit();
 
-    const outcome = try harness.run(io, std.testing.allocator, s.arena.allocator(), s.rules_dir, &s.out.writer, &s.err.writer);
+    const outcome = s.run();
 
-    try std.testing.expectEqual(harness.Outcome.pass, outcome);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "warning: rule prefer-number-parseint declares a fix but no fixture asserts it") != null);
-    try std.testing.expect(std.mem.indexOf(u8, s.out.written(), "tested 1 fixtures, 0 failures") != null);
+    try std.testing.expectEqual(Exit.clean, try outcome);
+    try std.testing.expectEqualStrings("warning: rule prefer-number-parseint declares a fix but no fixture asserts it\ntested 1 fixtures, 0 failures\n", s.t.out.written());
 }

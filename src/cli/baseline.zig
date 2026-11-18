@@ -6,135 +6,170 @@ const lint = @import("engine");
 const sources = @import("../sources.zig");
 
 const Engine = lint.Engine;
-const language = lint.language;
+const FileDiagnostics = @import("file_diagnostics.zig").FileDiagnostics;
+const RuleIds = std.StringArrayHashMapUnmanaged(void);
+const Backdated = std.EnumArray(lint.language.Name, RuleIds);
 
-pub const Baseline = struct {
+const RepoPath = struct { value: []const u8 };
+
+/// Git receives paths relative to the repository root, independent of the process cwd.
+const RefTree = struct {
+    io: std.Io,
+    root: []const u8,
+    cwd: []const u8,
     ref: []const u8,
-    prefix: []const u8,
-    dir: std.Io.Dir,
-    backdated: []const []const u8 = &.{},
 
-    pub fn backdatedRules(
-        io: std.Io,
-        arena: std.mem.Allocator,
-        baseline: Baseline,
-        root: ?[]const u8,
-        rule_set: *const lint.RuleSet,
-    ) ![]const []const u8 {
-        const project_root = root orelse return &.{};
-        const base = try repoBase(arena, baseline.prefix, project_root);
-
-        var out: std.ArrayList([]const u8) = .empty;
-
-        const rules_path = try std.fmt.allocPrint(arena, "{s}{s}/rules", .{ base, fs.discover.project_dir_name });
-        const ref_files = (try git.listFiles(io, arena, baseline.dir, baseline.ref, rules_path, fs.source.max_file_bytes)) orelse "";
-        try appendEnabledAfterRef(arena, &out, rule_set, ref_files);
-
-        const yaml_path = try std.fmt.allocPrint(arena, "{s}{s}/rules.yaml", .{ base, fs.discover.project_dir_name });
-        if (try git.showFile(io, arena, baseline.dir, baseline.ref, yaml_path, fs.source.max_file_bytes)) |bytes| {
-            try appendRaisedAfterRef(arena, &out, bytes);
-        }
-
-        return out.toOwnedSlice(arena);
+    fn path(tree: RefTree, arena: std.mem.Allocator, working_path: []const u8) !RepoPath {
+        const absolute = try std.fs.path.resolve(arena, &.{ tree.cwd, working_path });
+        const relative = try std.fs.path.relative(arena, tree.cwd, null, tree.root, absolute);
+        if (std.mem.eql(u8, relative, "..") or std.mem.startsWith(u8, relative, "../") or std.fs.path.isAbsolute(relative))
+            return error.PathOutsideWorkTree;
+        return .{ .value = relative };
     }
 
-    pub fn apply(
-        io: std.Io,
-        arena: std.mem.Allocator,
-        engine: *Engine,
-        baseline: *const Baseline,
-        lang: language.Name,
-        source: []const u8,
-        path: []const u8,
-        diagnostics: []lint.diagnostic.Diagnostic,
-    ) !void {
-        // rules added or raised after the baseline ref had no enforcing error.
-        // demote them before matching historical findings.
-        var has_error = false;
-        for (diagnostics) |*d| {
-            if (d.severity != .@"error") continue;
-            if (containsId(baseline.backdated, d.rule_id)) {
-                d.severity = .warn;
-                d.demoted = true;
-                continue;
-            }
-
-            has_error = true;
-        }
-        if (!has_error) return;
-
-        const repo_path = try std.fmt.allocPrint(arena, "{s}{s}", .{ baseline.prefix, path });
-
-        // a file absent at the ref has no historical findings to demote.
-        const baseline_source = (try git.showFile(io, arena, baseline.dir, baseline.ref, repo_path, fs.source.max_file_bytes)) orelse return;
-        const before = try engine.lint(arena, baseline_source, lang, path);
-        try lint.fingerprint.assign(arena, path, baseline_source, before);
-        _ = try lint.baseline.demote(arena, source, diagnostics, baseline_source, before);
+    fn file(tree: RefTree, arena: std.mem.Allocator, repo_path: RepoPath) !?[]const u8 {
+        var dir = try std.Io.Dir.openDirAbsolute(tree.io, tree.root, .{});
+        defer dir.close(tree.io);
+        return git.showFile(tree.io, arena, dir, tree.ref, repo_path.value, fs.source.max_file_bytes);
     }
 
-    fn repoBase(arena: std.mem.Allocator, prefix: []const u8, root: []const u8) ![]const u8 {
-        const trimmed = std.mem.trimEnd(u8, root, "/");
-        if (trimmed.len == 0 or std.mem.eql(u8, trimmed, ".")) return prefix;
-        const cleaned = if (std.mem.startsWith(u8, trimmed, "./")) trimmed[2..] else trimmed;
-
-        return std.fmt.allocPrint(arena, "{s}{s}/", .{ prefix, cleaned });
-    }
-
-    fn appendEnabledAfterRef(
-        arena: std.mem.Allocator,
-        out: *std.ArrayList([]const u8),
-        rule_set: *const lint.RuleSet,
-        ref_files: []const u8,
-    ) !void {
-        for (std.enums.values(language.Name)) |lang| {
-            for (rule_set.get(lang)) |raw| {
-                try appendIfMissingAtRef(arena, out, raw, ref_files);
-            }
-        }
-
-        for (rule_set.projectRaws()) |raw| {
-            try appendIfMissingAtRef(arena, out, raw, ref_files);
-        }
-    }
-
-    fn appendIfMissingAtRef(
-        arena: std.mem.Allocator,
-        out: *std.ArrayList([]const u8),
-        raw: lint.rule.RawRule,
-        ref_files: []const u8,
-    ) !void {
-        if (raw.origin != .project) return;
-        if (containsId(out.items, raw.id)) return;
-
-        const suffix = try std.fmt.allocPrint(arena, "/{s}{s}", .{ raw.id, fs.rules.kata_suffix });
-        var lines = std.mem.splitScalar(u8, ref_files, '\n');
-        while (lines.next()) |path| {
-            if (std.mem.endsWith(u8, path, suffix)) return;
-        }
-
-        try out.append(arena, raw.id);
-    }
-
-    fn appendRaisedAfterRef(
-        arena: std.mem.Allocator,
-        out: *std.ArrayList([]const u8),
-        bytes: []const u8,
-    ) !void {
-        var diag: sources.config.Diagnostic = .{};
-        const cfg = sources.config.parse(arena, bytes, &diag) catch return;
-
-        for (cfg.settings) |setting| {
-            if (setting.project) continue;
-            if (containsId(out.items, setting.id)) continue;
-            if (!setting.enabled or (setting.severity orelse .@"error") == .warn) try out.append(arena, setting.id);
-        }
-    }
-
-    fn containsId(ids: []const []const u8, id: []const u8) bool {
-        for (ids) |candidate| {
-            if (std.mem.eql(u8, candidate, id)) return true;
-        }
-
-        return false;
+    fn files(tree: RefTree, arena: std.mem.Allocator, repo_path: RepoPath) ![]const u8 {
+        var dir = try std.Io.Dir.openDirAbsolute(tree.io, tree.root, .{});
+        defer dir.close(tree.io);
+        return (try git.listFiles(tree.io, arena, dir, tree.ref, repo_path.value, fs.source.max_file_bytes)) orelse "";
     }
 };
+
+/// Errors that the baseline ref already had are not new. A check with a
+/// baseline shows them as warnings, so only new errors fail the check.
+pub const Baseline = struct {
+    tree: RefTree,
+    /// Rules that did not enforce an error at the ref.
+    backdated: Backdated,
+
+    /// Selects the Git work tree that owns `target`. Paths supplied later are
+    /// resolved against the cwd captured here. `root` is the optional project root.
+    pub fn open(
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        arena: std.mem.Allocator,
+        target: []const u8,
+        ref: []const u8,
+        root: ?[]const u8,
+        rule_set: *const lint.RuleSet,
+    ) !Baseline {
+        const cwd = try std.process.currentPathAlloc(io, arena);
+        const absolute = try std.fs.path.resolve(arena, &.{ cwd, target });
+        const repo_root = (try git.findRoot(io, arena, absolute)) orelse return error.NotAWorkTree;
+        var dir = try std.Io.Dir.openDirAbsolute(io, repo_root, .{});
+        defer dir.close(io);
+        try git.verifyRef(io, gpa, dir, ref);
+
+        const tree: RefTree = .{
+            .io = io,
+            .root = repo_root,
+            .cwd = cwd,
+            .ref = ref,
+        };
+
+        var backdated: Backdated = .initFill(.empty);
+        if (root) |project_root| {
+            const project_dir = try std.fs.path.join(arena, &.{ project_root, fs.discover.project_dir_name });
+
+            try addRulesAddedAfterRef(arena, &backdated, tree, project_dir, rule_set);
+            try addRulesRaisedAfterRef(arena, &backdated, tree, project_dir);
+        }
+
+        return .{ .tree = tree, .backdated = backdated };
+    }
+
+    pub fn demote(
+        baseline: *const Baseline,
+        arena: std.mem.Allocator,
+        engine: *Engine,
+        result: FileDiagnostics,
+    ) !void {
+        const diagnostics = result.diagnostics;
+        const repo_path = try baseline.tree.path(arena, result.path);
+        // rules added or raised after the baseline ref had no enforcing error.
+        // demote them before matching historical findings.
+        for (diagnostics) |*d| {
+            if (d.severity == .@"error" and baseline.backdated.get(result.language).contains(d.rule_id)) {
+                d.severity = .warn;
+                d.demoted = true;
+            }
+        }
+        if (!lint.diagnostic.hasErrors(diagnostics)) return;
+
+        // a file absent at the ref has no historical findings to demote.
+        const baseline_source = (try baseline.tree.file(arena, repo_path)) orelse return;
+        const before = try engine.lint(arena, baseline_source, result.language, result.path);
+        try lint.fingerprint.assign(arena, result.path, baseline_source, before);
+        _ = try lint.baseline.demote(arena, result.source, diagnostics, baseline_source, before);
+    }
+};
+
+/// A project rule whose file is not in the tree of the ref.
+fn addRulesAddedAfterRef(
+    arena: std.mem.Allocator,
+    backdated: *Backdated,
+    tree: RefTree,
+    project_dir: []const u8,
+    rule_set: *const lint.RuleSet,
+) !void {
+    const rules_dir = try tree.path(arena, try std.fs.path.join(arena, &.{ project_dir, "rules" }));
+    const rule_files = try tree.files(arena, rules_dir);
+
+    for (std.enums.values(lint.language.Name)) |lang| {
+        for (rule_set.get(lang)) |raw| {
+            if (!existedAtRef(raw, lang, rules_dir, rule_files)) try backdated.getPtr(lang).put(arena, raw.id, {});
+        }
+    }
+}
+
+/// Only project rules have a file in the repository. Every other rule counts
+/// as present at the ref.
+fn existedAtRef(raw: lint.rule.RawRule, lang: lint.language.Name, rules_dir: RepoPath, rule_files: []const u8) bool {
+    if (raw.origin != .project) return true;
+
+    var paths = std.mem.splitScalar(u8, rule_files, '\n');
+    while (paths.next()) |path| {
+        if (!std.mem.startsWith(u8, path, rules_dir.value)) continue;
+        const relative = path[rules_dir.value.len..];
+        if (relative.len == 0 or relative[0] != '/') continue;
+        var parts = std.mem.splitScalar(u8, relative[1..], '/');
+        const scope = parts.next() orelse continue;
+        const file = parts.next() orelse continue;
+        if (parts.next() != null) continue;
+        const id = fs.rules.ruleId(file) orelse continue;
+        if (!std.mem.eql(u8, id, raw.id)) continue;
+        var langs_buf: [lint.language.max_langs_per_dir]lint.language.Name = undefined;
+        const langs = lint.language.parseDirName(scope, &langs_buf) catch continue;
+        if (std.mem.indexOfScalar(lint.language.Name, langs, lang) != null) return true;
+    }
+
+    return false;
+}
+
+/// A rule that the rules.yaml of the ref had off or at warn severity.
+fn addRulesRaisedAfterRef(
+    arena: std.mem.Allocator,
+    backdated: *Backdated,
+    tree: RefTree,
+    project_dir: []const u8,
+) !void {
+    const yaml = (try tree.file(arena, try tree.path(arena, try std.fs.path.join(arena, &.{ project_dir, "rules.yaml" })))) orelse return;
+
+    var diag: sources.config.Diagnostic = .{};
+    // the rules.yaml at the ref can be older than this parser. one that does
+    // not parse backdates nothing; it must not fail the check of today's tree.
+    const cfg = sources.config.parse(arena, yaml, &diag) catch return;
+
+    for (cfg.settings) |setting| {
+        if (setting.project) continue;
+        const lang = setting.lang orelse continue;
+
+        const enforced = setting.enabled and (setting.severity orelse .@"error") == .@"error";
+        if (!enforced) try backdated.getPtr(lang).put(arena, setting.id, {});
+    }
+}

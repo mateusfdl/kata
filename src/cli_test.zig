@@ -1,568 +1,172 @@
 const std = @import("std");
-const cli = @import("cli.zig");
-const reports = @import("reports.zig");
-const test_fixture = @import("test_fixture.zig");
-const args_mod = @import("cli/args.zig");
+
 const build_options = @import("build_options");
-const check = @import("cli/check.zig");
-const exit = @import("cli/exit.zig");
-const one_shot = @import("cli/one_shot.zig");
 
-const diagnostic = @import("engine").diagnostic;
-const daemon = @import("server.zig").daemon;
+const cli = @import("cli.zig");
+const test_fixture = @import("test_fixture.zig");
 
-fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
-    return test_fixture.Fixture.init(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule);
+const Exit = @import("cli/exit.zig").Exit;
+const TestEnv = @import("cli/test_env.zig").TestEnv;
+
+const usage_check = "usage: kata check [path] [--json|--text|--sarif] [--fix|--fix-unsafe] [--baseline <ref>]\n";
+const usage_daemon = "usage: kata daemon [--root <dir>]\n";
+const usage_facts = "usage: kata facts <file>\n";
+const usage_test = "usage: kata test <rules-dir>\n";
+const usage_query = "usage: kata query '<kata rule>' [path] --lang=<ts|tsx|go|zig>\n";
+const usage_stop = "usage: kata stop\n";
+const usage_new_rule = "usage: kata new-rule <ts|tsx|go|zig> <rule-id>\n";
+const usage_one_shot = "usage: kata --lang=<ts|tsx|go|zig> [--filename=<path>] < source\n";
+
+fn expectUsageError(expected_stderr: []const u8, argv: []const [:0]const u8) !void {
+    var t: TestEnv = .init("");
+    defer t.deinit();
+
+    try std.testing.expectError(error.UsageReported, cli.dispatch(t.env(), argv));
+    try std.testing.expectEqualStrings(expected_stderr, t.err.written());
+    try std.testing.expectEqualStrings("", t.out.written());
 }
 
-fn oneShotContext(f: *test_fixture.Fixture) daemon.Context {
-    return .{ .engine = &f.engine, .io = std.testing.io };
+test "dispatch: --version prints the build version" {
+    var t: TestEnv = .init("");
+    defer t.deinit();
+
+    try std.testing.expectEqual(Exit.clean, try cli.dispatch(t.env(), &.{"--version"}));
+    try std.testing.expectEqualStrings(build_options.version ++ "\n", t.out.written());
 }
 
-const RunResult = struct {
-    code: u8,
-    stdout: []u8,
-    stderr: []u8,
-
-    fn deinit(self: RunResult, allocator: std.mem.Allocator) void {
-        allocator.free(self.stdout);
-        allocator.free(self.stderr);
-    }
-};
-
-fn runCli(
-    allocator: std.mem.Allocator,
-    ctx: daemon.Context,
-    args: []const [:0]const u8,
-    stdin_bytes: []const u8,
-) !RunResult {
-    var stdin: std.Io.Reader = .fixed(stdin_bytes);
-    var stdout_buf: std.Io.Writer.Allocating = .init(allocator);
-    errdefer stdout_buf.deinit();
-    var stderr_buf: std.Io.Writer.Allocating = .init(allocator);
-    errdefer stderr_buf.deinit();
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const opts: one_shot.Options = .{
-        .args = args,
-        .stdin = &stdin,
-        .stdout = &stdout_buf.writer,
-        .stderr = &stderr_buf.writer,
-    };
-    const code = switch (try one_shot.prepare(arena.allocator(), opts)) {
-        .ready => |req| try one_shot.serve(ctx, arena.allocator(), req, opts),
-        .failed => |c| c,
-    };
-
-    return .{
-        .code = code,
-        .stdout = try stdout_buf.toOwnedSlice(),
-        .stderr = try stderr_buf.toOwnedSlice(),
-    };
-}
-
-const Report = struct {
-    language: []const u8,
-    diagnostics: []const struct {
-        rule_id: []const u8,
-        language: []const u8,
-        message: []const u8,
-        range: struct {
-            start: struct { line: u32, column: u32 },
-            end: struct { line: u32, column: u32 },
-        },
-        severity: []const u8,
-        demoted: bool,
-        fingerprint: []const u8,
-        context: []const diagnostic.Context,
-        fix: ?struct {
-            range: struct {
-                start: struct { line: u32, column: u32 },
-                end: struct { line: u32, column: u32 },
-            },
-            replacement: []const u8,
-            safety: []const u8,
-        },
-        suggestions: []const struct {
-            label: []const u8,
-            range: struct {
-                start: struct { line: u32, column: u32 },
-                end: struct { line: u32, column: u32 },
-            },
-            replacement: []const u8,
-        },
-        capped: bool,
-    },
-    clean: bool,
-};
-
-test "cli: clean source exits 0" {
-    const gpa = std.testing.allocator;
-    var f = try newFixture(gpa);
-    defer f.deinit();
-
-    const args: []const [:0]const u8 = &.{"--lang=ts"};
-    const r = try runCli(gpa, oneShotContext(f), args, "const x: string = \"ok\";");
-    defer r.deinit(gpa);
-
-    try std.testing.expectEqual(@as(u8, exit.clean), r.code);
-
-    const parsed = try std.json.parseFromSlice(Report, gpa, r.stdout, .{});
-    defer parsed.deinit();
-
-    try std.testing.expect(parsed.value.clean);
-    try std.testing.expectEqualStrings("ts", parsed.value.language);
-    try std.testing.expectEqual(@as(usize, 0), parsed.value.diagnostics.len);
-}
-
-test "cli: violation exits 2" {
-    const gpa = std.testing.allocator;
-    var f = try newFixture(gpa);
-    defer f.deinit();
-
-    const args: []const [:0]const u8 = &.{"--lang=ts"};
-    const r = try runCli(gpa, oneShotContext(f), args, "const x = (foo[0] as any).bar;");
-    defer r.deinit(gpa);
-
-    try std.testing.expectEqual(@as(u8, exit.violations), r.code);
-
-    const parsed = try std.json.parseFromSlice(Report, gpa, r.stdout, .{});
-    defer parsed.deinit();
-
-    try std.testing.expect(!parsed.value.clean);
-    try std.testing.expectEqual(@as(usize, 1), parsed.value.diagnostics.len);
-    try std.testing.expectEqualStrings("no-as-any", parsed.value.diagnostics[0].rule_id);
-    try std.testing.expectEqualStrings("as any is not allowed", parsed.value.diagnostics[0].message);
-    try std.testing.expectEqualStrings("error", parsed.value.diagnostics[0].severity);
-    try std.testing.expectEqual(false, parsed.value.diagnostics[0].demoted);
-    try std.testing.expectEqualStrings("f8442f8df97b699227020f1ca99a3d34007e51a6f4a3934089158471a8f2963b", parsed.value.diagnostics[0].fingerprint);
-}
-
-test "cli: --filename infers language" {
-    const gpa = std.testing.allocator;
-    var f = try newFixture(gpa);
-    defer f.deinit();
-
-    const args: []const [:0]const u8 = &.{"--filename=/tmp/foo.tsx"};
-    const r = try runCli(gpa, oneShotContext(f), args, "const x = foo as any;");
-    defer r.deinit(gpa);
-
-    try std.testing.expectEqual(@as(u8, exit.violations), r.code);
-
-    const parsed = try std.json.parseFromSlice(Report, gpa, r.stdout, .{});
-    defer parsed.deinit();
-    try std.testing.expectEqualStrings("tsx", parsed.value.language);
-}
-
-test "cli: missing --lang exits usage (64)" {
-    const gpa = std.testing.allocator;
-    var f = try newFixture(gpa);
-    defer f.deinit();
-
-    const args: []const [:0]const u8 = &.{};
-    const r = try runCli(gpa, oneShotContext(f), args, "x");
-    defer r.deinit(gpa);
-
-    try std.testing.expectEqual(@as(u8, exit.usage), r.code);
-    try std.testing.expect(std.mem.indexOf(u8, r.stderr, "missing --lang") != null);
-}
-
-test "cli: unsupported --lang exits internal (70)" {
-    const gpa = std.testing.allocator;
-    var f = try newFixture(gpa);
-    defer f.deinit();
-
-    const args: []const [:0]const u8 = &.{"--lang=python"};
-    const r = try runCli(gpa, oneShotContext(f), args, "print('hi')");
-    defer r.deinit(gpa);
-
-    try std.testing.expectEqual(@as(u8, exit.internal_error), r.code);
-    try std.testing.expect(std.mem.indexOf(u8, r.stderr, "unsupported language") != null);
-}
-
-test "cli: unknown extension exits usage (64)" {
-    const gpa = std.testing.allocator;
-    var f = try newFixture(gpa);
-    defer f.deinit();
-
-    const args: []const [:0]const u8 = &.{"--filename=foo.rs"};
-    const r = try runCli(gpa, oneShotContext(f), args, "fn main() {}");
-    defer r.deinit(gpa);
-
-    try std.testing.expectEqual(@as(u8, exit.usage), r.code);
-    try std.testing.expect(std.mem.indexOf(u8, r.stderr, "cannot infer language") != null);
-}
-
-test "cli: one-shot caps a flooding rule and stays unclean" {
-    const gpa = std.testing.allocator;
-    var f = try newFixture(gpa);
-    defer f.deinit();
-
-    var ctx = oneShotContext(f);
-    ctx.max_matches = 1;
-
-    const args: []const [:0]const u8 = &.{"--lang=ts"};
-    const r = try runCli(gpa, ctx, args, "const a = v as any;\n" ++
-        "const b = v as any;\n" ++
-        "const c = v as any;\n" ++
-        "const d = v as any;\n" ++
-        "const e = v as any;\n");
-    defer r.deinit(gpa);
-
-    try std.testing.expectEqual(@as(u8, exit.violations), r.code);
-
-    const parsed = try std.json.parseFromSlice(Report, gpa, r.stdout, .{});
-    defer parsed.deinit();
-
-    try std.testing.expect(!parsed.value.clean);
-    try std.testing.expectEqual(@as(usize, 4), parsed.value.diagnostics.len);
-    try std.testing.expectEqual(false, parsed.value.diagnostics[0].capped);
-    try std.testing.expectEqual(true, parsed.value.diagnostics[3].capped);
-    try std.testing.expectEqualStrings(
-        "rule no-as-any fired 5 times in this file; showing 3, suppressed 2; a flood usually means a broken pattern or wrong scope",
-        parsed.value.diagnostics[3].message,
+test "dispatch: an unknown subcommand lists the usage of every command" {
+    try expectUsageError(
+        "unknown subcommand: \"bogus\"\n" ++ usage_daemon ++ usage_check ++ usage_facts ++ usage_test ++
+            usage_query ++ usage_stop ++ usage_new_rule ++ usage_one_shot,
+        &.{"bogus"},
     );
 }
 
-test "cli: one-shot demotes a ratcheted violation to warn" {
-    const gpa = std.testing.allocator;
+test "dispatch: an unexpected argument names the command and shows its usage" {
+    try expectUsageError("kata check: unexpected argument \"--format\"\n" ++ usage_check, &.{ "check", "--format", "json" });
+    try expectUsageError("kata check: unexpected argument \"b.ts\"\n" ++ usage_check, &.{ "check", "a.ts", "b.ts" });
+    try expectUsageError("kata daemon: unexpected argument \"extra\"\n" ++ usage_daemon, &.{ "daemon", "extra" });
+    try expectUsageError("kata facts: unexpected argument \"--lang\"\n" ++ usage_facts, &.{ "facts", "--lang", "ts" });
+    try expectUsageError("kata test: unexpected argument \"--verbose\"\n" ++ usage_test, &.{ "test", "--verbose" });
+    try expectUsageError("kata stop: unexpected argument \"now\"\n" ++ usage_stop, &.{ "stop", "now" });
+    try expectUsageError("kata new-rule: unexpected argument \"extra\"\n" ++ usage_new_rule, &.{ "new-rule", "ts", "id", "extra" });
+}
+
+test "dispatch: an unquoted query shows the quoted usage" {
+    try expectUsageError(
+        "kata query: unexpected argument \"@match)\"\n" ++ usage_query,
+        &.{ "query", "((comment)", ".", "@match)", "--lang=ts" },
+    );
+}
+
+test "dispatch: a flag without its value names the flag" {
+    try expectUsageError("kata check: \"--baseline\" requires a value\n" ++ usage_check, &.{ "check", "--baseline" });
+    try expectUsageError("kata check: \"--baseline\" requires a value\n" ++ usage_check, &.{ "check", "--baseline", "--json", "src/" });
+    try expectUsageError("kata daemon: \"--root\" requires a value\n" ++ usage_daemon, &.{ "daemon", "--root" });
+    try expectUsageError("kata query: \"--lang\" requires a value\n" ++ usage_query, &.{ "query", "rule", "--lang" });
+}
+
+test "dispatch: a missing required argument shows the usage" {
+    try expectUsageError(usage_facts, &.{"facts"});
+    try expectUsageError(usage_test, &.{"test"});
+    try expectUsageError(usage_query, &.{ "query", "--lang=ts" });
+    try expectUsageError(usage_new_rule, &.{ "new-rule", "ts" });
+}
+
+test "dispatch: a leading flag selects the one-shot command" {
+    try expectUsageError("kata: unexpected argument \"--bogus\"\n" ++ usage_one_shot, &.{ "--lang=ts", "--bogus" });
+    try expectUsageError("kata: unexpected argument \"a.ts\"\n" ++ usage_one_shot, &.{ "--lang=ts", "a.ts" });
+    try expectUsageError("cannot infer language from extension \".rs\"\n", &.{"--filename=main.rs"});
+}
+
+test "dispatch: valid arguments reach the command" {
+    try expectUsageError("unknown language: \"rust\" (expected ts, tsx, go, or zig)\n", &.{ "new-rule", "rust", "no-unsafe" });
+    try expectUsageError("kata query: --lang is required (expected ts, tsx, go, or zig)\n", &.{ "query", "rule" });
+}
+
+test "dispatch: a clean cache entry cannot cross languages for the same input" {
     const io = std.testing.io;
-    var f = try newFixture(gpa);
-    defer f.deinit();
+    var project = try test_fixture.TmpProject.init();
+    defer project.deinit();
+    try project.tmp.dir.createDirPath(io, ".kata");
+    try project.tmp.dir.writeFile(io, .{ .sub_path = ".kata/rules.yaml", .data = "cache: true\nrules:\n  ts:\n    no-as-any:\n" });
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const a = x as any;\n" });
+    const source = "const x = foo as any;\n";
+    var go: TestEnv = .init(source);
+    defer go.deinit();
+    const filename = try go.arena.allocator().dupeZ(u8, try project.path("a.ts"));
+    const cache = try project.path("cache");
+    const socket = try project.path("absent.sock");
+    try go.environ.put("XDG_CACHE_HOME", cache);
+    try go.environ.put("KATA_SOCKET", socket);
+    try std.testing.expectEqual(Exit.clean, try cli.dispatch(go.env(), &.{ "--lang=go", "--filename", filename }));
+    try std.testing.expectEqualStrings("", go.err.written());
 
-    var path_buf: [256]u8 = undefined;
-    const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
-    const filename = try std.fmt.allocPrint(gpa, "--filename={s}/a.ts", .{dir});
-    defer gpa.free(filename);
-    const filename_z = try gpa.dupeZ(u8, filename);
-    defer gpa.free(filename_z);
+    var ts: TestEnv = .init(source);
+    defer ts.deinit();
+    try ts.environ.put("XDG_CACHE_HOME", cache);
+    try ts.environ.put("KATA_SOCKET", socket);
+    try std.testing.expectEqual(Exit.violations, try cli.dispatch(ts.env(), &.{ "--lang=ts", "--filename", filename }));
+    try std.testing.expectEqualStrings("", ts.err.written());
 
-    var ctx = oneShotContext(f);
-    ctx.ratchet = true;
-
-    const args: []const [:0]const u8 = &.{filename_z};
-    const r = try runCli(gpa, ctx, args, "const a = x as any;\n");
-    defer r.deinit(gpa);
-
-    const parsed = try std.json.parseFromSlice(Report, gpa, r.stdout, .{});
-    defer parsed.deinit();
-
-    try std.testing.expectEqual(@as(usize, 1), parsed.value.diagnostics.len);
-    try std.testing.expectEqualStrings("warn", parsed.value.diagnostics[0].severity);
-    try std.testing.expectEqual(true, parsed.value.diagnostics[0].demoted);
-    try std.testing.expect(parsed.value.clean);
-    try std.testing.expectEqual(@as(u8, exit.clean), r.code);
+    var uncached: TestEnv = .init(source);
+    defer uncached.deinit();
+    try uncached.environ.put("KATA_SOCKET", socket);
+    try std.testing.expectEqual(Exit.violations, try cli.dispatch(uncached.env(), &.{ "--lang=ts", "--filename", filename }));
+    try std.testing.expectEqualStrings(uncached.out.written(), ts.out.written());
 }
 
-test "parseSubcommand: bare command runs the daemon without a root" {
-    const sub = cli.parseSubcommand(&.{});
-    try std.testing.expectEqual(@as(?[]const u8, null), sub.daemon);
+test "dispatch: baseline settings for TSX do not demote new TypeScript errors" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var project = try test_fixture.TmpProject.init();
+    defer project.deinit();
+    try project.tmp.dir.createDirPath(io, ".kata");
+    try project.tmp.dir.writeFile(io, .{ .sub_path = ".kata/rules.yaml", .data = "rules:\n  ts:\n    no-as-any:\n  tsx:\n    no-as-any:\n      enabled: false\n" });
+    try test_fixture.runGit(gpa, io, project.tmp.dir, &.{ "git", "init", "-q" });
+    try test_fixture.runGit(gpa, io, project.tmp.dir, &.{ "git", "add", "." });
+    try test_fixture.runGit(gpa, io, project.tmp.dir, &.{ "git", "-c", "user.name=kata", "-c", "user.email=kata@test", "-c", "commit.gpgsign=false", "commit", "-qm", "base" });
+    try project.tmp.dir.writeFile(io, .{ .sub_path = "new.ts", .data = "const x = foo as any;\n" });
+
+    var baseline: TestEnv = .init("");
+    defer baseline.deinit();
+    const filename = try baseline.arena.allocator().dupeZ(u8, try project.path("new.ts"));
+    try std.testing.expectEqual(Exit.violations, try cli.dispatch(baseline.env(), &.{ "check", filename, "--text", "--baseline", "HEAD" }));
+    try std.testing.expectEqualStrings("", baseline.err.written());
+
+    var absolute: TestEnv = .init("");
+    defer absolute.deinit();
+    try std.testing.expectEqual(Exit.violations, try cli.dispatch(absolute.env(), &.{ "check", filename, "--text" }));
+    try std.testing.expectEqualStrings(absolute.out.written(), baseline.out.written());
 }
 
-test "parseSubcommand: 'daemon' without flags has no root" {
-    const sub = cli.parseSubcommand(&.{"daemon"});
-    try std.testing.expectEqual(@as(?[]const u8, null), sub.daemon);
-}
-
-test "parseSubcommand: 'daemon --root <dir>' captures the root" {
-    const sub = cli.parseSubcommand(&.{ "daemon", "--root", "/proj" });
-    try std.testing.expectEqualStrings("/proj", sub.daemon.?);
-}
-
-test "parseSubcommand: 'daemon --root=<dir>' captures the root" {
-    const sub = cli.parseSubcommand(&.{ "daemon", "--root=/proj" });
-    try std.testing.expectEqualStrings("/proj", sub.daemon.?);
-}
-
-test "parseSubcommand: 'check' with no target defaults to '.'" {
-    const sub = cli.parseSubcommand(&.{"check"});
-    try std.testing.expectEqualStrings(".", sub.check.target);
-    try std.testing.expectEqual(reports.Format.pretty, sub.check.format);
-    try std.testing.expectEqual(@as(?[]const u8, null), sub.check.baseline);
-}
-
-test "parseSubcommand: 'check --baseline <ref>' captures the ref and target" {
-    const sub = cli.parseSubcommand(&.{ "check", "--baseline", "HEAD", "src/" });
-    try std.testing.expectEqualStrings("HEAD", sub.check.baseline.?);
-    try std.testing.expectEqualStrings("src/", sub.check.target);
-}
-
-test "parseSubcommand: 'check --baseline=<ref>' captures the ref" {
-    const sub = cli.parseSubcommand(&.{ "check", "--baseline=main", "src/" });
-    try std.testing.expectEqualStrings("main", sub.check.baseline.?);
-    try std.testing.expectEqualStrings("src/", sub.check.target);
-}
-
-test "parseSubcommand: 'check --baseline <ref>' without a target defaults to '.'" {
-    const sub = cli.parseSubcommand(&.{ "check", "--baseline", "HEAD" });
-    try std.testing.expectEqualStrings("HEAD", sub.check.baseline.?);
-    try std.testing.expectEqualStrings(".", sub.check.target);
-}
-
-test "baselineRef: flag wins over the environment" {
-    var env = std.process.Environ.Map.init(std.testing.allocator);
-    defer env.deinit();
-    try env.put("KATA_BASELINE", "env-ref");
-
-    try std.testing.expectEqualStrings("env-ref", cli.baselineRef(null, &env).?);
-    try std.testing.expectEqualStrings("flag-ref", cli.baselineRef("flag-ref", &env).?);
-}
-
-test "baselineRef: null without flag or environment" {
-    var env = std.process.Environ.Map.init(std.testing.allocator);
-    defer env.deinit();
-
-    try std.testing.expectEqual(@as(?[]const u8, null), cli.baselineRef(null, &env));
-}
-
-test "parseSubcommand: 'check' with an explicit target" {
-    const sub = cli.parseSubcommand(&.{ "check", "src/" });
-    try std.testing.expectEqualStrings("src/", sub.check.target);
-    try std.testing.expectEqual(reports.Format.pretty, sub.check.format);
-}
-
-test "parseSubcommand: 'check --json' selects the json format" {
-    const sub = cli.parseSubcommand(&.{ "check", "--json", "src/" });
-    try std.testing.expectEqualStrings("src/", sub.check.target);
-    try std.testing.expectEqual(reports.Format.json, sub.check.format);
-}
-
-test "parseSubcommand: 'check --text' selects the text format" {
-    const sub = cli.parseSubcommand(&.{ "check", "src/", "--text" });
-    try std.testing.expectEqual(reports.Format.text, sub.check.format);
-}
-
-test "parseSubcommand: the last format flag wins" {
-    const sub = cli.parseSubcommand(&.{ "check", "--json", "--text", "src/" });
-    try std.testing.expectEqual(reports.Format.text, sub.check.format);
-}
-
-test "parseSubcommand: 'check --sarif' selects the sarif format" {
-    const sub = cli.parseSubcommand(&.{ "check", "--sarif", "src/" });
-    try std.testing.expectEqual(reports.Format.sarif, sub.check.format);
-}
-
-test "parseSubcommand: sarif wins as the last format flag" {
-    const sub = cli.parseSubcommand(&.{ "check", "--json", "--sarif", "src/" });
-    try std.testing.expectEqual(reports.Format.sarif, sub.check.format);
-}
-
-test "parseSubcommand: 'query --sarif' selects the sarif format" {
-    const sub = cli.parseSubcommand(&.{ "query", "(comment) @match", "--sarif", "--lang=ts" });
-    try std.testing.expectEqual(reports.Format.sarif, sub.query.format);
-    try std.testing.expectEqual(@as(?[]const u8, null), sub.query.invalid_arg);
-}
-
-test "parseSubcommand: 'query --json' selects the json format" {
-    const sub = cli.parseSubcommand(&.{ "query", "(comment) @match", "--json", "--lang=ts" });
-    try std.testing.expectEqual(reports.Format.json, sub.query.format);
-    try std.testing.expectEqual(@as(?[]const u8, null), sub.query.invalid_arg);
-}
-
-test "parseSubcommand: 'facts' with an explicit target" {
-    const sub = cli.parseSubcommand(&.{ "facts", "src/app.ts" });
-    try std.testing.expectEqualStrings("src/app.ts", sub.facts);
-}
-
-test "parseSubcommand: 'facts' without a target captures an empty path" {
-    const sub = cli.parseSubcommand(&.{"facts"});
-    try std.testing.expectEqualStrings("", sub.facts);
-}
-
-test "parseSubcommand: 'test' with a rules dir" {
-    const sub = cli.parseSubcommand(&.{ "test", "rules" });
-    try std.testing.expectEqualStrings("rules", sub.rule_test);
-}
-
-test "parseSubcommand: 'test' without a target captures an empty dir" {
-    const sub = cli.parseSubcommand(&.{"test"});
-    try std.testing.expectEqualStrings("", sub.rule_test);
-}
-
-test "parseSubcommand: 'query' captures the text and defaults the target" {
-    const sub = cli.parseSubcommand(&.{ "query", "(comment) @match" });
-    try std.testing.expectEqualStrings("(comment) @match", sub.query.text);
-    try std.testing.expectEqualStrings(".", sub.query.target);
-    try std.testing.expectEqualStrings("", sub.query.lang);
-    try std.testing.expectEqual(@as(?[]const u8, null), sub.query.invalid_arg);
-}
-
-test "parseSubcommand: 'query' with a target and --lang" {
-    const sub = cli.parseSubcommand(&.{ "query", "(comment) @match", "src/", "--lang=ts" });
-    try std.testing.expectEqualStrings("(comment) @match", sub.query.text);
-    try std.testing.expectEqualStrings("src/", sub.query.target);
-    try std.testing.expectEqualStrings("ts", sub.query.lang);
-}
-
-test "parseSubcommand: 'query' accepts --lang before the text" {
-    const sub = cli.parseSubcommand(&.{ "query", "--lang", "go", "(comment) @match" });
-    try std.testing.expectEqualStrings("(comment) @match", sub.query.text);
-    try std.testing.expectEqualStrings("go", sub.query.lang);
-}
-
-test "parseSubcommand: 'query' flags an extra positional" {
-    const sub = cli.parseSubcommand(&.{ "query", "((comment)", "@match)", "src/", "--lang=ts" });
-    try std.testing.expectEqualStrings("src/", sub.query.invalid_arg.?);
-}
-
-test "parseSubcommand: 'query' flags an unknown flag" {
-    const sub = cli.parseSubcommand(&.{ "query", "(comment) @match", "--verbose" });
-    try std.testing.expectEqualStrings("--verbose", sub.query.invalid_arg.?);
-}
-
-test "parseSubcommand: 'stop' is recognised" {
-    const sub = cli.parseSubcommand(&.{"stop"});
-    try std.testing.expectEqual(cli.Subcommand.stop, sub);
-}
-
-test "parseSubcommand: 'new-rule' is recognised" {
-    const sub = cli.parseSubcommand(&.{ "new-rule", "ts", "no-foo" });
-    try std.testing.expectEqual(cli.Subcommand.new_rule, sub);
-}
-
-test "parseSubcommand: a flag dispatches to one-shot" {
-    const sub = cli.parseSubcommand(&.{"--lang=ts"});
-    try std.testing.expectEqual(cli.Subcommand.one_shot, sub);
-}
-
-test "parseSubcommand: an unknown subcommand is captured, not run as daemon" {
-    const sub = cli.parseSubcommand(&.{"typo-here"});
-    try std.testing.expectEqualStrings("typo-here", sub.unknown);
-}
-
-test "parseSubcommand: 'check --fix' selects safe fix application" {
-    const sub = cli.parseSubcommand(&.{ "check", "--fix", "src/" });
-    try std.testing.expectEqual(check.FixLevel.safe, sub.check.fix);
-}
-
-test "parseSubcommand: 'check --fix-unsafe' selects unsafe fix application" {
-    const sub = cli.parseSubcommand(&.{ "check", "--fix-unsafe", "src/" });
-    try std.testing.expectEqual(check.FixLevel.unsafe, sub.check.fix);
-}
-
-test "parseSubcommand: check without fix flags applies nothing" {
-    const sub = cli.parseSubcommand(&.{ "check", "src/" });
-    try std.testing.expectEqual(check.FixLevel.off, sub.check.fix);
-}
-
-test "socketPath: runtime dir yields a version and mtime stamped name" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-
-    const path = try cli.socketPath(arena.allocator(), "/run/user/1000", 42);
-    const expected = try std.fmt.allocPrint(arena.allocator(), "/run/user/1000/kata-{s}-42.sock", .{build_options.version});
-
-    try std.testing.expectEqualStrings(expected, path);
-}
-
-test "socketPath: falls back to /tmp with the same stamped name" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-
-    const path = try cli.socketPath(arena.allocator(), null, 42);
-    const expected = try std.fmt.allocPrint(arena.allocator(), "/tmp/kata-{s}-42.sock", .{build_options.version});
-
-    try std.testing.expectEqualStrings(expected, path);
-}
-
-test "socketPath: different binary mtimes yield different paths" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-
-    const first = try cli.socketPath(arena.allocator(), null, 1);
-    const second = try cli.socketPath(arena.allocator(), null, 2);
-
-    try std.testing.expect(!std.mem.eql(u8, first, second));
-}
-
-test "parseSubcommand: '--version' selects the version command" {
-    const sub = cli.parseSubcommand(&.{"--version"});
-    try std.testing.expectEqual(cli.Subcommand.version, sub);
-}
-
-test "parseSubcommand: 'check' flags an unknown flag" {
-    const sub = cli.parseSubcommand(&.{ "check", "--format", "json", "src/" });
-    try std.testing.expectEqualStrings("--format", sub.check.invalid_arg.?);
-}
-
-test "parseSubcommand: 'check' flags an extra positional" {
-    const sub = cli.parseSubcommand(&.{ "check", "a.ts", "b.ts" });
-    try std.testing.expectEqualStrings("b.ts", sub.check.invalid_arg.?);
-    try std.testing.expectEqualStrings("a.ts", sub.check.target);
-}
-
-test "parseSubcommand: 'check --baseline' without a value is flagged" {
-    const sub = cli.parseSubcommand(&.{ "check", "--baseline" });
-    try std.testing.expectEqualStrings("--baseline", sub.check.missing_value.?);
-}
-
-test "parseSubcommand: 'check --baseline' refuses a flag as value" {
-    const sub = cli.parseSubcommand(&.{ "check", "--baseline", "--json", "src/" });
-    try std.testing.expectEqualStrings("--baseline", sub.check.missing_value.?);
-    try std.testing.expectEqual(reports.Format.json, sub.check.format);
-    try std.testing.expectEqualStrings("src/", sub.check.target);
-}
-
-test "parseSubcommand: 'facts' flags a flag instead of treating its value as target" {
-    const sub = cli.parseSubcommand(&.{ "facts", "--lang", "ts" });
-    try std.testing.expectEqualStrings("--lang", sub.invalid_arg);
-}
-
-test "parseSubcommand: 'facts' flags an extra positional" {
-    const sub = cli.parseSubcommand(&.{ "facts", "a.ts", "b.ts" });
-    try std.testing.expectEqualStrings("b.ts", sub.invalid_arg);
-}
-
-test "parseSubcommand: 'test' flags a stray flag" {
-    const sub = cli.parseSubcommand(&.{ "test", "--verbose" });
-    try std.testing.expectEqualStrings("--verbose", sub.invalid_arg);
-}
-
-test "parseSubcommand: 'daemon --root' without a value is flagged" {
-    const sub = cli.parseSubcommand(&.{ "daemon", "--root" });
-    try std.testing.expectEqualStrings("--root", sub.missing_value);
-}
-
-test "parseSubcommand: 'daemon' flags an unknown flag" {
-    const sub = cli.parseSubcommand(&.{ "daemon", "--bogus" });
-    try std.testing.expectEqualStrings("--bogus", sub.invalid_arg);
-}
-
-test "parseSubcommand: 'daemon' flags a stray positional" {
-    const sub = cli.parseSubcommand(&.{ "daemon", "extra" });
-    try std.testing.expectEqualStrings("extra", sub.invalid_arg);
-}
-
-test "parseSubcommand: 'stop' flags a stray argument" {
-    const sub = cli.parseSubcommand(&.{ "stop", "now" });
-    try std.testing.expectEqualStrings("now", sub.invalid_arg);
-}
-
-test "parser: '--flag=' yields an empty value" {
-    const lang_parser = args_mod.parser(&.{.{ .name = "lang", .kind = .arg }});
-    const args: []const [:0]const u8 = &.{"--lang="};
-
-    const parsed = lang_parser.parse(args);
-
-    try std.testing.expectEqualStrings("", parsed.flags.lang.?);
-}
-
-test "parser: a separate value that looks like a flag reports missing" {
-    const lang_parser = args_mod.parser(&.{
-        .{ .name = "lang", .kind = .arg },
-        .{ .name = "json", .kind = .boolean },
+test "dispatch: daemon root loads project rules before starting the server" {
+    const io = std.testing.io;
+    var project = try test_fixture.TmpProject.init();
+    defer project.deinit();
+    try project.tmp.dir.createDirPath(io, ".kata/rules/project");
+    try project.tmp.dir.writeFile(io, .{ .sub_path = ".kata/rules.yaml", .data = "rules:\n  project:\n    review-import:\n" });
+    try project.tmp.dir.writeFile(io, .{ .sub_path = ".kata/rules/project/review-import.kata", .data =
+        \\rule review-import {
+        \\  kind project
+        \\  match import @i
+        \\  emit @i { message "import found" }
+        \\}
     });
-    const args: []const [:0]const u8 = &.{ "--lang", "--json" };
+    try project.tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "export const x = 1;\n" });
 
-    const parsed = lang_parser.parse(args);
+    var t: TestEnv = .init("");
+    defer t.deinit();
+    const arena = t.arena.allocator();
+    const root = try arena.dupeZ(u8, project.root);
+    const cwd = try std.process.currentPathAlloc(io, arena);
+    const socket = try std.fs.path.resolve(arena, &.{ cwd, try project.path("daemon.sock") });
+    try t.environ.put("KATA_SOCKET", socket);
+    const address = try std.Io.net.UnixAddress.init(socket);
+    var listening = try address.listen(io, .{});
+    defer listening.deinit(io);
 
-    try std.testing.expectEqualStrings("--lang", parsed.missing.?);
-    try std.testing.expectEqual(@as(?[:0]const u8, null), parsed.flags.lang);
-    try std.testing.expectEqual(@as(usize, 2), parsed.flags.json);
+    try std.testing.expectEqual(Exit.clean, try cli.dispatch(t.env(), &.{ "daemon", "--root", root }));
+    try std.testing.expectEqualStrings("kata daemon already running\n", t.err.written());
+    try std.testing.expectEqualStrings("", t.out.written());
 }

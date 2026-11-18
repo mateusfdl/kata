@@ -5,8 +5,8 @@ const test_fixture = @import("../test_fixture.zig");
 
 const rules_a: [32]u8 = @splat(1);
 const rules_b: [32]u8 = @splat(2);
-const content_a: [32]u8 = @splat(3);
-const content_b: [32]u8 = @splat(4);
+const content_a = "const a = 3;";
+const content_b = "const b = 4;";
 
 fn handle(arena: std.mem.Allocator, tmp: *std.testing.TmpDir, buf: []u8, rules_hash: [32]u8) !result_cache.Handle {
     const dir = try test_fixture.relativeTmpPath(buf, &tmp.sub_path);
@@ -27,7 +27,7 @@ test "result_cache: an unwritten entry is not clean" {
     var buf: [256]u8 = undefined;
     const h = try handle(arena.allocator(), &tmp, &buf, rules_a);
 
-    try std.testing.expectEqual(false, h.isClean(io, content_a, "src/a.ts"));
+    try std.testing.expectEqual(false, h.entry(.{ .language = .ts, .source = content_a, .path = "src/a.ts" }).isClean(io));
 }
 
 test "result_cache: a marked entry reads back clean" {
@@ -40,9 +40,9 @@ test "result_cache: a marked entry reads back clean" {
     var buf: [256]u8 = undefined;
     const h = try handle(arena.allocator(), &tmp, &buf, rules_a);
 
-    h.markClean(io, content_a, "src/a.ts");
+    h.entry(.{ .language = .ts, .source = content_a, .path = "src/a.ts" }).markClean(io);
 
-    try std.testing.expectEqual(true, h.isClean(io, content_a, "src/a.ts"));
+    try std.testing.expectEqual(true, h.entry(.{ .language = .ts, .source = content_a, .path = "src/a.ts" }).isClean(io));
 }
 
 test "result_cache: marking twice stays clean" {
@@ -55,13 +55,13 @@ test "result_cache: marking twice stays clean" {
     var buf: [256]u8 = undefined;
     const h = try handle(arena.allocator(), &tmp, &buf, rules_a);
 
-    h.markClean(io, content_a, "src/a.ts");
-    h.markClean(io, content_a, "src/a.ts");
+    h.entry(.{ .language = .ts, .source = content_a, .path = "src/a.ts" }).markClean(io);
+    h.entry(.{ .language = .ts, .source = content_a, .path = "src/a.ts" }).markClean(io);
 
-    try std.testing.expectEqual(true, h.isClean(io, content_a, "src/a.ts"));
+    try std.testing.expectEqual(true, h.entry(.{ .language = .ts, .source = content_a, .path = "src/a.ts" }).isClean(io));
 }
 
-test "result_cache: content, rules, and path each change the entry" {
+test "result_cache: language, content, rules, and path each change the entry" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const io = std.testing.io;
@@ -71,14 +71,16 @@ test "result_cache: content, rules, and path each change the entry" {
     var buf: [256]u8 = undefined;
     const h = try handle(arena.allocator(), &tmp, &buf, rules_a);
 
-    h.markClean(io, content_a, "src/a.ts");
+    h.entry(.{ .language = .ts, .source = content_a, .path = "src/a.ts" }).markClean(io);
 
-    try std.testing.expectEqual(false, h.isClean(io, content_b, "src/a.ts"));
-    try std.testing.expectEqual(false, h.isClean(io, content_a, "src/b.ts"));
+    try std.testing.expectEqual(false, h.entry(.{ .language = .ts, .source = content_b, .path = "src/a.ts" }).isClean(io));
+    try std.testing.expectEqual(false, h.entry(.{ .language = .ts, .source = content_a, .path = "src/b.ts" }).isClean(io));
+
+    try std.testing.expectEqual(false, h.entry(.{ .language = .tsx, .source = content_a, .path = "src/a.ts" }).isClean(io));
 
     var other_buf: [256]u8 = undefined;
     var other = try handle(arena.allocator(), &tmp, &other_buf, rules_b);
-    try std.testing.expectEqual(false, other.isClean(io, content_a, "src/a.ts"));
+    try std.testing.expectEqual(false, other.entry(.{ .language = .ts, .source = content_a, .path = "src/a.ts" }).isClean(io));
 }
 
 test "result_cache: an uncreatable directory degrades to a miss" {
@@ -97,9 +99,9 @@ test "result_cache: an uncreatable directory degrades to a miss" {
         .rules_hash = rules_a,
     };
 
-    h.markClean(io, content_a, "src/a.ts");
+    h.entry(.{ .language = .ts, .source = content_a, .path = "src/a.ts" }).markClean(io);
 
-    try std.testing.expectEqual(false, h.isClean(io, content_a, "src/a.ts"));
+    try std.testing.expectEqual(false, h.entry(.{ .language = .ts, .source = content_a, .path = "src/a.ts" }).isClean(io));
 }
 
 test "result_cache: dir prefers XDG_CACHE_HOME over HOME" {

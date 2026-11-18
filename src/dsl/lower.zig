@@ -13,7 +13,7 @@ pub const Error = error{
 
 /// a lowered match pattern plus its capture table: `capture_names[id]` is the
 /// name bound to capture id `id`. tree-sitter no longer assigns capture ids, so
-/// lowering assigns them by first occurrence.
+/// lowering assigns them by its first occurrence
 pub const Lowered = struct {
     pattern: query.Pattern,
     capture_names: []const []const u8,
@@ -31,7 +31,7 @@ pub const Lowerer = struct {
     arena: std.mem.Allocator,
     adapter: *const family.Adapter,
     captures: std.ArrayList([]const u8) = .empty,
-    /// the offending kind or field name when lowering fails, for diagnostics.
+    /// the offending kind or field name when lowering fails. Diagnosis purpses.
     detail: []const u8 = "",
 
     pub fn init(arena: std.mem.Allocator, adapter: *const family.Adapter) Lowerer {

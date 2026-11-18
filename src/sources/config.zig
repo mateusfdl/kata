@@ -717,4 +717,3 @@ fn findSelectionSetting(scope: ?language.Name, id: []const u8, resolved: Resolve
 
     return null;
 }
-

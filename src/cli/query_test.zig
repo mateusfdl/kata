@@ -3,6 +3,9 @@ const std = @import("std");
 const query = @import("query.zig");
 const test_fixture = @import("../test_fixture.zig");
 
+const Exit = @import("exit.zig").Exit;
+const TestEnv = @import("test_env.zig").TestEnv;
+
 const as_any_query =
     \\rule query {
     \\  lang ts, tsx
@@ -24,7 +27,7 @@ const complexity_query =
 ;
 
 const Result = struct {
-    outcome: query.Outcome,
+    outcome: anyerror!Exit,
     stdout: []u8,
     stderr: []u8,
 
@@ -34,19 +37,35 @@ const Result = struct {
     }
 };
 
-fn runQuery(allocator: std.mem.Allocator, opts: query.Options) !Result {
-    var out: std.Io.Writer.Allocating = .init(allocator);
-    errdefer out.deinit();
-    var err_out: std.Io.Writer.Allocating = .init(allocator);
-    errdefer err_out.deinit();
+fn runQuery(allocator: std.mem.Allocator, parsed: query.Args) !Result {
+    var t: TestEnv = .init("");
+    defer t.deinit();
 
-    const outcome = try query.run(std.testing.io, allocator, opts, &out.writer, &err_out.writer);
+    const outcome = query.execute(t.env(), parsed);
+
+    const stdout = try allocator.dupe(u8, t.out.written());
+    errdefer allocator.free(stdout);
 
     return .{
         .outcome = outcome,
-        .stdout = try out.toOwnedSlice(),
-        .stderr = try err_out.toOwnedSlice(),
+        .stdout = stdout,
+        .stderr = try allocator.dupe(u8, t.err.written()),
     };
+}
+
+test "query: grammar maps every flag to its option" {
+    try std.testing.expectEqualDeep(
+        query.grammar.Result{ .ok = .{ .text = "rule", .target = "src", .lang = "ts,tsx", .format = .json } },
+        query.grammar.parse(&.{ "--lang", "ts,tsx", "rule", "src", "--json" }),
+    );
+    try std.testing.expectEqualDeep(
+        query.grammar.Result{ .ok = .{ .text = "rule", .lang = "go", .format = .sarif } },
+        query.grammar.parse(&.{ "rule", "--lang=go", "--sarif" }),
+    );
+    try std.testing.expectEqualDeep(
+        query.grammar.Result{ .ok = .{ .text = "rule", .format = .text } },
+        query.grammar.parse(&.{ "rule", "--text" }),
+    );
 }
 
 test "query: inline rule matches in a file target" {
@@ -65,7 +84,7 @@ test "query: inline rule matches in a file target" {
     const r = try runQuery(gpa, .{ .text = as_any_query, .target = target, .lang = "ts", .format = .text });
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(query.Outcome.matches, r.outcome);
+    try std.testing.expectEqual(Exit.violations, try r.outcome);
     const expected = try std.fmt.allocPrint(
         gpa,
         "{s}:1:11 [query] found as any\nchecked 1 files, 1 violations, 0 warnings\n",
@@ -98,10 +117,14 @@ test "query: where predicate and interpolation across a directory" {
     const r = try runQuery(gpa, .{ .text = complexity_query, .target = rel, .lang = "ts", .format = .text });
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(query.Outcome.matches, r.outcome);
-    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "complex.ts:1:1 [query] complexity 4 exceeds 2") != null);
-    try std.testing.expectEqual(@as(?usize, null), std.mem.indexOf(u8, r.stdout, "simple.ts"));
-    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "checked 2 files, 1 violations, 0 warnings") != null);
+    try std.testing.expectEqual(Exit.violations, try r.outcome);
+    const expected = try std.fmt.allocPrint(
+        gpa,
+        "{s}/complex.ts:1:1 [query] complexity 4 exceeds 2\nchecked 2 files, 1 violations, 0 warnings\n",
+        .{rel},
+    );
+    defer gpa.free(expected);
+    try std.testing.expectEqualStrings(expected, r.stdout);
 }
 
 test "query: clean when nothing matches" {
@@ -120,7 +143,7 @@ test "query: clean when nothing matches" {
     const r = try runQuery(gpa, .{ .text = as_any_query, .target = target, .lang = "ts", .format = .text });
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(query.Outcome.clean, r.outcome);
+    try std.testing.expectEqual(Exit.clean, try r.outcome);
     try std.testing.expectEqualStrings("checked 1 files, 0 violations, 0 warnings\n", r.stdout);
 }
 
@@ -139,7 +162,7 @@ test "query: comma-separated languages apply to each" {
     const r = try runQuery(gpa, .{ .text = as_any_query, .target = rel, .lang = "ts,tsx", .format = .text });
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(query.Outcome.matches, r.outcome);
+    try std.testing.expectEqual(Exit.violations, try r.outcome);
     try std.testing.expect(std.mem.indexOf(u8, r.stdout, "a.ts:1:11 [query] found as any") != null);
     try std.testing.expect(std.mem.indexOf(u8, r.stdout, "b.tsx:1:11 [query] found as any") != null);
     try std.testing.expect(std.mem.indexOf(u8, r.stdout, "checked 2 files, 2 violations, 0 warnings") != null);
@@ -159,8 +182,14 @@ test "query: duplicate languages are deduplicated" {
     const r = try runQuery(gpa, .{ .text = as_any_query, .target = rel, .lang = "ts,ts", .format = .text });
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(query.Outcome.matches, r.outcome);
-    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "checked 1 files, 1 violations, 0 warnings") != null);
+    try std.testing.expectEqual(Exit.violations, try r.outcome);
+    const expected = try std.fmt.allocPrint(
+        gpa,
+        "{s}/a.ts:1:11 [query] found as any\nchecked 1 files, 1 violations, 0 warnings\n",
+        .{rel},
+    );
+    defer gpa.free(expected);
+    try std.testing.expectEqualStrings(expected, r.stdout);
 }
 
 test "query: unsupported language in a list is usage" {
@@ -169,38 +198,36 @@ test "query: unsupported language in a list is usage" {
     const r = try runQuery(gpa, .{ .text = as_any_query, .target = ".", .lang = "ts,python" });
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(query.Outcome.usage, r.outcome);
+    try std.testing.expectError(error.UsageReported, r.outcome);
     try std.testing.expectEqualStrings("kata query: unsupported language: \"python\" (expected ts, tsx, go, or zig)\n", r.stderr);
 }
 
 test "query: missing --lang is usage" {
     const gpa = std.testing.allocator;
 
-    const r = try runQuery(gpa, .{ .text = as_any_query, .target = ".", .lang = "" });
+    const r = try runQuery(gpa, .{ .text = as_any_query, .target = "." });
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(query.Outcome.usage, r.outcome);
+    try std.testing.expectError(error.UsageReported, r.outcome);
     try std.testing.expectEqualStrings("kata query: --lang is required (expected ts, tsx, go, or zig)\n", r.stderr);
 }
 
-test "query: unsupported --lang is usage" {
-    const gpa = std.testing.allocator;
+test "query: file errors identify the query command" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var t: TestEnv = .init("");
+    defer t.deinit();
+    var path_buf: [256]u8 = undefined;
+    const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
+    const target = try std.fmt.allocPrint(t.arena.allocator(), "{s}/missing.ts", .{dir});
 
-    const r = try runQuery(gpa, .{ .text = as_any_query, .target = ".", .lang = "python" });
-    defer r.deinit(gpa);
-
-    try std.testing.expectEqual(query.Outcome.usage, r.outcome);
-    try std.testing.expectEqualStrings("kata query: unsupported language: \"python\" (expected ts, tsx, go, or zig)\n", r.stderr);
-}
-
-test "query: empty query text is usage" {
-    const gpa = std.testing.allocator;
-
-    const r = try runQuery(gpa, .{ .text = "", .target = ".", .lang = "ts" });
-    defer r.deinit(gpa);
-
-    try std.testing.expectEqual(query.Outcome.usage, r.outcome);
-    try std.testing.expectEqualStrings("usage: kata query '<kata rule>' [path] --lang=<ts|tsx|go|zig>\n", r.stderr);
+    try std.testing.expectError(error.InternalReported, query.execute(t.env(), .{
+        .text = as_any_query,
+        .target = target,
+        .lang = "ts",
+    }));
+    try std.testing.expectEqualStrings("query: FileNotFound\n", t.err.written());
+    try std.testing.expectEqualStrings("", t.out.written());
 }
 
 test "query: invalid query text is usage" {
@@ -219,16 +246,6 @@ test "query: invalid query text is usage" {
     });
     defer r.deinit(gpa);
 
-    try std.testing.expectEqual(query.Outcome.usage, r.outcome);
+    try std.testing.expectError(error.UsageReported, r.outcome);
     try std.testing.expectEqualStrings("kata: rule ts/query: node kind or field is invalid for the grammar\n", r.stderr);
-}
-
-test "query: stray argument reports a quoting hint" {
-    const gpa = std.testing.allocator;
-
-    const r = try runQuery(gpa, .{ .text = "((comment)", .target = ".", .lang = "ts", .invalid_arg = "@match)" });
-    defer r.deinit(gpa);
-
-    try std.testing.expectEqual(query.Outcome.usage, r.outcome);
-    try std.testing.expectEqualStrings("kata query: unexpected argument \"@match)\" (is the query quoted?)\n", r.stderr);
 }

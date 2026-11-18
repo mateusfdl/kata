@@ -1,103 +1,62 @@
 const std = @import("std");
 
-const args_mod = @import("args.zig");
-const check = @import("check.zig");
+const args = @import("args.zig");
+const analysis = @import("analysis.zig");
 const dsl = @import("dsl");
 const lint = @import("engine");
+const output = @import("output.zig");
 const reports = @import("../reports.zig");
+
+const Env = @import("env.zig").Env;
+const Exit = @import("exit.zig").Exit;
 
 const Engine = lint.Engine;
 const language = lint.language;
 
-pub const Outcome = enum {
-    clean,
-    matches,
-    usage,
-
-    fn usageError(stderr: *std.Io.Writer, comptime fmt: []const u8, args: anytype) !Outcome {
-        try stderr.print(fmt, args);
-        try stderr.flush();
-
-        return .usage;
-    }
-};
-
-pub const Options = struct {
-    text: []const u8 = "",
-    target: []const u8 = ".",
-    lang: []const u8 = "",
-    format: reports.Format = .pretty,
-    color: bool = false,
-    invalid_arg: ?[]const u8 = null,
-
-    const flag_parser = args_mod.parser(&.{
-        .{ .name = "lang", .kind = .arg },
-        .{ .name = "json", .kind = .boolean },
-        .{ .name = "text", .kind = .boolean },
-        .{ .name = "sarif", .kind = .boolean },
-    });
-
-    pub fn parse(args: []const [:0]const u8) Options {
-        const parsed = flag_parser.parse(args);
-        const positionals = parsed.positionals();
-
-        var opts: Options = .{};
-        if (parsed.flags.lang) |lang| opts.lang = lang;
-        opts.format = reports.Format.lastFlag(parsed.flags.json, parsed.flags.text, parsed.flags.sarif);
-        if (positionals.len > 0) opts.text = positionals[0];
-        if (positionals.len > 1) opts.target = positionals[1];
-        opts.invalid_arg = parsed.unknown orelse if (positionals.len > 2) positionals[2] else null;
-
-        return opts;
-    }
-
-    pub fn run(
-        io: std.Io,
-        gpa: std.mem.Allocator,
-        opts: Options,
-        stdout: *std.Io.Writer,
-        stderr: *std.Io.Writer,
-    ) !Outcome {
-        if (opts.invalid_arg) |arg|
-            return Outcome.usageError(stderr, "kata query: unexpected argument \"{s}\" (is the query quoted?)\n", .{arg});
-        if (opts.text.len == 0)
-            return Outcome.usageError(stderr, usage_line, .{});
-        if (opts.lang.len == 0)
-            return Outcome.usageError(stderr, "kata query: --lang is required (expected " ++ language.supported_list ++ ")\n", .{});
-        var langs_buf: [language.max_langs_per_dir]language.Name = undefined;
-        var langs_len: usize = 0;
-        var it = std.mem.splitScalar(u8, opts.lang, ',');
-        while (it.next()) |token| {
-            const lang = language.Name.fromString(token) orelse
-                return Outcome.usageError(stderr, "kata query: unsupported language: \"{s}\" (expected " ++ language.supported_list ++ ")\n", .{token});
-            if (std.mem.indexOfScalar(language.Name, langs_buf[0..langs_len], lang) != null) continue;
-            langs_buf[langs_len] = lang;
-            langs_len += 1;
-        }
-
-        var rule_set: lint.RuleSet = .{ .allocator = gpa };
-        defer rule_set.deinit();
-        for (langs_buf[0..langs_len]) |lang| {
-            try rule_set.append(lang, .{ .id = rule_id, .source = opts.text });
-        }
-
-        var engine = Engine.init(gpa, &rule_set, dsl.engine_compiler.ruleCompiler(), &.{});
-        defer engine.deinit();
-
-        if (!try engine.prewarmOrReport("kata", stderr)) return .usage;
-
-        var reporter = reports.Reporter.init(gpa, opts.format, stdout, opts.color);
-        defer reporter.deinit();
-
-        return switch (try check.run(io, gpa, &engine, .{ .target = opts.target }, &reporter)) {
-            .clean => .clean,
-            .violations => .matches,
-        };
-    }
-};
-
-pub const run = Options.run;
-
-const usage_line = "usage: kata query '<kata rule>' [path] --lang=<" ++ language.pipe_list ++ ">\n";
+pub const name = "query";
+pub const synopsis = "query '<kata rule>' [path] --lang=<" ++ language.pipe_list ++ ">";
 
 const rule_id = "query";
+
+pub const Args = struct {
+    text: []const u8,
+    target: []const u8 = ".",
+    lang: ?[]const u8 = null,
+    format: reports.Format = .pretty,
+};
+
+pub const grammar = args.grammar(Args, .{
+    .flags = .{
+        .{ .name = "lang", .field = .lang },
+        .{ .name = "json", .field = .format, .value = .json },
+        .{ .name = "text", .field = .format, .value = .text },
+        .{ .name = "sarif", .field = .format, .value = .sarif },
+    },
+    .positionals = .{ .text, .target },
+});
+
+pub fn execute(env: Env, parsed: Args) !Exit {
+    const lang_list = parsed.lang orelse
+        return output.usage(env.stderr, "kata query: --lang is required (expected " ++ language.supported_list ++ ")\n", .{});
+
+    var langs: std.EnumSet(language.Name) = .initEmpty();
+    var tokens = std.mem.splitScalar(u8, lang_list, ',');
+    while (tokens.next()) |token| {
+        langs.insert(language.Name.fromString(token) orelse
+            return output.usage(env.stderr, "kata query: unsupported language: \"{s}\" (expected " ++ language.supported_list ++ ")\n", .{token}));
+    }
+
+    var rule_set: lint.RuleSet = .{ .allocator = env.gpa };
+    defer rule_set.deinit();
+
+    var each_lang = langs.iterator();
+    while (each_lang.next()) |lang| try rule_set.append(lang, .{ .id = rule_id, .source = parsed.text });
+
+    var engine = Engine.init(env.gpa, &rule_set, dsl.engine_compiler.ruleCompiler(), &.{});
+    defer engine.deinit();
+
+    // the rule text is an argument, so a rule that does not compile is a usage error.
+    const command: analysis.Command = .{ .name = name, .rules_failure = error.UsageReported };
+
+    return analysis.report(env, &engine, command, .{ .target = parsed.target }, parsed.format);
+}

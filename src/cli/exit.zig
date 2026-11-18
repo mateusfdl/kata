@@ -1,4 +1,6 @@
-pub const clean: u8 = 0;
-pub const violations: u8 = 2;
-pub const usage: u8 = 64;
-pub const internal_error: u8 = 70;
+pub const Exit = enum(u8) {
+    clean = 0,
+    violations = 2,
+    usage = 64,
+    internal_error = 70,
+};

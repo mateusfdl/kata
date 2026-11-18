@@ -1,113 +1,120 @@
 const std = @import("std");
 
-pub const env_baseline = "KATA_BASELINE";
-pub const env_socket = "KATA_SOCKET";
-pub const env_runtime_dir = "XDG_RUNTIME_DIR";
 const flag_prefix = "--";
 
-pub const CommandName = enum {
-    daemon,
-    check,
-    facts,
-    @"test",
-    query,
-    stop,
-    @"new-rule",
+pub const Invalid = union(enum) {
+    unexpected: []const u8,
+    missing_value: []const u8,
+    missing_positional,
 };
 
-pub const Spec = struct {
-    name: []const u8,
-    kind: enum { boolean, arg },
+pub fn isFlag(value: []const u8) bool {
+    return std.mem.startsWith(u8, value, flag_prefix);
+}
 
-    pub fn isFlag(value: []const u8) bool {
-        return std.mem.startsWith(u8, value, flag_prefix);
+/// The grammar of one command, parsed straight into its `Options`.
+///
+/// `spec.flags` is a tuple. `.{ .name, .field }` is a flag that takes a value.
+/// `.{ .name, .field, .value }` is a flag that assigns a constant. Arguments
+/// apply in order, so the last flag that targets a field wins.
+///
+/// `spec.positionals` is a tuple of field names, filled in order. A positional
+/// is required when its field has no default.
+pub fn grammar(comptime Options: type, comptime spec: anytype) type {
+    comptime {
+        for (@typeInfo(Options).@"struct".fields) |field| {
+            if (field.default_value_ptr != null) continue;
+
+            var positional = false;
+            for (spec.positionals) |name| {
+                if (std.mem.eql(u8, @tagName(name), field.name)) {
+                    positional = true;
+                }
+            }
+
+            if (!positional) @compileError("field '" ++ field.name ++ "' needs a default or a positional");
+        }
     }
-};
 
-pub fn parser(comptime specs: []const Spec) type {
     return struct {
-        pub const Flags = flags_type: {
-            const Attributes = std.builtin.Type.StructField.Attributes;
-            var names: [specs.len][]const u8 = undefined;
-            var types: [specs.len]type = undefined;
-            var attrs: [specs.len]Attributes = undefined;
-            for (specs, &names, &types, &attrs) |spec, *name, *ty, *attr| {
-                name.* = spec.name;
-                switch (spec.kind) {
-                    .boolean => {
-                        ty.* = usize;
-                        attr.* = .{ .default_value_ptr = &@as(usize, 0) };
-                    },
-                    .arg => {
-                        ty.* = ?[:0]const u8;
-                        attr.* = .{ .default_value_ptr = &@as(ty.*, null) };
-                    },
+        pub const Result = union(enum) {
+            ok: Options,
+            invalid: Invalid,
+        };
+
+        pub fn parse(argv: []const [:0]const u8) Result {
+            var options: Options = undefined;
+
+            inline for (@typeInfo(Options).@"struct".fields) |field| {
+                if (field.defaultValue()) |default| {
+                    @field(options, field.name) = default;
                 }
             }
-            break :flags_type @Struct(.auto, null, &names, &types, &attrs);
-        };
 
-        pub const Result = struct {
-            flags: Flags = .{},
-            positional_buf: [8][:0]const u8 = undefined,
-            positional_len: usize = 0,
-            unknown: ?[]const u8 = null,
-            missing: ?[]const u8 = null,
-
-            pub fn positionals(self: *const Result) []const [:0]const u8 {
-                return self.positional_buf[0..self.positional_len];
-            }
-        };
-
-        pub fn parse(args: []const [:0]const u8) Result {
-            var result: Result = .{};
-
+            var positionals_seen: usize = 0;
             var i: usize = 0;
-            arg_loop: while (i < args.len) : (i += 1) {
-                const arg = args[i];
-                if (!Spec.isFlag(arg)) {
-                    if (result.positional_len < result.positional_buf.len) {
-                        result.positional_buf[result.positional_len] = arg;
-                        result.positional_len += 1;
-                    }
+            while (i < argv.len) : (i += 1) {
+                const invalid = if (isFlag(argv[i]))
+                    applyFlag(&options, argv, &i)
+                else
+                    applyPositional(&options, argv[i], &positionals_seen);
 
-                    continue;
-                }
-
-                inline for (specs) |spec| {
-                    const flag = flag_prefix ++ spec.name;
-                    if (std.mem.eql(u8, arg, flag)) {
-                        switch (spec.kind) {
-                            // store a one-based position instead of a boolean. zero means
-                            // absent, and callers can select the last conflicting flag.
-                            .boolean => @field(result.flags, spec.name) = i + 1,
-                            .arg => {
-                                // a separate token beginning with "--" starts another flag.
-                                // use --name=value when the value itself begins with "--".
-                                if (i + 1 >= args.len or Spec.isFlag(args[i + 1])) {
-                                    if (result.missing == null) result.missing = arg;
-                                } else {
-                                    i += 1;
-
-                                    @field(result.flags, spec.name) = args[i];
-                                }
-                            },
-                        }
-
-                        continue :arg_loop;
-                    }
-
-                    if (spec.kind == .arg and std.mem.startsWith(u8, arg, flag ++ "=")) {
-                        @field(result.flags, spec.name) = arg[flag.len + 1 ..];
-
-                        continue :arg_loop;
-                    }
-                }
-
-                if (result.unknown == null) result.unknown = arg;
+                if (invalid) |problem| return .{ .invalid = problem };
             }
 
-            return result;
+            inline for (spec.positionals, 0..) |name, index| {
+                const required = comptime std.meta.fieldInfo(Options, name).default_value_ptr == null;
+                if (required and index >= positionals_seen) return .{ .invalid = .missing_positional };
+            }
+
+            return .{ .ok = options };
+        }
+
+        fn applyPositional(options: *Options, arg: []const u8, seen: *usize) ?Invalid {
+            inline for (spec.positionals, 0..) |name, index| {
+                if (index == seen.*) {
+                    @field(options, @tagName(name)) = arg;
+                    seen.* += 1;
+
+                    return null;
+                }
+            }
+
+            return .{ .unexpected = arg };
+        }
+
+        /// `i` is the index of the flag. A flag that takes the next argument
+        /// as its value moves `i` to that argument.
+        fn applyFlag(options: *Options, argv: []const [:0]const u8, i: *usize) ?Invalid {
+            const arg = argv[i.*];
+
+            inline for (spec.flags) |flag| {
+                const text = flag_prefix ++ flag.name;
+                const field = @tagName(flag.field);
+
+                if (@hasField(@TypeOf(flag), "value")) {
+                    if (std.mem.eql(u8, arg, text)) {
+                        @field(options, field) = flag.value;
+
+                        return null;
+                    }
+                } else if (std.mem.eql(u8, arg, text)) {
+                    // a separate token beginning with "--" starts another flag.
+                    // use --name=value when the value itself begins with "--".
+                    if (i.* + 1 >= argv.len or isFlag(argv[i.* + 1])) return .{ .missing_value = arg };
+
+                    i.* += 1;
+                    @field(options, field) = argv[i.*];
+
+                    return null;
+                } else if (std.mem.startsWith(u8, arg, text ++ "=")) {
+                    @field(options, field) = arg[text.len + 1 ..];
+
+                    return null;
+                }
+            }
+
+            return .{ .unexpected = arg };
         }
     };
 }
