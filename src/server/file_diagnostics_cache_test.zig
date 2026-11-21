@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const replay = @import("replay.zig");
+const file_diagnostics_cache = @import("file_diagnostics_cache.zig");
 
 const diagnostic = @import("engine").diagnostic;
 
@@ -41,16 +41,16 @@ fn sample(arena: std.mem.Allocator, message: []const u8) ![]diagnostic.Diagnosti
     return out;
 }
 
-test "replay: empty cache misses" {
-    var cache = try replay.ReplayCache.init(std.testing.allocator, 4);
+test "file diagnostics cache: empty cache misses" {
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(std.testing.allocator, 4);
     defer cache.deinit();
 
     try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_a, 0));
 }
 
-test "replay: matching project generations hit" {
+test "file diagnostics cache: matching project generations hit" {
     const gpa = std.testing.allocator;
-    var cache = try replay.ReplayCache.init(gpa, 4);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 4);
     defer cache.deinit();
 
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -61,9 +61,9 @@ test "replay: matching project generations hit" {
     try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_a, 6));
 }
 
-test "replay: zero project generations hit" {
+test "file diagnostics cache: zero project generations hit" {
     const gpa = std.testing.allocator;
-    var cache = try replay.ReplayCache.init(gpa, 4);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 4);
     defer cache.deinit();
 
     try cache.put("src/a.ts", .ts, hash_a, 0, &.{});
@@ -71,9 +71,9 @@ test "replay: zero project generations hit" {
     try std.testing.expectEqual(@as(usize, 0), cache.get("src/a.ts", .ts, hash_a, 0).?.len);
 }
 
-test "replay: put then get returns the stored diagnostics" {
+test "file diagnostics cache: put then get returns the stored diagnostics" {
     const gpa = std.testing.allocator;
-    var cache = try replay.ReplayCache.init(gpa, 4);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 4);
     defer cache.deinit();
 
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -90,9 +90,9 @@ test "replay: put then get returns the stored diagnostics" {
     try std.testing.expectEqualStrings("use unknown", hit[0].suggestions[0].label);
 }
 
-test "replay: a different content hash misses and put replaces the entry" {
+test "file diagnostics cache: a different content hash misses and put replaces the entry" {
     const gpa = std.testing.allocator;
-    var cache = try replay.ReplayCache.init(gpa, 4);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 4);
     defer cache.deinit();
 
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -106,9 +106,9 @@ test "replay: a different content hash misses and put replaces the entry" {
     try std.testing.expectEqualStrings("second", cache.get("src/a.ts", .ts, hash_b, 0).?[0].message);
 }
 
-test "replay: stored diagnostics survive the source arena teardown" {
+test "file diagnostics cache: stored diagnostics survive the source arena teardown" {
     const gpa = std.testing.allocator;
-    var cache = try replay.ReplayCache.init(gpa, 4);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 4);
     defer cache.deinit();
 
     {
@@ -122,9 +122,9 @@ test "replay: stored diagnostics survive the source arena teardown" {
     try std.testing.expectEqualStrings("render", hit[0].context[0].name);
 }
 
-test "replay: stored diagnostics preserve capped state" {
+test "file diagnostics cache: stored diagnostics preserve capped state" {
     const gpa = std.testing.allocator;
-    var cache = try replay.ReplayCache.init(gpa, 4);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 4);
     defer cache.deinit();
 
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -136,9 +136,9 @@ test "replay: stored diagnostics preserve capped state" {
     try std.testing.expectEqual(true, cache.get("src/a.ts", .ts, hash_a, 0).?[0].capped);
 }
 
-test "replay: LRU eviction keeps a promoted path" {
+test "file diagnostics cache: LRU eviction keeps a promoted path" {
     const gpa = std.testing.allocator;
-    var cache = try replay.ReplayCache.init(gpa, 2);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 2);
     defer cache.deinit();
 
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -154,9 +154,9 @@ test "replay: LRU eviction keeps a promoted path" {
     try std.testing.expectEqualStrings("c", cache.get("src/c.ts", .ts, hash_a, 0).?[0].message);
 }
 
-test "replay: an empty diagnostic slice is a valid cached value" {
+test "file diagnostics cache: an empty diagnostic slice is a valid cached value" {
     const gpa = std.testing.allocator;
-    var cache = try replay.ReplayCache.init(gpa, 4);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 4);
     defer cache.deinit();
 
     try cache.put("src/clean.ts", .ts, hash_a, 0, &.{});
@@ -165,9 +165,9 @@ test "replay: an empty diagnostic slice is a valid cached value" {
     try std.testing.expectEqual(@as(usize, 0), hit.len);
 }
 
-test "replay: path lookup uses byte equality" {
+test "file diagnostics cache: path lookup uses byte equality" {
     const gpa = std.testing.allocator;
-    var cache = try replay.ReplayCache.init(gpa, 4);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 4);
     defer cache.deinit();
 
     const stored_path = try gpa.dupe(u8, "src/a.ts");
@@ -179,9 +179,9 @@ test "replay: path lookup uses byte equality" {
     try std.testing.expectEqual(@as(usize, 0), cache.get(lookup_path, .ts, hash_a, 0).?.len);
 }
 
-test "replay: stale content does not promote an entry" {
+test "file diagnostics cache: stale content does not promote an entry" {
     const gpa = std.testing.allocator;
-    var cache = try replay.ReplayCache.init(gpa, 2);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 2);
     defer cache.deinit();
 
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -196,9 +196,9 @@ test "replay: stale content does not promote an entry" {
     try std.testing.expectEqualStrings("b", cache.get("src/b.ts", .ts, hash_a, 0).?[0].message);
 }
 
-test "replay: repeated eviction keeps only the newest entries" {
+test "file diagnostics cache: repeated eviction keeps only the newest entries" {
     const gpa = std.testing.allocator;
-    var cache = try replay.ReplayCache.init(gpa, 2);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 2);
     defer cache.deinit();
 
     for (0..32) |index| {
@@ -217,17 +217,17 @@ test "replay: repeated eviction keeps only the newest entries" {
     try std.testing.expectEqual(@as(usize, 0), cache.get("src/31.ts", .ts, hash_a, 0).?.len);
 }
 
-test "replay: init rejects zero capacity" {
+test "file diagnostics cache: init rejects zero capacity" {
     try std.testing.expectError(
-        error.InvalidReplayCapacity,
-        replay.ReplayCache.init(std.testing.allocator, 0),
+        error.InvalidDiagnosticsCacheCapacity,
+        file_diagnostics_cache.FileDiagnosticsCache.init(std.testing.allocator, 0),
     );
 }
 
-test "replay: failed replacement preserves the stored entry" {
+test "file diagnostics cache: failed replacement preserves the stored entry" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     const gpa = failing.allocator();
-    var cache = try replay.ReplayCache.init(gpa, 2);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 2);
     defer cache.deinit();
 
     try cache.put("src/a.ts", .ts, hash_a, 0, &.{});
@@ -238,10 +238,10 @@ test "replay: failed replacement preserves the stored entry" {
     try std.testing.expectEqual(@as(?[]const diagnostic.Diagnostic, null), cache.get("src/a.ts", .ts, hash_b, 0));
 }
 
-test "replay: failed full insertion preserves LRU order" {
+test "file diagnostics cache: failed full insertion preserves LRU order" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     const gpa = failing.allocator();
-    var cache = try replay.ReplayCache.init(gpa, 2);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 2);
     defer cache.deinit();
 
     try cache.put("src/a.ts", .ts, hash_a, 0, &.{});
@@ -258,9 +258,9 @@ test "replay: failed full insertion preserves LRU order" {
     try std.testing.expectEqual(@as(usize, 0), cache.get("src/c.ts", .ts, hash_a, 0).?.len);
 }
 
-test "replay: language is part of cache identity" {
+test "file diagnostics cache: language is part of cache identity" {
     const gpa = std.testing.allocator;
-    var cache = try replay.ReplayCache.init(gpa, 4);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 4);
     defer cache.deinit();
 
     var arena = std.heap.ArenaAllocator.init(gpa);

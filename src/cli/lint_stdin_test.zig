@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const one_shot = @import("one_shot.zig");
+const lint_stdin = @import("lint_stdin.zig");
 const test_fixture = @import("../test_fixture.zig");
 
 const Exit = @import("exit.zig").Exit;
@@ -28,16 +28,16 @@ const RunResult = struct {
     }
 };
 
-fn lint(t: *TestEnv, ctx: daemon.Context, parsed: one_shot.Args) !Exit {
+fn lint(t: *TestEnv, ctx: daemon.Context, parsed: lint_stdin.Args) !Exit {
     const env = t.env();
 
-    return one_shot.lintLocally(env, ctx, try one_shot.readInput(env, parsed));
+    return lint_stdin.lintLocally(env, ctx, try lint_stdin.readInput(env, parsed));
 }
 
 fn runCli(
     allocator: std.mem.Allocator,
     ctx: daemon.Context,
-    parsed: one_shot.Args,
+    parsed: lint_stdin.Args,
     stdin_bytes: []const u8,
 ) !RunResult {
     var t: TestEnv = .init(stdin_bytes);
@@ -90,19 +90,19 @@ const Report = struct {
     clean: bool,
 };
 
-test "one-shot: grammar maps every flag to its option" {
+test "lint stdin: grammar maps every flag to its option" {
     try std.testing.expectEqualDeep(
-        one_shot.command.Result{ .ok = .{ .lang = "ts", .filename = "src/a.ts" } },
-        one_shot.command.parse(&.{ "--lang=ts", "--filename", "src/a.ts" }),
+        lint_stdin.command.Result{ .ok = .{ .lang = "ts", .filename = "src/a.ts" } },
+        lint_stdin.command.parse(&.{ "--lang=ts", "--filename", "src/a.ts" }),
     );
 }
 
-test "one-shot: clean source reports clean" {
+test "lint stdin: clean source reports clean" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    const args: one_shot.Args = .{ .lang = "ts" };
+    const args: lint_stdin.Args = .{ .lang = "ts" };
     const r = try runCli(gpa, oneShotContext(f), args, "const x: string = \"ok\";");
     defer r.deinit(gpa);
 
@@ -116,12 +116,12 @@ test "one-shot: clean source reports clean" {
     try std.testing.expectEqual(@as(usize, 0), parsed.value.diagnostics.len);
 }
 
-test "one-shot: violation reports violations" {
+test "lint stdin: violation reports violations" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    const args: one_shot.Args = .{ .lang = "ts" };
+    const args: lint_stdin.Args = .{ .lang = "ts" };
     const r = try runCli(gpa, oneShotContext(f), args, "const x = (foo[0] as any).bar;");
     defer r.deinit(gpa);
 
@@ -139,12 +139,12 @@ test "one-shot: violation reports violations" {
     try std.testing.expectEqualStrings("f8442f8df97b699227020f1ca99a3d34007e51a6f4a3934089158471a8f2963b", parsed.value.diagnostics[0].fingerprint);
 }
 
-test "one-shot: --filename infers language" {
+test "lint stdin: --filename infers language" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    const args: one_shot.Args = .{ .filename = "/tmp/foo.tsx" };
+    const args: lint_stdin.Args = .{ .filename = "/tmp/foo.tsx" };
     const r = try runCli(gpa, oneShotContext(f), args, "const x = foo as any;");
     defer r.deinit(gpa);
 
@@ -155,12 +155,12 @@ test "one-shot: --filename infers language" {
     try std.testing.expectEqualStrings("tsx", parsed.value.language);
 }
 
-test "one-shot: missing --lang is a usage error" {
+test "lint stdin: missing --lang is a usage error" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    const args: one_shot.Args = .{};
+    const args: lint_stdin.Args = .{};
     const r = try runCli(gpa, oneShotContext(f), args, "x");
     defer r.deinit(gpa);
 
@@ -168,12 +168,12 @@ test "one-shot: missing --lang is a usage error" {
     try std.testing.expectEqualStrings("missing --lang (or provide --filename with a known extension)\n", r.stderr);
 }
 
-test "one-shot: unsupported --lang is an internal error" {
+test "lint stdin: unsupported --lang is an internal error" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    const args: one_shot.Args = .{ .lang = "python" };
+    const args: lint_stdin.Args = .{ .lang = "python" };
     const r = try runCli(gpa, oneShotContext(f), args, "print('hi')");
     defer r.deinit(gpa);
 
@@ -181,12 +181,12 @@ test "one-shot: unsupported --lang is an internal error" {
     try std.testing.expectEqualStrings("lint: unsupported language: \"python\"\n", r.stderr);
 }
 
-test "one-shot: unknown extension is a usage error" {
+test "lint stdin: unknown extension is a usage error" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    const args: one_shot.Args = .{ .filename = "foo.rs" };
+    const args: lint_stdin.Args = .{ .filename = "foo.rs" };
     const r = try runCli(gpa, oneShotContext(f), args, "fn main() {}");
     defer r.deinit(gpa);
 
@@ -194,7 +194,7 @@ test "one-shot: unknown extension is a usage error" {
     try std.testing.expectEqualStrings("cannot infer language from extension \".rs\"\n", r.stderr);
 }
 
-test "one-shot: caps a flooding rule and stays unclean" {
+test "lint stdin: caps a flooding rule and stays unclean" {
     const gpa = std.testing.allocator;
     var f = try newFixture(gpa);
     defer f.deinit();
@@ -202,7 +202,7 @@ test "one-shot: caps a flooding rule and stays unclean" {
     var ctx = oneShotContext(f);
     ctx.policy.resolved.max_matches_per_file = 1;
 
-    const args: one_shot.Args = .{ .lang = "ts" };
+    const args: lint_stdin.Args = .{ .lang = "ts" };
     const r = try runCli(gpa, ctx, args, "const a = v as any;\n" ++
         "const b = v as any;\n" ++
         "const c = v as any;\n" ++
@@ -225,7 +225,7 @@ test "one-shot: caps a flooding rule and stays unclean" {
     );
 }
 
-test "one-shot: demotes a ratcheted violation to warn" {
+test "lint stdin: demotes an error matching the file on disk to warn" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var f = try newFixture(gpa);
@@ -241,9 +241,9 @@ test "one-shot: demotes a ratcheted violation to warn" {
     defer gpa.free(filename);
 
     var ctx = oneShotContext(f);
-    ctx.policy.resolved.ratchet = true;
+    ctx.policy.resolved.warn_on_existing_errors = true;
 
-    const args: one_shot.Args = .{ .filename = filename };
+    const args: lint_stdin.Args = .{ .filename = filename };
     const r = try runCli(gpa, ctx, args, "const a = x as any;\n");
     defer r.deinit(gpa);
 

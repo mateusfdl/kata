@@ -3,7 +3,7 @@ const std = @import("std");
 const lint = @import("engine");
 const daemon = @import("daemon.zig");
 const protocol = @import("protocol.zig");
-const replay = @import("replay.zig");
+const file_diagnostics_cache = @import("file_diagnostics_cache.zig");
 const fs = @import("../fs.zig");
 const test_fixture = @import("../test_fixture.zig");
 const test_frame = @import("../test_frame.zig");
@@ -447,16 +447,16 @@ test "daemon: warn-only diagnostics keep the report clean" {
     try std.testing.expectEqual(lint.diagnostic.Severity.warn, report.diagnostics[0].severity);
 }
 
-const ratchet_disk_one_violation = "const a = x as any;\n";
-const ratchet_proposed_moved = "const clean: string = \"ok\";\nconst a = x as any;\n";
-const ratchet_proposed_replacement = "const b = y as any;\n";
-const ratchet_proposed_growth = "const a = x as any;\nconst b = y as any;\n";
+const disk_source_with_error = "const a = x as any;\n";
+const source_with_moved_error = "const clean: string = \"ok\";\nconst a = x as any;\n";
+const source_with_replacement_error = "const b = y as any;\n";
+const source_with_added_error = "const a = x as any;\nconst b = y as any;\n";
 
-fn ratchetContext(f: *test_fixture.Fixture, io: std.Io) daemon.Context {
-    return .{ .policy = .{ .engine = &f.engine, .resolved = .{ .ratchet = true } }, .io = io };
+fn contextWarningOnExistingErrors(f: *test_fixture.Fixture, io: std.Io) daemon.Context {
+    return .{ .policy = .{ .engine = &f.engine, .resolved = .{ .warn_on_existing_errors = true } }, .io = io };
 }
 
-test "daemon: ratchet demotes an unchanged violation to warn" {
+test "daemon: an error matching the file on disk becomes a warning" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -466,15 +466,15 @@ test "daemon: ratchet demotes an unchanged violation to warn" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = ratchet_disk_one_violation });
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = disk_source_with_error });
 
     var path_buf: [256]u8 = undefined;
     const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
 
-    const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+    const resp = daemon.handle(contextWarningOnExistingErrors(f, io), arena.allocator(), .{
         .filename = filename,
-        .source = ratchet_proposed_moved,
+        .source = source_with_moved_error,
     });
 
     try std.testing.expectEqual(protocol.Status.ok, resp.status);
@@ -485,7 +485,7 @@ test "daemon: ratchet demotes an unchanged violation to warn" {
     try std.testing.expectEqual(true, report.diagnostics[0].demoted);
 }
 
-test "daemon: ratchet keeps a replacement violation as error" {
+test "daemon: a replacement error remains an error" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -495,15 +495,15 @@ test "daemon: ratchet keeps a replacement violation as error" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = ratchet_disk_one_violation });
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = disk_source_with_error });
 
     var path_buf: [256]u8 = undefined;
     const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
 
-    const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+    const resp = daemon.handle(contextWarningOnExistingErrors(f, io), arena.allocator(), .{
         .filename = filename,
-        .source = ratchet_proposed_replacement,
+        .source = source_with_replacement_error,
     });
 
     try std.testing.expectEqual(protocol.Status.ok, resp.status);
@@ -514,7 +514,7 @@ test "daemon: ratchet keeps a replacement violation as error" {
     try std.testing.expectEqual(false, report.diagnostics[0].demoted);
 }
 
-test "daemon: ratchet keeps violation growth as error" {
+test "daemon: an additional error remains an error" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -524,15 +524,15 @@ test "daemon: ratchet keeps violation growth as error" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = ratchet_disk_one_violation });
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = disk_source_with_error });
 
     var path_buf: [256]u8 = undefined;
     const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
 
-    const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+    const resp = daemon.handle(contextWarningOnExistingErrors(f, io), arena.allocator(), .{
         .filename = filename,
-        .source = ratchet_proposed_growth,
+        .source = source_with_added_error,
     });
 
     try std.testing.expectEqual(protocol.Status.ok, resp.status);
@@ -545,7 +545,7 @@ test "daemon: ratchet keeps violation growth as error" {
     try std.testing.expectEqual(false, report.diagnostics[1].demoted);
 }
 
-test "daemon: ratchet treats a missing file as zero baseline" {
+test "daemon: a missing file has no existing errors" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -560,9 +560,9 @@ test "daemon: ratchet treats a missing file as zero baseline" {
     const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/new.ts", .{dir});
 
-    const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+    const resp = daemon.handle(contextWarningOnExistingErrors(f, io), arena.allocator(), .{
         .filename = filename,
-        .source = ratchet_disk_one_violation,
+        .source = disk_source_with_error,
     });
 
     try std.testing.expectEqual(protocol.Status.ok, resp.status);
@@ -572,7 +572,7 @@ test "daemon: ratchet treats a missing file as zero baseline" {
     try std.testing.expectEqual(lint.diagnostic.Severity.@"error", report.diagnostics[0].severity);
 }
 
-test "daemon: ratchet baseline follows the current disk state" {
+test "daemon: existing errors come from the current file on disk" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -582,29 +582,29 @@ test "daemon: ratchet baseline follows the current disk state" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = ratchet_disk_one_violation });
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = disk_source_with_error });
 
     var path_buf: [256]u8 = undefined;
     const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
 
-    const first = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+    const first = daemon.handle(contextWarningOnExistingErrors(f, io), arena.allocator(), .{
         .filename = filename,
-        .source = ratchet_proposed_moved,
+        .source = source_with_moved_error,
     });
     try std.testing.expect(first.report.?.clean);
 
     try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = "const clean: string = \"ok\";\n" });
 
-    const second = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+    const second = daemon.handle(contextWarningOnExistingErrors(f, io), arena.allocator(), .{
         .filename = filename,
-        .source = ratchet_proposed_moved,
+        .source = source_with_moved_error,
     });
     try std.testing.expect(!second.report.?.clean);
     try std.testing.expectEqual(lint.diagnostic.Severity.@"error", second.report.?.diagnostics[0].severity);
 }
 
-test "daemon: ratchet compares error counts so warn diagnostics never mask error growth" {
+test "daemon: existing warnings do not mask new errors" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -637,7 +637,7 @@ test "daemon: ratchet compares error counts so warn diagnostics never mask error
     const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
 
-    const resp = daemon.handle(ratchetContext(f, io), arena.allocator(), .{
+    const resp = daemon.handle(contextWarningOnExistingErrors(f, io), arena.allocator(), .{
         .filename = filename,
         .source = "const a = x as any;\nconst c = z as any;\n",
     });
@@ -652,7 +652,7 @@ test "daemon: ratchet compares error counts so warn diagnostics never mask error
     try std.testing.expectEqual(false, report.diagnostics[1].demoted);
 }
 
-test "daemon: ratchet without filename leaves severity untouched" {
+test "daemon: diagnostics keep their severity without a filename" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -660,11 +660,11 @@ test "daemon: ratchet without filename leaves severity untouched" {
     defer f.deinit();
 
     var ctx = context(f);
-    ctx.policy.resolved.ratchet = true;
+    ctx.policy.resolved.warn_on_existing_errors = true;
 
     const resp = daemon.handle(ctx, arena.allocator(), .{
         .language = "ts",
-        .source = ratchet_disk_one_violation,
+        .source = disk_source_with_error,
     });
 
     try std.testing.expect(!resp.report.?.clean);
@@ -797,7 +797,7 @@ test "daemon: file outside any project falls back to the daemon engine" {
     try std.testing.expectEqualStrings("as any is not allowed", report.diagnostics[0].message);
 }
 
-test "daemon: project ratchet demotes unchanged violations while the daemon default stays absolute" {
+test "daemon: project settings can warn on existing errors while the daemon default keeps them as errors" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -808,7 +808,7 @@ test "daemon: project ratchet demotes unchanged violations while the daemon defa
     defer h.deinit();
 
     try h.project.tmp.dir.createDirPath(io, "proj/.kata/rules/ts");
-    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\nrules:\n  ts:\n    flag-zzz:\n" });
+    try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "warn-on-existing-errors: true\nrules:\n  ts:\n    flag-zzz:\n" });
     try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules/ts/flag-zzz.kata", .data = flag_zzz_kata_rule });
     try h.project.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const zzz = 1;\n" });
 
@@ -959,7 +959,7 @@ fn addResolvedCallRule(f: *test_fixture.Fixture) !void {
     try f.rule_set.upsertProject(.{ .id = "resolved-call", .source = resolved_call_rule }, .project);
 }
 
-test "daemon: fact queries keep cross-file candidates on replay" {
+test "daemon: fact queries keep cross-file candidates on a cache hit" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -972,27 +972,27 @@ test "daemon: fact queries keep cross-file candidates on replay" {
     defer state.deinit();
     try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
 
-    var cache = try replay.ReplayCache.init(gpa, 16);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = indexedContext(&state);
-    ctx.replay = &cache;
+    ctx.diagnostics_cache = &cache;
 
     const request: protocol.Request = .{
         .filename = "/proj/run.ts",
         .source = "function run(repo: UserRepository) { repo.find(1); }\n",
     };
     const first = daemon.handle(ctx, arena.allocator(), request);
-    const replayed = daemon.handle(ctx, arena.allocator(), request);
+    const cached = daemon.handle(ctx, arena.allocator(), request);
 
     try std.testing.expectEqual(@as(usize, 1), first.report.?.diagnostics.len);
     try std.testing.expectEqualStrings("resolved-call", first.report.?.diagnostics[0].rule_id);
     try std.testing.expectEqualStrings(
         try encodeResponse(arena.allocator(), first),
-        try encodeResponse(arena.allocator(), replayed),
+        try encodeResponse(arena.allocator(), cached),
     );
 }
 
-test "daemon: replay invalidates cross-file diagnostics after another file changes" {
+test "daemon: the diagnostics cache invalidates cross-file diagnostics after another file changes" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -1005,10 +1005,10 @@ test "daemon: replay invalidates cross-file diagnostics after another file chang
     defer state.deinit();
     try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
 
-    var cache = try replay.ReplayCache.init(gpa, 16);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = indexedContext(&state);
-    ctx.replay = &cache;
+    ctx.diagnostics_cache = &cache;
 
     const request: protocol.Request = .{
         .filename = "/proj/run.ts",
@@ -1022,7 +1022,7 @@ test "daemon: replay invalidates cross-file diagnostics after another file chang
     try std.testing.expectEqual(@as(usize, 0), second.report.?.diagnostics.len);
 }
 
-test "daemon: repeated cross-file replay hits stay byte-identical" {
+test "daemon: repeated cross-file cache hits stay byte-identical" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -1035,10 +1035,10 @@ test "daemon: repeated cross-file replay hits stay byte-identical" {
     defer state.deinit();
     try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
 
-    var cache = try replay.ReplayCache.init(gpa, 16);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = indexedContext(&state);
-    ctx.replay = &cache;
+    ctx.diagnostics_cache = &cache;
 
     const request: protocol.Request = .{
         .filename = "/proj/run.ts",
@@ -1056,7 +1056,7 @@ test "daemon: repeated cross-file replay hits stay byte-identical" {
     try std.testing.expectEqualStrings(encoded, try encodeResponse(arena.allocator(), third));
 }
 
-test "daemon: replay ignores unrelated index changes without cross-file rules" {
+test "daemon: the diagnostics cache ignores unrelated index changes without cross-file rules" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -1066,10 +1066,10 @@ test "daemon: replay ignores unrelated index changes without cross-file rules" {
     var state = try lint.Project.init(gpa, &f.engine, &.{});
     defer state.deinit();
 
-    var cache = try replay.ReplayCache.init(gpa, 16);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = indexedContext(&state);
-    ctx.replay = &cache;
+    ctx.diagnostics_cache = &cache;
 
     const request: protocol.Request = .{
         .filename = "/proj/a.ts",
@@ -1120,17 +1120,17 @@ fn encodeResponse(arena: std.mem.Allocator, resp: protocol.Response) ![]const u8
     return try arena.dupe(u8, out.written());
 }
 
-test "daemon: replay returns an identical response for unchanged content" {
+test "daemon: the diagnostics cache returns an identical response for unchanged content" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    var cache = try replay.ReplayCache.init(gpa, 16);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = context(f);
-    ctx.replay = &cache;
+    ctx.diagnostics_cache = &cache;
 
     const request: protocol.Request = .{
         .filename = "/proj/a.ts",
@@ -1148,17 +1148,17 @@ test "daemon: replay returns an identical response for unchanged content" {
     );
 }
 
-test "daemon: replay re-lints when content changes" {
+test "daemon: the diagnostics cache re-lints when content changes" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    var cache = try replay.ReplayCache.init(gpa, 16);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = context(f);
-    ctx.replay = &cache;
+    ctx.diagnostics_cache = &cache;
 
     const first = daemon.handle(ctx, arena.allocator(), .{
         .filename = "/proj/a.ts",
@@ -1173,17 +1173,17 @@ test "daemon: replay re-lints when content changes" {
     try std.testing.expectEqual(@as(usize, 2), second.report.?.diagnostics.len);
 }
 
-test "daemon: replay keeps explicit languages separate for one path" {
+test "daemon: the diagnostics cache keeps explicit languages separate for one path" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    var cache = try replay.ReplayCache.init(gpa, 16);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = context(f);
-    ctx.replay = &cache;
+    ctx.diagnostics_cache = &cache;
 
     const source = "const x = (foo[0] as any).bar;";
     const typescript = daemon.handle(ctx, arena.allocator(), .{
@@ -1203,7 +1203,7 @@ test "daemon: replay keeps explicit languages separate for one path" {
     try std.testing.expectEqualStrings("go", go.report.?.language);
 }
 
-test "daemon: ratchet demotion repeats on replayed diagnostics" {
+test "daemon: cached diagnostics are compared with the file on disk" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -1213,20 +1213,20 @@ test "daemon: ratchet demotion repeats on replayed diagnostics" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = ratchet_disk_one_violation });
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.ts", .data = disk_source_with_error });
 
     var path_buf: [256]u8 = undefined;
     const dir = try test_fixture.relativeTmpPath(&path_buf, &tmp.sub_path);
     const filename = try std.fmt.allocPrint(arena.allocator(), "{s}/a.ts", .{dir});
 
-    var cache = try replay.ReplayCache.init(gpa, 16);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 16);
     defer cache.deinit();
-    var ctx = ratchetContext(f, io);
-    ctx.replay = &cache;
+    var ctx = contextWarningOnExistingErrors(f, io);
+    ctx.diagnostics_cache = &cache;
 
     const request: protocol.Request = .{
         .filename = filename,
-        .source = ratchet_proposed_growth,
+        .source = source_with_added_error,
     };
 
     const first = daemon.handle(ctx, arena.allocator(), request);
@@ -1242,7 +1242,7 @@ test "daemon: ratchet demotion repeats on replayed diagnostics" {
     );
 }
 
-test "daemon: project violations appear on a replay hit" {
+test "daemon: project violations appear on a cache hit" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -1253,10 +1253,10 @@ test "daemon: project violations appear on a replay hit" {
     defer state.deinit();
     try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
 
-    var cache = try replay.ReplayCache.init(gpa, 16);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = indexedContext(&state);
-    ctx.replay = &cache;
+    ctx.diagnostics_cache = &cache;
 
     const request: protocol.Request = .{
         .filename = "/proj/order-service.ts",
@@ -1274,7 +1274,7 @@ test "daemon: project violations appear on a replay hit" {
     );
 }
 
-test "daemon: replay restores the facts for the replayed source" {
+test "daemon: the diagnostics cache restores the facts for the cached source" {
     const gpa = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -1285,10 +1285,10 @@ test "daemon: replay restores the facts for the replayed source" {
     defer state.deinit();
     try state.replace(user_repository_src, .ts, "/proj/user-repository.ts");
 
-    var cache = try replay.ReplayCache.init(gpa, 16);
+    var cache = try file_diagnostics_cache.FileDiagnosticsCache.init(gpa, 16);
     defer cache.deinit();
     var ctx = indexedContext(&state);
-    ctx.replay = &cache;
+    ctx.diagnostics_cache = &cache;
 
     const violating: protocol.Request = .{
         .filename = "/proj/order-service.ts",
@@ -1296,11 +1296,11 @@ test "daemon: replay restores the facts for the replayed source" {
     };
     const first = daemon.handle(ctx, arena.allocator(), violating);
     try state.replace(fixed_order_service_src, .ts, "/proj/order-service.ts");
-    const replayed = daemon.handle(ctx, arena.allocator(), violating);
+    const cached = daemon.handle(ctx, arena.allocator(), violating);
 
     try std.testing.expectEqual(@as(usize, 1), first.report.?.diagnostics.len);
-    try std.testing.expectEqual(@as(usize, 1), replayed.report.?.diagnostics.len);
-    try std.testing.expectEqualStrings("repository-isolation", replayed.report.?.diagnostics[0].rule_id);
+    try std.testing.expectEqual(@as(usize, 1), cached.report.?.diagnostics.len);
+    try std.testing.expectEqualStrings("repository-isolation", cached.report.?.diagnostics[0].rule_id);
 }
 
 fn diskCacheDir(arena: std.mem.Allocator, tmp: *std.testing.TmpDir, buf: []u8) ![]const u8 {

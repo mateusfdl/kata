@@ -2,7 +2,7 @@ const std = @import("std");
 
 const fs = @import("../fs.zig");
 const sources = @import("../sources.zig");
-const replay = @import("replay.zig");
+const file_diagnostics_cache = @import("file_diagnostics_cache.zig");
 
 const context = sources.context;
 
@@ -13,7 +13,7 @@ pub const Cache = struct {
 
     pub const Entry = struct {
         ctx: *context.Context,
-        replay: replay.ReplayCache,
+        diagnostics_cache: file_diagnostics_cache.FileDiagnosticsCache,
         fingerprint: u64,
     };
 
@@ -32,17 +32,17 @@ pub const Cache = struct {
         self.entries.deinit(self.gpa);
     }
 
-    pub fn acquire(self: *Cache, scratch: std.mem.Allocator, anchor: ?[]const u8) !?*Entry {
-        const a = anchor orelse return null;
-        const root = (try fs.discover.findProjectRoot(self.resolver.io, scratch, a)) orelse return null;
+    pub fn acquire(self: *Cache, scratch: std.mem.Allocator, start_path: ?[]const u8) !?*Entry {
+        const path = start_path orelse return null;
+        const root = (try fs.discover.findProjectRoot(self.resolver.io, scratch, path)) orelse return null;
         const current = try projectFingerprint(self.resolver.io, scratch, root);
 
         if (self.entries.get(root)) |entry| {
             if (entry.fingerprint == current) return entry;
 
-            var fresh_replay = try replay.ReplayCache.init(self.gpa, replay.default_capacity);
+            var fresh_cache = try file_diagnostics_cache.FileDiagnosticsCache.init(self.gpa, file_diagnostics_cache.default_capacity);
             const fresh_ctx = self.resolver.resolveAtRoot(root) catch |err| {
-                fresh_replay.deinit();
+                fresh_cache.deinit();
                 const removed = self.entries.fetchRemove(root).?;
                 self.gpa.free(removed.key);
                 self.destroyEntry(removed.value);
@@ -51,22 +51,22 @@ pub const Cache = struct {
             };
 
             entry.ctx.deinit();
-            entry.replay.deinit();
-            entry.* = .{ .ctx = fresh_ctx, .replay = fresh_replay, .fingerprint = current };
+            entry.diagnostics_cache.deinit();
+            entry.* = .{ .ctx = fresh_ctx, .diagnostics_cache = fresh_cache, .fingerprint = current };
 
             return entry;
         }
 
         const entry = try self.gpa.create(Entry);
         errdefer self.gpa.destroy(entry);
-        var fresh_replay = try replay.ReplayCache.init(self.gpa, replay.default_capacity);
-        errdefer fresh_replay.deinit();
+        var fresh_cache = try file_diagnostics_cache.FileDiagnosticsCache.init(self.gpa, file_diagnostics_cache.default_capacity);
+        errdefer fresh_cache.deinit();
         const ctx = try self.resolver.resolveAtRoot(root);
         errdefer ctx.deinit();
         const key = try self.gpa.dupe(u8, root);
         errdefer self.gpa.free(key);
 
-        entry.* = .{ .ctx = ctx, .replay = fresh_replay, .fingerprint = current };
+        entry.* = .{ .ctx = ctx, .diagnostics_cache = fresh_cache, .fingerprint = current };
         try self.entries.put(self.gpa, key, entry);
 
         return entry;
@@ -74,7 +74,7 @@ pub const Cache = struct {
 
     fn destroyEntry(self: *Cache, entry: *Entry) void {
         entry.ctx.deinit();
-        entry.replay.deinit();
+        entry.diagnostics_cache.deinit();
         self.gpa.destroy(entry);
     }
 };

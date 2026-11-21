@@ -78,9 +78,10 @@ pub const Table = struct {
         const scratch = memory.scratch();
         const pattern_indexes = try scratch.alloc(usize, patterns.len);
         for (pattern_indexes, 0..) |*pattern_index, index| pattern_index.* = index;
-        // Dense buckets preserve insertion order. Sort pattern indexes once so
-        // each node dispatches by rule ID, independent of source configuration
-        // order, while duplicate IDs retain compile order.
+
+        // dense buckets preserve insertion order. sort pattern indexes once so
+        // each node dispatches by rule id, independent of source configuration
+        // order, while duplicate ids retain compile order.
         std.sort.pdq(usize, pattern_indexes, patterns, patternBefore);
 
         var entries: std.ArrayList(DenseMultiMap.Entry) = .empty;
@@ -90,7 +91,9 @@ pub const Table = struct {
             const kinds = try root_kind_set.derive(scratch, &cp.pattern);
             for (kinds) |kind| {
                 if (kind >= kind_count) return error.KeyOutOfRange;
+
                 std.debug.assert(kind < kind_count);
+
                 try entries.append(scratch, .{
                     .key = kind,
                     .value = pattern_index,
@@ -113,6 +116,7 @@ pub const Table = struct {
 fn patternBefore(patterns: []const rule.CompiledPattern, a: usize, b: usize) bool {
     std.debug.assert(a < patterns.len);
     std.debug.assert(b < patterns.len);
+
     return switch (std.mem.order(u8, patterns[a].meta.rule_id, patterns[b].meta.rule_id)) {
         .lt => true,
         .gt => false,

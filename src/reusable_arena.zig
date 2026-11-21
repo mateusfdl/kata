@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const ScratchMemory = struct {
+pub const ReusableArena = struct {
     arena: std.heap.ArenaAllocator,
     generation_value: u64 = 0,
 

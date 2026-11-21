@@ -39,8 +39,10 @@ pub fn build(
         std.debug.assert(nodes.items.len < descendant_count);
         std.debug.assert(n.startByte() <= n.endByte());
         std.debug.assert(n.endByte() <= source.len);
+
         const index: ast.NodeIndex = @intCast(nodes.items.len);
         const parent = if (parents.empty()) ast.no_parent else parents.peek();
+
         std.debug.assert((index == 0) == (parent == ast.no_parent));
         if (parent != ast.no_parent) {
             std.debug.assert(parent < index);
@@ -48,6 +50,7 @@ pub fn build(
             std.debug.assert(parent_node.start_byte <= n.startByte());
             std.debug.assert(n.endByte() <= parent_node.end_byte);
         }
+
         try nodes.append(gpa, .{
             .kind = remap(kind_remap, n.kindId()),
             .field_id = remap(field_remap, cursor.fieldId()),
@@ -70,6 +73,7 @@ pub fn build(
             const done = parents.pop();
 
             std.debug.assert(done < nodes.items.len);
+
             nodes.items[done].subtree_end = @intCast(nodes.items.len);
         }
     }
@@ -77,9 +81,11 @@ pub fn build(
     std.debug.assert(parents.empty());
     std.debug.assert(nodes.items.len == descendant_count);
     std.debug.assert(nodes.items[0].subtree_end == descendant_count);
+
     for (nodes.items, 0..) |node, node_index| {
         std.debug.assert(node_index < node.subtree_end);
         std.debug.assert(node.subtree_end <= descendant_count);
+
         if (node.parent != ast.no_parent) {
             std.debug.assert(node.parent < node_index);
             std.debug.assert(node.subtree_end <= nodes.items[node.parent].subtree_end);

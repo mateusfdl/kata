@@ -45,7 +45,7 @@ const EntryMap = std.HashMapUnmanaged(Key, *Entry, KeyContext, 80);
 const EntryPool = node_pool.NodePoolType(@sizeOf(Entry), @alignOf(Entry));
 const max_map_capacity = (((@as(u64, 1) << 31) * 80) - 1) / 100;
 
-pub const ReplayCache = struct {
+pub const FileDiagnosticsCache = struct {
     gpa: std.mem.Allocator,
     capacity: usize,
     entries: EntryMap = .empty,
@@ -53,12 +53,12 @@ pub const ReplayCache = struct {
     oldest: ?*Entry = null,
     newest: ?*Entry = null,
 
-    pub fn init(gpa: std.mem.Allocator, capacity: usize) !ReplayCache {
-        if (capacity == 0 or capacity > max_map_capacity) return error.InvalidReplayCapacity;
+    pub fn init(gpa: std.mem.Allocator, capacity: usize) !FileDiagnosticsCache {
+        if (capacity == 0 or capacity > max_map_capacity) return error.InvalidDiagnosticsCacheCapacity;
         return .{ .gpa = gpa, .capacity = capacity };
     }
 
-    pub fn deinit(self: *ReplayCache) void {
+    pub fn deinit(self: *FileDiagnosticsCache) void {
         // Save next before destroying each arena because the link fields live in
         // the pooled entry whose contents become invalid after release.
         var current = self.oldest;
@@ -73,7 +73,7 @@ pub const ReplayCache = struct {
     }
 
     pub fn get(
-        self: *ReplayCache,
+        self: *FileDiagnosticsCache,
         path: []const u8,
         lang: language.Name,
         content_hash: [32]u8,
@@ -87,7 +87,7 @@ pub const ReplayCache = struct {
     }
 
     pub fn put(
-        self: *ReplayCache,
+        self: *FileDiagnosticsCache,
         path: []const u8,
         lang: language.Name,
         content_hash: [32]u8,
@@ -117,7 +117,7 @@ pub const ReplayCache = struct {
     }
 
     fn createEntry(
-        self: *ReplayCache,
+        self: *FileDiagnosticsCache,
         path: []const u8,
         lang: language.Name,
         content_hash: [32]u8,
@@ -125,7 +125,7 @@ pub const ReplayCache = struct {
         diagnostics: []const diagnostic.Diagnostic,
     ) !*Entry {
         const pool = &self.pool.?;
-        const raw = pool.acquire() orelse return error.ReplayPoolExhausted;
+        const raw = pool.acquire() orelse return error.DiagnosticsCachePoolExhausted;
         const entry: *Entry = @ptrCast(raw);
         entry.arena = .init(self.gpa);
         errdefer {
@@ -145,7 +145,7 @@ pub const ReplayCache = struct {
         return entry;
     }
 
-    fn ensureStorage(self: *ReplayCache) !void {
+    fn ensureStorage(self: *FileDiagnosticsCache) !void {
         if (self.pool != null) return;
 
         // Empty caches allocate nothing. On first put, reserve the complete map
@@ -161,27 +161,27 @@ pub const ReplayCache = struct {
         self.pool = pool;
     }
 
-    fn promote(self: *ReplayCache, entry: *Entry) void {
+    fn promote(self: *FileDiagnosticsCache, entry: *Entry) void {
         if (self.newest == entry) return;
         self.unlink(entry);
         self.pushNewest(entry);
     }
 
-    fn pushNewest(self: *ReplayCache, entry: *Entry) void {
+    fn pushNewest(self: *FileDiagnosticsCache, entry: *Entry) void {
         entry.previous = self.newest;
         entry.next = null;
         if (self.newest) |newest| newest.next = entry else self.oldest = entry;
         self.newest = entry;
     }
 
-    fn unlink(self: *ReplayCache, entry: *Entry) void {
+    fn unlink(self: *FileDiagnosticsCache, entry: *Entry) void {
         if (entry.previous) |previous| previous.next = entry.next else self.oldest = entry.next;
         if (entry.next) |next| next.previous = entry.previous else self.newest = entry.previous;
         entry.previous = null;
         entry.next = null;
     }
 
-    fn destroyEntry(self: *ReplayCache, entry: *Entry) void {
+    fn destroyEntry(self: *FileDiagnosticsCache, entry: *Entry) void {
         entry.deinit();
         self.pool.?.release(@ptrCast(entry));
     }
@@ -196,7 +196,7 @@ fn dupeDiagnostics(
     diagnostics: []const diagnostic.Diagnostic,
 ) ![]const diagnostic.Diagnostic {
     // Request diagnostics borrow parse, rule, and request arenas. Deep-copy all
-    // slices so a replay entry has one independent lifetime.
+    // slices so a cached entry has one independent lifetime.
     const out = try arena.alloc(diagnostic.Diagnostic, diagnostics.len);
     for (diagnostics, out) |d, *copy| {
         copy.* = .{

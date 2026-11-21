@@ -7,9 +7,9 @@ pub const project_dir_name = ".kata";
 pub fn findProjectRoot(
     io: std.Io,
     arena: std.mem.Allocator,
-    anchor: []const u8,
+    start_path: []const u8,
 ) !?[]const u8 {
-    var candidate = try startDir(io, arena, anchor);
+    var candidate = try startDir(io, arena, start_path);
     while (true) {
         const marker = try paths.join(arena, candidate, project_dir_name);
         if (try isDirectory(io, marker)) return candidate;
@@ -17,16 +17,18 @@ pub fn findProjectRoot(
     }
 }
 
-fn startDir(io: std.Io, arena: std.mem.Allocator, anchor: []const u8) ![]const u8 {
-    const absolute = try absolutize(io, arena, anchor);
+fn startDir(io: std.Io, arena: std.mem.Allocator, start_path: []const u8) ![]const u8 {
+    const absolute = try absolutize(io, arena, start_path);
     if (try isDirectory(io, absolute)) return absolute;
+
     return std.fs.path.dirname(absolute) orelse absolute;
 }
 
-fn absolutize(io: std.Io, arena: std.mem.Allocator, anchor: []const u8) ![]const u8 {
-    if (std.fs.path.isAbsolute(anchor)) return std.fs.path.resolve(arena, &.{anchor});
+fn absolutize(io: std.Io, arena: std.mem.Allocator, start_path: []const u8) ![]const u8 {
+    if (std.fs.path.isAbsolute(start_path)) return std.fs.path.resolve(arena, &.{start_path});
     const cwd = try std.process.currentPathAlloc(io, arena);
-    return std.fs.path.resolve(arena, &.{ cwd, anchor });
+
+    return std.fs.path.resolve(arena, &.{ cwd, start_path });
 }
 
 pub fn isDirectory(io: std.Io, path: []const u8) !bool {
@@ -35,5 +37,6 @@ pub fn isDirectory(io: std.Io, path: []const u8) !bool {
         else => return err,
     };
     dir.close(io);
+
     return true;
 }

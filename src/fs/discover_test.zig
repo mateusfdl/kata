@@ -55,7 +55,7 @@ test "discover: finds root from a file nested below .kata" {
     try std.testing.expectEqualStrings(try s.absolute(io, "proj"), found.?);
 }
 
-test "discover: anchor directory containing .kata is its own root" {
+test "discover: starting directory containing .kata is its own root" {
     const io = std.testing.io;
     var s = try Setup.init(io);
     defer s.deinit();
@@ -79,7 +79,7 @@ test "discover: nearest .kata wins over an outer project" {
     try std.testing.expectEqualStrings(try s.absolute(io, "outer/inner"), found.?);
 }
 
-test "discover: nonexistent anchor resolves from its parent directory" {
+test "discover: nonexistent start path resolves from its parent directory" {
     const io = std.testing.io;
     var s = try Setup.init(io);
     defer s.deinit();
@@ -91,7 +91,7 @@ test "discover: nonexistent anchor resolves from its parent directory" {
     try std.testing.expectEqualStrings(try s.absolute(io, "proj"), found.?);
 }
 
-test "discover: anchor inside the .kata directory itself finds the root" {
+test "discover: start path inside the .kata directory itself finds the root" {
     const io = std.testing.io;
     var s = try Setup.init(io);
     defer s.deinit();

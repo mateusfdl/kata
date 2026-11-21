@@ -37,7 +37,7 @@ pub const ChildIterator = struct {
     }
 };
 
-/// A handle over a single node in kata's flat `Ast`. Every consumer (matcher,
+/// a handle over a single node in kata's flat `ast`. every consumer (matcher,
 /// metrics, facts) talks to this surface rather than the store directly, so the
 /// node representation can change without touching them.
 pub const Node = struct {

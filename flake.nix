@@ -59,7 +59,7 @@
           rulesYaml =
             renderRules cfg.settings.rules
             + renderProjectRules cfg.settings.projectRules
-            + lib.optionalString cfg.settings.ratchet "ratchet: true\n"
+            + lib.optionalString cfg.settings.warnOnExistingErrors "warn-on-existing-errors: true\n"
             + lib.optionalString (
               cfg.settings.maxMatchesPerFile != null
             ) "max-matches-per-file: ${toString cfg.settings.maxMatchesPerFile}\n"
@@ -168,10 +168,10 @@
                 description = "Project rules keyed by rule id.";
               };
 
-              ratchet = lib.mkOption {
+              warnOnExistingErrors = lib.mkOption {
                 type = lib.types.bool;
                 default = false;
-                description = "Block only violation growth per file in daemon mode.";
+                description = "Report errors that match the file on disk as warnings when linting stdin.";
               };
 
               maxMatchesPerFile = lib.mkOption {
@@ -183,7 +183,7 @@
               daemonAutostart = lib.mkOption {
                 type = lib.types.bool;
                 default = false;
-                description = "Start the daemon in the background when a one-shot check finds no live socket.";
+                description = "Start the daemon in the background when linting stdin finds no live socket.";
               };
 
               cache = lib.mkOption {

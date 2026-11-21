@@ -36,26 +36,26 @@ test "config: retired list keys are unknown" {
     try expectParseErr("warnings:\n  - ts/no-console\n", error.UnknownTopLevelKey, 1);
 }
 
-test "config: ratchet defaults to false" {
+test "config: warn-on-existing-errors defaults to false" {
     var cfg = try expectParseOk("");
     defer cfg.deinit();
-    try std.testing.expectEqual(false, cfg.ratchet);
+    try std.testing.expectEqual(false, cfg.warn_on_existing_errors);
 }
 
-test "config: parses ratchet true" {
-    var cfg = try expectParseOk("ratchet: true\n");
+test "config: parses warn-on-existing-errors true" {
+    var cfg = try expectParseOk("warn-on-existing-errors: true\n");
     defer cfg.deinit();
-    try std.testing.expectEqual(true, cfg.ratchet);
+    try std.testing.expectEqual(true, cfg.warn_on_existing_errors);
 }
 
-test "config: parses ratchet false" {
-    var cfg = try expectParseOk("ratchet: false\n");
+test "config: parses warn-on-existing-errors false" {
+    var cfg = try expectParseOk("warn-on-existing-errors: false\n");
     defer cfg.deinit();
-    try std.testing.expectEqual(false, cfg.ratchet);
+    try std.testing.expectEqual(false, cfg.warn_on_existing_errors);
 }
 
-test "config: ratchet rejects non-boolean values" {
-    try expectParseErr("ratchet: yes\n", error.InvalidRatchetValue, 1);
+test "config: warn-on-existing-errors rejects non-boolean values" {
+    try expectParseErr("warn-on-existing-errors: yes\n", error.InvalidWarnOnExistingErrorsValue, 1);
 }
 
 test "config: CRLF line endings are tolerated" {
@@ -77,7 +77,7 @@ test "config: malformed exclude item is rejected" {
 }
 
 test "config: bad indent is rejected" {
-    try expectParseErr("ratchet: true\n   - ts/no-console\n", error.BadIndent, 2);
+    try expectParseErr("warn-on-existing-errors: true\n   - ts/no-console\n", error.BadIndent, 2);
 }
 
 test "config: list item without preceding key is rejected" {
@@ -89,7 +89,7 @@ test "config: content after key without colon is rejected" {
 }
 
 test "config: misspelled scalar key reports an unknown key" {
-    try expectParseErr("rachet: true\n", error.UnknownTopLevelKey, 1);
+    try expectParseErr("warn-on-existing-error: true\n", error.UnknownTopLevelKey, 1);
 }
 
 test "config: inline content after a known key is rejected" {
@@ -174,7 +174,7 @@ test "selection: config without rules key removes every rule" {
     defer fx.deinit();
     try fx.build();
 
-    var cfg = try expectParseOk("ratchet: true\n");
+    var cfg = try expectParseOk("warn-on-existing-errors: true\n");
     defer cfg.deinit();
     try select(&fx, try config.resolve(fx.arena(), &cfg, null));
 
@@ -327,7 +327,7 @@ test "errorMessage: returns descriptive text for known errors" {
         config.errorMessage(error.TabInIndent),
     );
     try std.testing.expectEqualStrings(
-        "unknown top-level key (expected 'rules', 'project-rules', 'ratchet', 'max-matches-per-file', 'daemon-autostart', or 'cache')",
+        "unknown top-level key (expected 'rules', 'project-rules', 'warn-on-existing-errors', 'max-matches-per-file', 'daemon-autostart', or 'cache')",
         config.errorMessage(error.UnknownTopLevelKey),
     );
     try std.testing.expectEqualStrings(
@@ -408,7 +408,7 @@ test "config: project rule property without a rule is rejected" {
 }
 
 test "config: four-space indent outside project rules is rejected" {
-    try expectParseErr("ratchet: true\n    - ts/no-console\n", error.BadIndent, 2);
+    try expectParseErr("warn-on-existing-errors: true\n    - ts/no-console\n", error.BadIndent, 2);
 }
 
 test "config: project rule entry without colon is rejected" {
@@ -416,24 +416,24 @@ test "config: project rule entry without colon is rejected" {
 }
 
 test "config: top-level keys record presence" {
-    var cfg = try expectParseOk("project-rules:\nratchet: false\n");
+    var cfg = try expectParseOk("project-rules:\nwarn-on-existing-errors: false\n");
     defer cfg.deinit();
     try std.testing.expectEqual(true, cfg.present.project_rules);
-    try std.testing.expectEqual(true, cfg.present.ratchet);
+    try std.testing.expectEqual(true, cfg.present.warn_on_existing_errors);
 }
 
 test "config: empty source records no presence" {
     var cfg = try expectParseOk("");
     defer cfg.deinit();
     try std.testing.expectEqual(false, cfg.present.project_rules);
-    try std.testing.expectEqual(false, cfg.present.ratchet);
+    try std.testing.expectEqual(false, cfg.present.warn_on_existing_errors);
 }
 
 test "resolve: no configs yields defaults" {
     const r = try config.resolve(std.testing.allocator, null, null);
     try std.testing.expectEqual(@as(usize, 0), r.settings.len);
     try std.testing.expectEqual(@as(usize, 0), r.project_rules.len);
-    try std.testing.expectEqual(false, r.ratchet);
+    try std.testing.expectEqual(false, r.warn_on_existing_errors);
 }
 
 test "resolve: global only passes through every key" {
@@ -441,7 +441,7 @@ test "resolve: global only passes through every key" {
         \\rules:
         \\  go:
         \\    no-panic:
-        \\ratchet: true
+        \\warn-on-existing-errors: true
         \\
     ;
     var g = try expectParseOk(src);
@@ -450,7 +450,7 @@ test "resolve: global only passes through every key" {
     const r = try config.resolve(g.arena.allocator(), &g, null);
     try std.testing.expectEqual(@as(usize, 1), r.settings.len);
     try std.testing.expectEqualStrings("no-panic", r.settings[0].id);
-    try std.testing.expectEqual(true, r.ratchet);
+    try std.testing.expectEqual(true, r.warn_on_existing_errors);
 }
 
 test "resolve: project empty rules key inherits global settings" {
@@ -475,23 +475,23 @@ test "resolve: omitted project keys fall through to global" {
     ;
     var g = try expectParseOk(global_src);
     defer g.deinit();
-    var p = try expectParseOk("ratchet: true\n");
+    var p = try expectParseOk("warn-on-existing-errors: true\n");
     defer p.deinit();
 
     const r = try config.resolve(g.arena.allocator(), &g, &p);
     try std.testing.expectEqual(@as(usize, 1), r.project_rules.len);
     try std.testing.expectEqualStrings("repository-isolation", r.project_rules[0].id);
-    try std.testing.expectEqual(true, r.ratchet);
+    try std.testing.expectEqual(true, r.warn_on_existing_errors);
 }
 
-test "resolve: explicit project ratchet false overrides global true" {
-    var g = try expectParseOk("ratchet: true\n");
+test "resolve: explicit project warn-on-existing-errors false overrides global true" {
+    var g = try expectParseOk("warn-on-existing-errors: true\n");
     defer g.deinit();
-    var p = try expectParseOk("ratchet: false\n");
+    var p = try expectParseOk("warn-on-existing-errors: false\n");
     defer p.deinit();
 
     const r = try config.resolve(g.arena.allocator(), &g, &p);
-    try std.testing.expectEqual(false, r.ratchet);
+    try std.testing.expectEqual(false, r.warn_on_existing_errors);
 }
 
 test "resolve: project rules replace global project rules" {
@@ -605,13 +605,13 @@ test "resolve: project adds a new rule to the global settings" {
 test "resolve: project without rules key inherits global settings" {
     var g = try expectParseOk("rules:\n  go:\n    no-panic:\n");
     defer g.deinit();
-    var p = try expectParseOk("ratchet: true\n");
+    var p = try expectParseOk("warn-on-existing-errors: true\n");
     defer p.deinit();
 
     const r = try config.resolve(g.arena.allocator(), &g, &p);
     try std.testing.expectEqual(@as(usize, 1), r.settings.len);
     try std.testing.expectEqualStrings("no-panic", r.settings[0].id);
-    try std.testing.expectEqual(true, r.ratchet);
+    try std.testing.expectEqual(true, r.warn_on_existing_errors);
 }
 
 test "resolve: narrow ts entry overrides only the ts half of a global typescript entry" {
@@ -756,7 +756,7 @@ test "rules: multiple scopes with comments and blank lines" {
         \\
         \\  ts:
         \\    no-void:
-        \\ratchet: true
+        \\warn-on-existing-errors: true
         \\
     ;
     var cfg = try expectParseOk(src);
@@ -768,7 +768,7 @@ test "rules: multiple scopes with comments and blank lines" {
     try std.testing.expectEqual(false, cfg.settings[1].enabled);
     try std.testing.expectEqual(@as(?language.Name, .ts), cfg.settings[2].lang);
     try std.testing.expectEqualStrings("no-void", cfg.settings[2].id);
-    try std.testing.expectEqual(true, cfg.ratchet);
+    try std.testing.expectEqual(true, cfg.warn_on_existing_errors);
 }
 
 test "rules: unknown scope is rejected" {

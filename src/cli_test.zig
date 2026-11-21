@@ -15,10 +15,11 @@ const usage_test = "usage: kata test <rules-dir>\n";
 const usage_query = "usage: kata query '<kata rule>' [path] --lang <ts|tsx|go|zig> [--json|--text|--sarif]\n";
 const usage_stop = "usage: kata stop\n";
 const usage_new_rule = "usage: kata new-rule <ts|tsx|go|zig> <rule-id>\n";
-const usage_one_shot = "usage: kata [--lang <ts|tsx|go|zig>] [--filename <path>] < source\n";
+const usage_lint_stdin = "usage: kata --lang <ts|tsx|go|zig> [--filename <path>] < source\n" ++
+    "usage: kata --filename <path> < source  (infer language from the file extension)\n";
 
-const usage_all = usage_daemon ++ usage_check ++ usage_facts ++ usage_test ++ usage_query ++
-    usage_stop ++ usage_new_rule ++ usage_one_shot ++ "usage: kata --version\nusage: kata --help\n";
+const usage_all = "usage: kata  (same as kata daemon)\n" ++ usage_daemon ++ usage_check ++ usage_facts ++ usage_test ++ usage_query ++
+    usage_stop ++ usage_new_rule ++ usage_lint_stdin ++ "usage: kata --version\nusage: kata --help\n";
 
 test "dispatch: help prints usage on stdout before validation or execution" {
     const Case = struct { argv: []const [:0]const u8, usage: []const u8 };
@@ -27,7 +28,7 @@ test "dispatch: help prints usage on stdout before validation or execution" {
         .{ .argv = &.{ "check", "--help" }, .usage = usage_check },
         .{ .argv = &.{ "query", "--help" }, .usage = usage_query },
         .{ .argv = &.{ "daemon", "--root", "missing", "--help" }, .usage = usage_daemon },
-        .{ .argv = &.{ "--lang=go", "--help" }, .usage = usage_one_shot },
+        .{ .argv = &.{ "--lang=go", "--help" }, .usage = usage_lint_stdin },
     }) |case| {
         var t: TestEnv = .init("");
         defer t.deinit();
@@ -64,7 +65,7 @@ test "dispatch: only a leading --version takes precedence over the other argumen
     try std.testing.expectEqualStrings("", t.err.written());
 
     try expectUsageError("kata check: unexpected argument \"--version\"\n" ++ usage_check, &.{ "check", "--version" });
-    try expectUsageError("kata: unexpected argument \"--version\"\n" ++ usage_one_shot, &.{ "--lang=go", "--version" });
+    try expectUsageError("kata: unexpected argument \"--version\"\n" ++ usage_lint_stdin, &.{ "--lang=go", "--version" });
 }
 
 test "dispatch: an unknown subcommand lists the usage of every command" {
@@ -105,9 +106,9 @@ test "dispatch: a missing required argument shows the usage" {
     try expectUsageError(usage_new_rule, &.{ "new-rule", "ts" });
 }
 
-test "dispatch: a leading flag selects the one-shot command" {
-    try expectUsageError("kata: unexpected argument \"--bogus\"\n" ++ usage_one_shot, &.{ "--lang=ts", "--bogus" });
-    try expectUsageError("kata: unexpected argument \"a.ts\"\n" ++ usage_one_shot, &.{ "--lang=ts", "a.ts" });
+test "dispatch: a leading flag selects stdin linting" {
+    try expectUsageError("kata: unexpected argument \"--bogus\"\n" ++ usage_lint_stdin, &.{ "--lang=ts", "--bogus" });
+    try expectUsageError("kata: unexpected argument \"a.ts\"\n" ++ usage_lint_stdin, &.{ "--lang=ts", "a.ts" });
     try expectUsageError("cannot infer language from extension \".rs\"\n", &.{"--filename=main.rs"});
 }
 

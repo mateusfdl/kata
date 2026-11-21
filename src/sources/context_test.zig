@@ -27,7 +27,7 @@ const kata_project_only =
     \\}
 ;
 
-test "context: no anchor resolves the global context" {
+test "context: no start path resolves the global context" {
     const io = std.testing.io;
     var s = try test_fixture.TmpProject.init();
     defer s.deinit();
@@ -44,7 +44,7 @@ test "context: no anchor resolves the global context" {
 
     try std.testing.expectEqual(@as(?[]const u8, null), ctx.root);
     try std.testing.expectEqualStrings(test_fixture.kata_ident, test_fixture.ruleSource(&ctx.rule_set, .ts, "my-user-rule").?);
-    try std.testing.expectEqual(false, ctx.resolved.ratchet);
+    try std.testing.expectEqual(false, ctx.resolved.warn_on_existing_errors);
 }
 
 test "context: anchored file loads project rules on top of user rules" {
@@ -83,7 +83,7 @@ test "context: project rules.yaml overrides the matching global rule" {
     try s.tmp.dir.writeFile(io, .{ .sub_path = "user/ts/drop-me.kata", .data = test_fixture.kata_ident });
     try s.tmp.dir.createDirPath(io, "proj/.kata");
     try s.tmp.dir.createDirPath(io, "proj/src");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\nrules:\n  ts:\n    drop-me:\n      enabled: false\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "warn-on-existing-errors: true\nrules:\n  ts:\n    drop-me:\n      enabled: false\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
     var global = try test_fixture.parseGlobal("rules:\n  ts:\n    drop-me:\n");
@@ -93,7 +93,7 @@ test "context: project rules.yaml overrides the matching global rule" {
     const ctx = try r.resolve(try s.path("proj/src/main.ts"));
     defer ctx.deinit();
 
-    try std.testing.expectEqual(true, ctx.resolved.ratchet);
+    try std.testing.expectEqual(true, ctx.resolved.warn_on_existing_errors);
     try std.testing.expectEqual(@as(?[]const u8, null), test_fixture.ruleSource(&ctx.rule_set, .ts, "drop-me"));
 }
 
@@ -144,7 +144,7 @@ test "context: project without rules dir or rules.yaml keeps global behavior" {
     try s.tmp.dir.createDirPath(io, "proj/src");
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/src/main.ts", .data = "const x = 1;\n" });
 
-    var global = try test_fixture.parseGlobal("ratchet: true\n");
+    var global = try test_fixture.parseGlobal("warn-on-existing-errors: true\n");
     defer global.deinit();
 
     var r = test_fixture.resolver(null, &global);
@@ -152,14 +152,14 @@ test "context: project without rules dir or rules.yaml keeps global behavior" {
     defer ctx.deinit();
 
     try std.testing.expect(ctx.root != null);
-    try std.testing.expectEqual(true, ctx.resolved.ratchet);
+    try std.testing.expectEqual(true, ctx.resolved.warn_on_existing_errors);
 }
 
-test "context: anchor outside any project falls back to global config" {
+test "context: start path outside any project falls back to global config" {
     var s = try test_fixture.TmpProject.init();
     defer s.deinit();
 
-    var global = try test_fixture.parseGlobal("ratchet: true\n");
+    var global = try test_fixture.parseGlobal("warn-on-existing-errors: true\n");
     defer global.deinit();
 
     var r = test_fixture.resolver(null, &global);
@@ -167,7 +167,7 @@ test "context: anchor outside any project falls back to global config" {
     defer ctx.deinit();
 
     try std.testing.expectEqual(@as(?[]const u8, null), ctx.root);
-    try std.testing.expectEqual(true, ctx.resolved.ratchet);
+    try std.testing.expectEqual(true, ctx.resolved.warn_on_existing_errors);
 }
 
 test "context: malformed project rules.yaml surfaces the parse error" {

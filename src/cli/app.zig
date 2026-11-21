@@ -4,9 +4,9 @@ const cli = @import("cli");
 const check = @import("check.zig");
 const daemon = @import("daemon.zig");
 const facts = @import("facts.zig");
-const harness = @import("harness.zig");
+const test_rules = @import("test_rules.zig");
+const lint_stdin = @import("lint_stdin.zig");
 const new_rule = @import("new_rule.zig");
-const one_shot = @import("one_shot.zig");
 const query = @import("query.zig");
 const stop = @import("stop.zig");
 
@@ -20,13 +20,13 @@ const app = cli.app(Exit, .{
         daemon.command,
         check.command,
         facts.command,
-        harness.command,
+        test_rules.command,
         query.command,
         stop.command,
         new_rule.command,
     },
     .default = daemon.command,
-    .root = one_shot.command,
+    .root = lint_stdin.command,
     .leading_flags = .{
         .{ .name = "version", .run = printVersion },
     },

@@ -50,9 +50,11 @@ pub fn Keys(comptime Key: type, comptime Context: type) type {
             keys: []const ?Key,
             excluded: ?[]const bool,
         ) !Groups {
-            if (excluded) |items| std.debug.assert(items.len == keys.len);
+            if (excluded) |items| {
+                std.debug.assert(items.len == keys.len);
+            }
 
-            // Group values are original slice indexes. Exclusion filters matches
+            // group values are original slice indexes. exclusion filters matches
             // from stronger stages without renumbering the remaining items.
             var entries: std.ArrayList(Groups.Entry) = .empty;
             for (keys, 0..) |optional_key, index| {

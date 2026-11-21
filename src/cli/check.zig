@@ -64,7 +64,7 @@ fn openBaseline(env: Env, ctx: *const sources.context.Context, target: []const u
     };
 }
 
-/// Null when the configuration disables the cache or the environment names
+/// null when the configuration disables the cache or the environment names
 /// no cache directory.
 fn cacheHandle(env: Env, ctx: *const sources.context.Context) !?fs.result_cache.Handle {
     if (!ctx.resolved.cache) return null;

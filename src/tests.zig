@@ -23,13 +23,13 @@ comptime {
     _ = @import("cli/query_test.zig");
     _ = @import("cli_test.zig");
     _ = @import("cli/annotations_test.zig");
-    _ = @import("cli/render_budget_test.zig");
+    _ = @import("cli/per_rule_output_limit_test.zig");
     _ = @import("cli/daemon_test.zig");
-    _ = @import("cli/one_shot_test.zig");
+    _ = @import("cli/lint_stdin_test.zig");
     _ = @import("server/client_test.zig");
     _ = @import("server/context_cache_test.zig");
     _ = @import("server/protocol_test.zig");
-    _ = @import("server/replay_test.zig");
+    _ = @import("server/file_diagnostics_cache_test.zig");
     _ = @import("server/daemon_test.zig");
     _ = @import("sources/config_test.zig");
     _ = @import("sources/context_test.zig");
@@ -43,5 +43,5 @@ comptime {
     _ = @import("fs/result_cache_test.zig");
     _ = @import("fs/rules_test.zig");
     _ = @import("cli/new_rule_test.zig");
-    _ = @import("cli/harness_test.zig");
+    _ = @import("cli/test_rules_test.zig");
 }

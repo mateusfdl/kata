@@ -25,7 +25,7 @@ pub const OpenSpanStack = struct {
     }
 
     pub fn prepare(self: *Self, current: Interval) void {
-        // Input must be sorted by start. In properly nested syntax ranges, any
+        // input must be sorted by start. in properly nested syntax ranges, any
         // open range that does not contain current has ended and cannot contain
         // a later range either.
         if (self.previous_start) |start| std.debug.assert(start <= current.start);

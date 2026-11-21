@@ -224,34 +224,34 @@ pub fn build(b: *std.Build) void {
     // This benchmark compares data structures rather than the caller's selected
     // build mode. Pin its complete module graph to ReleaseFast so Debug safety
     // checks cannot dominate either implementation.
-    const replay_shared_module = b.createModule(.{
+    const cache_shared_module = b.createModule(.{
         .root_source_file = b.path("src/shared.zig"),
         .target = target,
         .optimize = .ReleaseFast,
     });
-    const replay_engine_module = b.createModule(.{
+    const cache_engine_module = b.createModule(.{
         .root_source_file = b.path("src/engine/engine.zig"),
         .target = target,
         .optimize = .ReleaseFast,
         .link_libc = true,
     });
-    wireEngineModule(replay_engine_module, replay_shared_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
+    wireEngineModule(cache_engine_module, cache_shared_module, path_module, tree_sitter_module, mvzr_module, node_kinds_module, grammar_libs);
 
-    const replay_bench_module = b.createModule(.{
-        .root_source_file = b.path("src/server/replay_bench.zig"),
+    const cache_bench_module = b.createModule(.{
+        .root_source_file = b.path("src/server/file_diagnostics_cache_bench.zig"),
         .target = target,
         .optimize = .ReleaseFast,
         .link_libc = true,
     });
-    replay_bench_module.addImport("engine", replay_engine_module);
-    replay_bench_module.addImport("shared", replay_shared_module);
-    const replay_bench_exe = b.addExecutable(.{
+    cache_bench_module.addImport("engine", cache_engine_module);
+    cache_bench_module.addImport("shared", cache_shared_module);
+    const cache_bench_exe = b.addExecutable(.{
         .name = "replay-bench",
-        .root_module = replay_bench_module,
+        .root_module = cache_bench_module,
     });
-    const run_replay_bench = b.addRunArtifact(replay_bench_exe);
-    const replay_bench_step = b.step("replay-bench", "Run replay cache benchmarks");
-    replay_bench_step.dependOn(&run_replay_bench.step);
+    const run_cache_bench = b.addRunArtifact(cache_bench_exe);
+    const cache_bench_step = b.step("replay-bench", "Run file diagnostics cache benchmarks");
+    cache_bench_step.dependOn(&run_cache_bench.step);
 }
 
 fn wireEngineModule(

@@ -60,8 +60,8 @@ pub const Resolver = struct {
     global_config: ?*const config.Config = null,
     diag: config.Diagnostic = .{},
 
-    pub fn resolve(self: *Resolver, anchor: ?[]const u8) !*Context {
-        return self.create(.{ .anchor = anchor });
+    pub fn resolve(self: *Resolver, start_path: ?[]const u8) !*Context {
+        return self.create(.{ .start_path = start_path });
     }
 
     pub fn resolveAtRoot(self: *Resolver, root: []const u8) !*Context {
@@ -69,7 +69,7 @@ pub const Resolver = struct {
     }
 
     const Target = union(enum) {
-        anchor: ?[]const u8,
+        start_path: ?[]const u8,
         root: []const u8,
     };
 
@@ -83,17 +83,17 @@ pub const Resolver = struct {
 
         const arena = arena_ptr.allocator();
         const root = switch (target) {
-            .anchor => |a| try self.discoverRoot(arena, a),
+            .start_path => |path| try self.discoverRoot(arena, path),
             .root => |r| try arena.dupe(u8, r),
         };
 
         return self.build(ctx, arena_ptr, root);
     }
 
-    fn discoverRoot(self: *Resolver, arena: std.mem.Allocator, anchor: ?[]const u8) !?[]const u8 {
-        const a = anchor orelse return null;
+    fn discoverRoot(self: *Resolver, arena: std.mem.Allocator, start_path: ?[]const u8) !?[]const u8 {
+        const path = start_path orelse return null;
 
-        return try fs.discover.findProjectRoot(self.io, arena, a);
+        return try fs.discover.findProjectRoot(self.io, arena, path);
     }
 
     fn build(self: *Resolver, ctx: *Context, arena_ptr: *std.heap.ArenaAllocator, root: ?[]const u8) !*Context {

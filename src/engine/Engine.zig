@@ -19,7 +19,7 @@ const query = @import("query.zig");
 const root_kind_set = @import("root_kind_set.zig");
 const rule = @import("rule.zig");
 const rule_compiler = @import("rule_compiler.zig");
-const ScratchMemory = @import("shared").scratch_memory.ScratchMemory;
+const ReusableArena = @import("shared").reusable_arena.ReusableArena;
 const TableMemory = @import("shared").table_memory.TableMemory;
 const Node = @import("node.zig").Node;
 
@@ -129,22 +129,25 @@ pub const Engine = struct {
 
         const fact_arena = try OwnedArena.create(self.allocator);
         errdefer fact_arena.deinit();
-        var scratch = ScratchMemory.init(self.allocator);
-        defer scratch.deinit();
+        var parse_arena = ReusableArena.init(self.allocator);
+        defer parse_arena.deinit();
 
         const compiled = try self.compiler.compileFacts(
             fact_arena.allocator(),
-            scratch.allocator(),
+            parse_arena.allocator(),
             raws,
             &self.compile_diag,
         );
-        const parse_generation = scratch.generation();
-        scratch.reset();
-        std.debug.assert(scratch.generation() == parse_generation + 1);
+
+        const parse_generation = parse_arena.generation();
+        parse_arena.reset();
+
+        std.debug.assert(parse_arena.generation() == parse_generation + 1);
         std.debug.assert(self.fact_arena == null);
         std.debug.assert(self.compiled_fact == null);
 
         fact_arena.makeStatic();
+
         self.fact_arena = fact_arena;
         self.compiled_fact = compiled;
 
@@ -194,6 +197,7 @@ pub const Engine = struct {
 
         var table_memory = TableMemory.init(compiled.arena.allocator(), self.allocator);
         defer table_memory.deinit();
+
         const table = dispatch.Table.buildWithMemory(
             &table_memory,
             compiled.patterns,
@@ -221,7 +225,8 @@ pub const Engine = struct {
             },
         };
         compiled.dispatch = table;
-        // Patterns and dispatch borrow the compiled arena. Freeze it only after
+
+        // patterns and dispatch borrow the compiled arena. freeze it only after
         // both are complete, then destroy them as one immutable unit.
         compiled.arena.makeStatic();
         slot.* = .{ .compiled = compiled };
@@ -230,15 +235,16 @@ pub const Engine = struct {
     }
 
     fn underivableRuleId(allocator: std.mem.Allocator, patterns: []const rule.CompiledPattern) []const u8 {
-        var scratch = ScratchMemory.init(allocator);
-        defer scratch.deinit();
+        var pattern_arena = ReusableArena.init(allocator);
+        defer pattern_arena.deinit();
 
         for (patterns) |cp| {
-            const generation = scratch.generation();
-            scratch.reset();
-            std.debug.assert(scratch.generation() == generation + 1);
-            _ = root_kind_set.derive(scratch.allocator(), &cp.pattern) catch return cp.meta.rule_id;
+            const generation = pattern_arena.generation();
+            pattern_arena.reset();
+            std.debug.assert(pattern_arena.generation() == generation + 1);
+            _ = root_kind_set.derive(pattern_arena.allocator(), &cp.pattern) catch return cp.meta.rule_id;
         }
+
         return "";
     }
 
@@ -256,9 +262,12 @@ pub const Engine = struct {
         if (slot.*) |cached| return cached;
 
         const adapter = family_mod.of(fam);
+
         var memory = TableMemory.init(self.fact_index_arena.allocator(), self.allocator);
         defer memory.deinit();
+
         slot.* = try dispatch.PatternIndex.buildWithMemory(&memory, adapter.fact_patterns, adapter.kind_count);
+
         return slot.*.?;
     }
 
@@ -286,6 +295,7 @@ pub const Engine = struct {
         path: []const u8,
     ) !facts.FileFacts {
         const index = try self.ensureFactIndex(parsed.lang.family());
+
         return facts.extract(gpa, index, Node.fromKata(&parsed.ast, parsed.ast.root()), parsed.source, path, parsed.lang);
     }
 
@@ -495,10 +505,10 @@ pub fn runRule(
         }
     }
 
-    var run_memory = ScratchMemory.init(allocator);
-    defer run_memory.deinit();
+    var run_arena = ReusableArena.init(allocator);
+    defer run_arena.deinit();
 
-    const runs = try run_memory.allocator().alloc(?PatternRun, r.patterns.len);
+    const runs = try run_arena.allocator().alloc(?PatternRun, r.patterns.len);
     for (r.patterns, runs) |cp, *run| {
         run.* = patternRun(cp, lang, settings, path);
     }
@@ -511,10 +521,10 @@ pub fn runRule(
     for (r.patterns) |cp| max_capture_count = @max(max_capture_count, cp.capture_count);
     try workspace.ensureCapacity(max_capture_count);
 
-    var eval_scratch = ScratchMemory.init(allocator);
-    defer eval_scratch.deinit();
+    var eval_arena = ReusableArena.init(allocator);
+    defer eval_arena.deinit();
 
-    try dispatchTree(allocator, r, runs, run_ctx, lang_str, &workspace, &eval_scratch, out, ctx.root);
+    try dispatchTree(allocator, r, runs, run_ctx, lang_str, &workspace, &eval_arena, out, ctx.root);
 }
 
 fn patternRun(
@@ -541,7 +551,7 @@ fn dispatchTree(
     ctx: matcher.EvalContext,
     lang_str: []const u8,
     workspace: *MatchWorkspace,
-    eval_scratch: *ScratchMemory,
+    eval_arena: *ReusableArena,
     out: *std.ArrayList(diagnostic.Diagnostic),
     n: Node,
 ) !void {
@@ -558,7 +568,7 @@ fn dispatchTree(
                 .run = run,
                 .ctx = ctx,
                 .lang_str = lang_str,
-                .eval_scratch = eval_scratch,
+                .eval_arena = eval_arena,
                 .out = out,
             };
             try query.streamAtWithWorkspace(workspace, &cp.pattern, cp.capture_count, ctx.source, candidate, &sink);
@@ -572,17 +582,17 @@ const RuleSink = struct {
     run: PatternRun,
     ctx: matcher.EvalContext,
     lang_str: []const u8,
-    eval_scratch: *ScratchMemory,
+    eval_arena: *ReusableArena,
     out: *std.ArrayList(diagnostic.Diagnostic),
 
     pub fn emit(self: *RuleSink, bindings: []const ?Node) std.mem.Allocator.Error!query.ScanControl {
         // Predicate temporaries die after each match. Diagnostics and rendered
-        // text use allocator and therefore survive the scratch reset.
-        const generation = self.eval_scratch.generation();
-        self.eval_scratch.reset();
-        std.debug.assert(self.eval_scratch.generation() == generation + 1);
+        // text use allocator and therefore survive the evaluation arena reset.
+        const generation = self.eval_arena.generation();
+        self.eval_arena.reset();
+        std.debug.assert(self.eval_arena.generation() == generation + 1);
         var eval_ctx = self.ctx;
-        eval_ctx.allocator = self.eval_scratch.allocator();
+        eval_ctx.allocator = self.eval_arena.allocator();
         if (eval_ctx.metric) |*metric_ctx| {
             metric_ctx.allocator = eval_ctx.allocator;
         }

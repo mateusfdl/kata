@@ -18,6 +18,16 @@ pub fn command(comptime Options: type, comptime spec: anytype) type {
         pub const run = spec.run;
         pub const parse = grammar.parse;
         pub const Result = grammar.Result;
+        pub fn usage(comptime program: []const u8) []const u8 {
+            const prefix = "usage: " ++ program;
+            if (!@hasField(@TypeOf(spec), "usage_forms")) return prefix ++ synopsis ++ "\n";
+
+            const invocation = if (name.len == 0) prefix else prefix ++ " " ++ name;
+            comptime var text: []const u8 = "";
+            inline for (spec.usage_forms) |form| text = text ++ invocation ++ " " ++ form ++ "\n";
+            return text;
+        }
+
         pub const synopsis = blk: {
             var text: []const u8 = if (name.len > 0) " " ++ name else "";
 
@@ -30,14 +40,12 @@ pub fn command(comptime Options: type, comptime spec: anytype) type {
             while (i < flags.len) : (i += 1) {
                 const flag = flags[i];
                 const required = std.meta.fieldInfo(Options, flag.field).default_value_ptr == null;
-                var label: []const u8 = "--" ++ flag.name;
+                var label: []const u8 = flagLabel(flag);
                 if (@hasField(@TypeOf(flag), "value")) {
                     while (i + 1 < flags.len and flags[i + 1].field == flag.field and @hasField(@TypeOf(flags[i + 1]), "value")) {
                         i += 1;
                         label = label ++ "|--" ++ flags[i].name;
                     }
-                } else {
-                    label = label ++ " " ++ flag.label;
                 }
 
                 text = text ++ " " ++ argumentLabel(label, required);
@@ -47,6 +55,11 @@ pub fn command(comptime Options: type, comptime spec: anytype) type {
             break :blk text;
         };
     };
+}
+
+pub fn flagLabel(comptime flag: anytype) []const u8 {
+    const name = "--" ++ flag.name;
+    return if (@hasField(@TypeOf(flag), "value")) name else name ++ " " ++ flag.label;
 }
 
 fn argumentLabel(comptime label: []const u8, comptime required: bool) []const u8 {

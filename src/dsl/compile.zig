@@ -14,7 +14,7 @@ const language = @import("engine").language;
 const OwnedArena = @import("shared").owned_arena.OwnedArena;
 const query = @import("engine").query;
 const rule = @import("engine").rule;
-const ScratchMemory = @import("shared").scratch_memory.ScratchMemory;
+const ReusableArena = @import("shared").reusable_arena.ReusableArena;
 
 pub const Error = error{
     OutOfMemory,
@@ -170,9 +170,9 @@ pub fn compileRaws(
     raws: []const rule.RawRule,
     diag: *rule.Diagnostic,
 ) RawError!?rule.CompiledRule {
-    var scratch = ScratchMemory.init(allocator);
-    defer scratch.deinit();
-    const arena = scratch.allocator();
+    var parse_arena = ReusableArena.init(allocator);
+    defer parse_arena.deinit();
+    const arena = parse_arena.allocator();
 
     var rules: std.ArrayList(ast.Rule) = .empty;
     for (raws) |raw| {
@@ -180,16 +180,16 @@ pub fn compileRaws(
     }
 
     if (rules.items.len == 0) {
-        const parse_generation = scratch.generation();
-        scratch.reset();
-        std.debug.assert(scratch.generation() == parse_generation + 1);
+        const parse_generation = parse_arena.generation();
+        parse_arena.reset();
+        std.debug.assert(parse_arena.generation() == parse_generation + 1);
         return null;
     }
 
     const compiled = try compile(allocator, lang, .{ .rules = rules.items }, diag);
-    const parse_generation = scratch.generation();
-    scratch.reset();
-    std.debug.assert(scratch.generation() == parse_generation + 1);
+    const parse_generation = parse_arena.generation();
+    parse_arena.reset();
+    std.debug.assert(parse_arena.generation() == parse_generation + 1);
     return compiled;
 }
 

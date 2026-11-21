@@ -6,7 +6,7 @@ const diagnostic = @import("engine").diagnostic;
 
 const buffer_size: usize = 4096;
 
-/// Remote failure or malformed output leaves the caller free to lint locally.
+/// remote failure or malformed output leaves the caller free to lint locally.
 pub fn lint(io: std.Io, arena: std.mem.Allocator, socket_path: []const u8, input: linting.Input) ?diagnostic.Report {
     const response = request(io, arena, socket_path, protocol.Request.fromInput(input)) orelse return null;
     return response.lintReport() catch null;

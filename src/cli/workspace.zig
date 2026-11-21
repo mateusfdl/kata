@@ -11,13 +11,13 @@ const config = sources.config;
 const context = sources.context;
 
 /// The rules that apply to one invocation: the global config, and the context
-/// of the project that owns `anchor`.
+/// of the project that owns `start_path`.
 pub const Workspace = struct {
     global: ?*config.Config,
     resolver: context.Resolver,
     ctx: *context.Context,
 
-    pub fn open(env: Env, anchor: ?[]const u8) !Workspace {
+    pub fn open(env: Env, start_path: ?[]const u8) !Workspace {
         const global = try loadGlobal(env);
         errdefer if (global) |g| g.deinit();
 
@@ -28,7 +28,7 @@ pub const Workspace = struct {
             .global_config = global,
         };
 
-        const ctx = resolver.resolve(anchor) catch |err| {
+        const ctx = resolver.resolve(start_path) catch |err| {
             // the resolver records a line only when the project rules.yaml does not parse.
             if (resolver.diag.line > 0)
                 return output.failure(env.stderr, "kata: .kata/rules.yaml: line {d}: {s}\n", .{ resolver.diag.line, config.errorMessage(err) });

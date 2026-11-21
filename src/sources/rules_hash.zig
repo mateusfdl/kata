@@ -26,7 +26,7 @@ pub fn compute(rule_set: *const loader.RuleSet, resolved: config.Resolved) [32]u
     for (resolved.settings) |setting| settings(&hasher, setting);
     for (resolved.project_rules) |pr| projectRules(&hasher, pr);
 
-    byte(&hasher, @intFromBool(resolved.ratchet));
+    byte(&hasher, @intFromBool(resolved.warn_on_existing_errors));
     number(&hasher, resolved.max_matches_per_file);
 
     var out: [32]u8 = undefined;

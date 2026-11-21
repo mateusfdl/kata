@@ -14,7 +14,7 @@ const RuleSetting = rule.RuleSetting;
 
 pub const Presence = struct {
     project_rules: bool = false,
-    ratchet: bool = false,
+    warn_on_existing_errors: bool = false,
     max_matches_per_file: bool = false,
     daemon_autostart: bool = false,
     cache: bool = false,
@@ -23,7 +23,7 @@ pub const Presence = struct {
 pub const Config = struct {
     settings: []const RuleSetting,
     project_rules: []const project_rule.ProjectRule,
-    ratchet: bool,
+    warn_on_existing_errors: bool,
     max_matches_per_file: u32,
     daemon_autostart: bool,
     cache: bool,
@@ -40,7 +40,7 @@ pub const Config = struct {
 pub const Resolved = struct {
     settings: []const RuleSetting = &.{},
     project_rules: []const project_rule.ProjectRule = &.{},
-    ratchet: bool = false,
+    warn_on_existing_errors: bool = false,
     max_matches_per_file: u32 = 25,
     daemon_autostart: bool = false,
     cache: bool = false,
@@ -95,7 +95,7 @@ fn applyPresent(out: *Resolved, cfg_opt: ?*const Config) void {
     const cfg = cfg_opt orelse return;
 
     if (cfg.present.project_rules) out.project_rules = cfg.project_rules;
-    if (cfg.present.ratchet) out.ratchet = cfg.ratchet;
+    if (cfg.present.warn_on_existing_errors) out.warn_on_existing_errors = cfg.warn_on_existing_errors;
     if (cfg.present.max_matches_per_file) out.max_matches_per_file = cfg.max_matches_per_file;
     if (cfg.present.daemon_autostart) out.daemon_autostart = cfg.daemon_autostart;
     if (cfg.present.cache) out.cache = cfg.cache;
@@ -116,7 +116,7 @@ pub const ParseError = error{
     UnknownProjectRuleKey,
     WrongKindProjectRuleKey,
     IncompleteImportBoundary,
-    InvalidRatchetValue,
+    InvalidWarnOnExistingErrorsValue,
     InvalidDaemonAutostartValue,
     InvalidCacheValue,
     UnknownScope,
@@ -136,7 +136,7 @@ pub const Diagnostic = struct {
 
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
-        error.UnknownTopLevelKey => "unknown top-level key (expected 'rules', 'project-rules', 'ratchet', 'max-matches-per-file', 'daemon-autostart', or 'cache')",
+        error.UnknownTopLevelKey => "unknown top-level key (expected 'rules', 'project-rules', 'warn-on-existing-errors', 'max-matches-per-file', 'daemon-autostart', or 'cache')",
         error.TabInIndent => "tabs are not allowed in indentation",
         error.BadIndent => "indent must be 0 or 2 spaces",
         error.MalformedListItem => "list item must be '  - <rule-id>'",
@@ -150,7 +150,7 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.UnknownProjectRuleKey => "unknown project rule key (expected 'kind', 'callee-suffix', 'caller-suffix', 'from', or 'deny')",
         error.WrongKindProjectRuleKey => "'callee-suffix' and 'caller-suffix' apply to restricted-callers; 'from' and 'deny' apply to import-boundary",
         error.IncompleteImportBoundary => "import-boundary requires 'from' and 'deny'",
-        error.InvalidRatchetValue => "ratchet must be 'true' or 'false'",
+        error.InvalidWarnOnExistingErrorsValue => "warn-on-existing-errors must be 'true' or 'false'",
         error.InvalidDaemonAutostartValue => "daemon-autostart must be 'true' or 'false'",
         error.InvalidCacheValue => "cache must be 'true' or 'false'",
         error.UnknownScope => "unknown scope (expected 'go', 'ts', 'tsx', 'typescript', or 'project')",
@@ -205,7 +205,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     const defaults: Resolved = .{};
     var settings: std.ArrayList(RuleSetting) = .empty;
     var project_rules: std.ArrayList(project_rule.ProjectRule) = .empty;
-    var ratchet = defaults.ratchet;
+    var warn_on_existing_errors = defaults.warn_on_existing_errors;
     var max_matches_per_file = defaults.max_matches_per_file;
     var daemon_autostart = defaults.daemon_autostart;
     var cache = defaults.cache;
@@ -237,9 +237,9 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
             try finalizePending(arena, &pending, &project_rules, diag);
             try finalizePendingRule(arena, &pending_rule, &settings, diag);
             scope = null;
-            if (std.mem.startsWith(u8, content, "ratchet:")) {
-                ratchet = try parseBoolValue(std.mem.trim(u8, content["ratchet:".len..], " "), error.InvalidRatchetValue);
-                present.ratchet = true;
+            if (std.mem.startsWith(u8, content, "warn-on-existing-errors:")) {
+                warn_on_existing_errors = try parseBoolValue(std.mem.trim(u8, content["warn-on-existing-errors:".len..], " "), error.InvalidWarnOnExistingErrorsValue);
+                present.warn_on_existing_errors = true;
                 state = .top;
                 continue;
             }
@@ -328,7 +328,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8, diag: *Diagnostic) Pars
     return .{
         .settings = try settings.toOwnedSlice(arena),
         .project_rules = try project_rules.toOwnedSlice(arena),
-        .ratchet = ratchet,
+        .warn_on_existing_errors = warn_on_existing_errors,
         .max_matches_per_file = max_matches_per_file,
         .daemon_autostart = daemon_autostart,
         .cache = cache,

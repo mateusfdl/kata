@@ -5,6 +5,8 @@ const DiagnosticAdapter = @import("group_cap.zig").DiagnosticAdapter;
 const rule = @import("rule.zig");
 const group_cap = @import("shared").group_cap;
 
+const collapse_threshold: usize = 3;
+
 const DiagnosticCap = group_cap.Type(
     diagnostic.Diagnostic,
     DiagnosticAdapter.GroupKey,
@@ -24,7 +26,6 @@ pub fn apply(
     }, 3);
 }
 
-const collapse_threshold: usize = 3;
 
 pub fn collapse(
     arena: std.mem.Allocator,
@@ -43,6 +44,7 @@ pub fn collapse(
             merged.message = try std.fmt.allocPrint(arena, "{s}; repeated {d} times on this line", .{
                 diagnostics[start].message, run,
             });
+
             try out.append(arena, merged);
         } else {
             try out.appendSlice(arena, diagnostics[start..end]);

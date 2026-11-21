@@ -65,6 +65,7 @@ pub fn demote(
 ) !usize {
     const current_spans = try fingerprint.normalizedSpans(arena, source, diagnostics);
     const baseline_spans = try fingerprint.normalizedSpans(arena, baseline_source, baseline);
+
     const current_blocks = try blockHashes(arena, source, diagnostics);
     const baseline_blocks = try blockHashes(arena, baseline_source, baseline);
 
@@ -75,12 +76,14 @@ pub fn demote(
 
     const current_fingerprints = try fingerprintKeys(arena, diagnostics, true);
     const baseline_fingerprints = try fingerprintKeys(arena, baseline, false);
+
     const current_span_keys = try spanKeys(arena, diagnostics, current_spans, true);
     const baseline_span_keys = try spanKeys(arena, baseline, baseline_spans, false);
+
     const current_block_keys = try blockKeys(arena, diagnostics, current_blocks, true);
     const baseline_block_keys = try blockKeys(arena, baseline, baseline_blocks, false);
 
-    // Matching mutates only current enforcing errors. Baseline warnings remain
+    // matching mutates only current enforcing errors. baseline warnings remain
     // candidates because they still prove that a finding existed at the ref.
     var state = try baseline_matcher.match(
         arena,
@@ -158,8 +161,8 @@ fn blockHashes(
     source: []const u8,
     diagnostics: []const diagnostic.Diagnostic,
 ) ![]const ?BlockHash {
-    // Reuse normalized-span logic with the outermost diagnostic context range.
-    // Hashes avoid retaining large normalized block slices in matching keys.
+    // reuse normalized-span logic with the outermost diagnostic context range.
+    // hashes avoid retaining large normalized block slices in matching keys.
     const blocks = try arena.alloc(diagnostic.Diagnostic, diagnostics.len);
     for (diagnostics, blocks) |d, *block| {
         block.* = d;

@@ -2,7 +2,7 @@ const std = @import("std");
 
 const diagnostic = @import("diagnostic.zig");
 const line_index = @import("line_index.zig");
-const ScratchMemory = @import("shared").scratch_memory.ScratchMemory;
+const ReusableArena = @import("shared").reusable_arena.ReusableArena;
 
 pub fn normalize(allocator: std.mem.Allocator, span: []const u8) ![]const u8 {
     var normalized: std.ArrayList(u8) = .empty;
@@ -43,9 +43,9 @@ pub fn assign(
     source: []const u8,
     diagnostics: []diagnostic.Diagnostic,
 ) !void {
-    var scratch = ScratchMemory.init(allocator);
-    defer scratch.deinit();
-    const arena = scratch.allocator();
+    var fingerprint_arena = ReusableArena.init(allocator);
+    defer fingerprint_arena.deinit();
+    const arena = fingerprint_arena.allocator();
 
     const bounds = try spanBounds(arena, source, diagnostics);
     const spans = try normalizeBounds(arena, source, bounds);

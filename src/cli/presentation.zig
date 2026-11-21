@@ -3,22 +3,22 @@ const std = @import("std");
 const lint = @import("engine");
 const reports = @import("../reports.zig");
 
-const RenderBudget = @import("render_budget.zig").RenderBudget;
+const PerRuleOutputLimit = @import("per_rule_output_limit.zig").PerRuleOutputLimit;
 const FileDiagnostics = @import("file_diagnostics.zig").FileDiagnostics;
 
 const Diagnostic = lint.diagnostic.Diagnostic;
 const Violation = lint.project_rule.Violation;
 
 /// What a check shows and what it counts. The caps, the collapse and the
-/// render budget change what is printed. They never change the totals, so the
+/// per-rule output limit change what is printed. They never change the totals, so the
 /// exit code does not depend on them.
 pub const Presentation = struct {
     reporter: *reports.Reporter,
     settings: []const lint.rule.RuleSetting,
     max_matches: u32,
-    // One budget covers the complete run. Files consume it in walk order;
+    // One limit covers the complete run. Files consume it in walk order;
     // project violations consume what remains after indexing finishes.
-    budget: RenderBudget,
+    output_limit: PerRuleOutputLimit,
     counts: reports.Counts = .{},
 
     pub fn init(
@@ -31,12 +31,12 @@ pub const Presentation = struct {
             .reporter = reporter,
             .settings = settings,
             .max_matches = max_matches,
-            .budget = .{ .gpa = gpa },
+            .output_limit = .{ .gpa = gpa },
         };
     }
 
     pub fn deinit(self: *Presentation) void {
-        self.budget.deinit();
+        self.output_limit.deinit();
     }
 
     pub fn file(
@@ -50,7 +50,7 @@ pub const Presentation = struct {
         const capped = try lint.caps.apply(arena, result.diagnostics, self.settings, self.max_matches);
         const collapsed = try lint.caps.collapse(arena, capped);
 
-        try self.reporter.file(result.path, result.source, try self.budget.filterFile(arena, result.path, collapsed));
+        try self.reporter.file(result.path, result.source, try self.output_limit.filterFile(arena, result.path, collapsed));
     }
 
     fn project(self: *Presentation, arena: std.mem.Allocator, files: []const ProjectFile) !void {
@@ -60,7 +60,7 @@ pub const Presentation = struct {
             self.count(project_file.diagnostics);
 
             const capped = try lint.caps.apply(arena, project_file.diagnostics, self.settings, self.max_matches);
-            for (try self.budget.filterFile(arena, project_file.path, capped)) |d| {
+            for (try self.output_limit.filterFile(arena, project_file.path, capped)) |d| {
                 try shown.append(arena, .{ .path = project_file.path, .diagnostic = d });
             }
         }
@@ -73,7 +73,7 @@ pub const Presentation = struct {
     /// has error severity.
     pub fn finish(self: *Presentation, arena: std.mem.Allocator, project_files: []const ProjectFile) !bool {
         try self.project(arena, project_files);
-        try self.reporter.finish(self.counts, try self.budget.overflow(arena));
+        try self.reporter.finish(self.counts, try self.output_limit.overflow(arena));
 
         return self.counts.violations > 0;
     }

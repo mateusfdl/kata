@@ -9,7 +9,7 @@ pub const per_rule: usize = 200;
 
 /// Limits how many diagnostics of one rule a complete run renders. What goes
 /// over the limit is counted per rule and reported as overflow.
-pub const RenderBudget = struct {
+pub const PerRuleOutputLimit = struct {
     gpa: std.mem.Allocator,
     // Keys borrow engine-owned rule IDs that outlive this run. deinit frees only
     // map storage, not the key bytes.
@@ -21,7 +21,7 @@ pub const RenderBudget = struct {
         files: std.StringHashMapUnmanaged(void) = .empty,
     };
 
-    pub fn deinit(self: *RenderBudget) void {
+    pub fn deinit(self: *PerRuleOutputLimit) void {
         var entries = self.entries.valueIterator();
         while (entries.next()) |entry| {
             var paths = entry.files.keyIterator();
@@ -32,7 +32,7 @@ pub const RenderBudget = struct {
     }
 
     /// Paths are copied only when suppressed, so callers may reuse their path buffers.
-    pub fn filterFile(self: *RenderBudget, arena: std.mem.Allocator, path: []const u8, diagnostics: []const Diagnostic) ![]const Diagnostic {
+    pub fn filterFile(self: *PerRuleOutputLimit, arena: std.mem.Allocator, path: []const u8, diagnostics: []const Diagnostic) ![]const Diagnostic {
         var kept: std.ArrayList(Diagnostic) = try .initCapacity(arena, diagnostics.len);
         for (diagnostics) |d| {
             const gop = try self.entries.getOrPut(self.gpa, d.rule_id);
@@ -57,7 +57,7 @@ pub const RenderBudget = struct {
         return kept.items;
     }
 
-    pub fn overflow(self: *RenderBudget, arena: std.mem.Allocator) ![]const reports.RuleOverflow {
+    pub fn overflow(self: *PerRuleOutputLimit, arena: std.mem.Allocator) ![]const reports.RuleOverflow {
         // The slice belongs to arena. Rule IDs still borrow engine-owned keys and
         // remain valid through reporter.finish.
         var out: std.ArrayList(reports.RuleOverflow) = .empty;

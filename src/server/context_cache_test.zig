@@ -19,7 +19,7 @@ const kata_two =
     \\}
 ;
 
-test "cache: no anchor yields no project context" {
+test "cache: no start path yields no project context" {
     var s = try test_fixture.TmpProject.init();
     defer s.deinit();
 
@@ -30,7 +30,7 @@ test "cache: no anchor yields no project context" {
     try std.testing.expectEqual(@as(?*context_cache.Cache.Entry, null), try cache.acquire(s.arena.allocator(), null));
 }
 
-test "cache: anchor outside any project yields no project context" {
+test "cache: start path outside any project yields no project context" {
     var s = try test_fixture.TmpProject.init();
     defer s.deinit();
 
@@ -171,7 +171,7 @@ test "cache: deleted rules yaml rebuilds and drops project config" {
     defer s.deinit();
 
     try s.tmp.dir.createDirPath(io, "proj/.kata");
-    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "ratchet: true\n" });
+    try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/.kata/rules.yaml", .data = "warn-on-existing-errors: true\n" });
     try s.tmp.dir.writeFile(io, .{ .sub_path = "proj/a.ts", .data = "const a = 1;\n" });
 
     var r = test_fixture.resolver(null, null);
@@ -179,10 +179,10 @@ test "cache: deleted rules yaml rebuilds and drops project config" {
     defer cache.deinit();
 
     const first = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
-    try std.testing.expectEqual(true, first.ctx.resolved.ratchet);
+    try std.testing.expectEqual(true, first.ctx.resolved.warn_on_existing_errors);
 
     try s.tmp.dir.deleteFile(io, "proj/.kata/rules.yaml");
 
     const second = (try cache.acquire(s.arena.allocator(), try s.path("proj/a.ts"))).?;
-    try std.testing.expectEqual(false, second.ctx.resolved.ratchet);
+    try std.testing.expectEqual(false, second.ctx.resolved.warn_on_existing_errors);
 }

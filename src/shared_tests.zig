@@ -15,7 +15,7 @@ comptime {
     _ = @import("lexical_path_test.zig");
     _ = @import("node_pool_test.zig");
     _ = @import("owned_arena_test.zig");
-    _ = @import("scratch_memory_test.zig");
+    _ = @import("reusable_arena_test.zig");
     _ = @import("sorted_slice_test.zig");
     _ = @import("stack_test.zig");
     _ = @import("staged_matcher_test.zig");

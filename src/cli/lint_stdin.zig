@@ -18,13 +18,16 @@ pub const Args = struct {
     filename: ?[]const u8 = null,
 };
 
+const lang_flag = .{ .name = "lang", .field = .lang, .label = "<" ++ language.pipe_list ++ ">" };
+const filename_flag = .{ .name = "filename", .field = .filename, .label = "<path>" };
+
 pub const command = cli.command(Args, .{
     .name = "",
-    .flags = .{
-        .{ .name = "lang", .field = .lang, .label = "<" ++ language.pipe_list ++ ">" },
-        .{ .name = "filename", .field = .filename, .label = "<path>" },
+    .flags = .{ lang_flag, filename_flag },
+    .usage_forms = .{
+        cli.flagLabel(lang_flag) ++ " [" ++ cli.flagLabel(filename_flag) ++ "] < source",
+        cli.flagLabel(filename_flag) ++ " < source  (infer language from the file extension)",
     },
-    .stdin = "source",
     .run = execute,
 });
 
@@ -43,10 +46,10 @@ pub fn execute(env: Env, parsed: Args) !Exit {
 }
 
 pub fn readInput(env: Env, parsed: Args) !linting.Input {
-    const lang_flag = parsed.lang orelse "";
+    const explicit_lang = parsed.lang orelse "";
     const filename = parsed.filename orelse "";
 
-    const lang = switch (language.resolve(lang_flag, filename)) {
+    const lang = switch (language.resolve(explicit_lang, filename)) {
         .ok => |n| n,
         .missing => return output.usage(env.stderr, "missing --lang (or provide --filename with a known extension)\n", .{}),
         .unknown_extension => |ext| return output.usage(env.stderr, "cannot infer language from extension \"{s}\"\n", .{ext}),

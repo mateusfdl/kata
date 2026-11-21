@@ -2,7 +2,7 @@ const std = @import("std");
 
 const analysis = @import("analysis.zig");
 const check = @import("check.zig");
-const render_budget = @import("render_budget.zig");
+const per_rule_output_limit = @import("per_rule_output_limit.zig");
 const fs = @import("../fs.zig");
 const reports = @import("../reports.zig");
 const lint = @import("engine");
@@ -1200,7 +1200,7 @@ test "check: fixing never consults the cache" {
     try std.testing.expectEqual(Exit.violations, fixed.outcome);
 }
 
-test "check: a rule over the per-run budget truncates and reports the overflow" {
+test "check: a rule over the per-rule output limit truncates and reports the overflow" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1231,7 +1231,7 @@ test "check: a rule over the per-run budget truncates and reports the overflow" 
 
     try std.testing.expectEqual(Exit.violations, r.outcome);
     try std.testing.expectEqual(
-        @as(usize, render_budget.per_rule),
+        @as(usize, per_rule_output_limit.per_rule),
         std.mem.count(u8, r.json, "as any is not allowed"),
     );
     try std.testing.expect(std.mem.indexOf(u8, r.json, "\"violations\":240") != null);
@@ -1242,7 +1242,7 @@ test "check: a rule over the per-run budget truncates and reports the overflow" 
     ) != null);
 }
 
-test "check: a rule under the per-run budget reports no overflow" {
+test "check: a rule under the per-rule output limit reports no overflow" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const replay = @import("replay.zig");
+const file_diagnostics_cache = @import("file_diagnostics_cache.zig");
 
 const diagnostic = @import("engine").diagnostic;
 const language = @import("engine").language;
@@ -119,7 +119,7 @@ const FreshWorkload = enum {
     retention,
 };
 
-const OldReplayCache = struct {
+const OldFileDiagnosticsCache = struct {
     gpa: std.mem.Allocator,
     capacity: usize,
     clock: u64 = 0,
@@ -137,11 +137,11 @@ const OldReplayCache = struct {
         }
     };
 
-    fn init(gpa: std.mem.Allocator, cache_capacity: usize) OldReplayCache {
+    fn init(gpa: std.mem.Allocator, cache_capacity: usize) OldFileDiagnosticsCache {
         return .{ .gpa = gpa, .capacity = cache_capacity };
     }
 
-    fn deinit(self: *OldReplayCache) void {
+    fn deinit(self: *OldFileDiagnosticsCache) void {
         var it = self.entries.valueIterator();
         while (it.next()) |entry| entry.deinit(self.gpa);
 
@@ -149,7 +149,7 @@ const OldReplayCache = struct {
     }
 
     fn get(
-        self: *OldReplayCache,
+        self: *OldFileDiagnosticsCache,
         path: []const u8,
         lang: language.Name,
         content_hash: [32]u8,
@@ -167,7 +167,7 @@ const OldReplayCache = struct {
     }
 
     fn put(
-        self: *OldReplayCache,
+        self: *OldFileDiagnosticsCache,
         path: []const u8,
         lang: language.Name,
         content_hash: [32]u8,
@@ -206,7 +206,7 @@ const OldReplayCache = struct {
         try self.entries.put(self.gpa, owned_path, entry);
     }
 
-    fn evictOldest(self: *OldReplayCache) void {
+    fn evictOldest(self: *OldFileDiagnosticsCache) void {
         var oldest_path: ?[]const u8 = null;
         var oldest_used: u64 = std.math.maxInt(u64);
 
@@ -308,7 +308,7 @@ fn fillHash(hash: *ContentHash, path: *const Path) void {
 }
 
 fn initCache(comptime Cache: type, gpa: std.mem.Allocator) !Cache {
-    if (Cache == replay.ReplayCache) return try Cache.init(gpa, capacity);
+    if (Cache == file_diagnostics_cache.FileDiagnosticsCache) return try Cache.init(gpa, capacity);
     return Cache.init(gpa, capacity);
 }
 
@@ -426,15 +426,15 @@ fn benchmarkGets(
     data: Data,
     stale: bool,
 ) !MeasurementPair {
-    var current_cache = try initCache(replay.ReplayCache, gpa);
+    var current_cache = try initCache(file_diagnostics_cache.FileDiagnosticsCache, gpa);
     defer current_cache.deinit();
-    try seed(replay.ReplayCache, &current_cache, data);
-    _ = runGets(replay.ReplayCache, &current_cache, data, warmup_operations, stale);
+    try seed(file_diagnostics_cache.FileDiagnosticsCache, &current_cache, data);
+    _ = runGets(file_diagnostics_cache.FileDiagnosticsCache, &current_cache, data, warmup_operations, stale);
 
-    var prior_cache = try initCache(OldReplayCache, gpa);
+    var prior_cache = try initCache(OldFileDiagnosticsCache, gpa);
     defer prior_cache.deinit();
-    try seed(OldReplayCache, &prior_cache, data);
-    _ = runGets(OldReplayCache, &prior_cache, data, warmup_operations, stale);
+    try seed(OldFileDiagnosticsCache, &prior_cache, data);
+    _ = runGets(OldFileDiagnosticsCache, &prior_cache, data, warmup_operations, stale);
 
     var current_elapsed: [sample_count]u64 = undefined;
     var prior_elapsed: [sample_count]u64 = undefined;
@@ -444,11 +444,11 @@ fn benchmarkGets(
     // noise do not consistently favor one side of the comparison.
     for (0..sample_count) |sample| {
         if (sample % 2 == 0) {
-            current_result = timedGets(replay.ReplayCache, &current_cache, io, data, stale);
-            prior_result = timedGets(OldReplayCache, &prior_cache, io, data, stale);
+            current_result = timedGets(file_diagnostics_cache.FileDiagnosticsCache, &current_cache, io, data, stale);
+            prior_result = timedGets(OldFileDiagnosticsCache, &prior_cache, io, data, stale);
         } else {
-            prior_result = timedGets(OldReplayCache, &prior_cache, io, data, stale);
-            current_result = timedGets(replay.ReplayCache, &current_cache, io, data, stale);
+            prior_result = timedGets(OldFileDiagnosticsCache, &prior_cache, io, data, stale);
+            current_result = timedGets(file_diagnostics_cache.FileDiagnosticsCache, &current_cache, io, data, stale);
         }
         current_elapsed[sample] = current_result.elapsed_ns;
         prior_elapsed[sample] = prior_result.elapsed_ns;
@@ -538,8 +538,8 @@ fn benchmarkFresh(
     io: std.Io,
     data: Data,
 ) !MeasurementPair {
-    try warmupFresh(replay.ReplayCache, workload, gpa, data);
-    try warmupFresh(OldReplayCache, workload, gpa, data);
+    try warmupFresh(file_diagnostics_cache.FileDiagnosticsCache, workload, gpa, data);
+    try warmupFresh(OldFileDiagnosticsCache, workload, gpa, data);
 
     var current_elapsed: [sample_count]u64 = undefined;
     var prior_elapsed: [sample_count]u64 = undefined;
@@ -547,11 +547,11 @@ fn benchmarkFresh(
     var prior_result: Measurement = undefined;
     for (0..sample_count) |sample| {
         if (sample % 2 == 0) {
-            current_result = try timedFresh(replay.ReplayCache, workload, gpa, io, data);
-            prior_result = try timedFresh(OldReplayCache, workload, gpa, io, data);
+            current_result = try timedFresh(file_diagnostics_cache.FileDiagnosticsCache, workload, gpa, io, data);
+            prior_result = try timedFresh(OldFileDiagnosticsCache, workload, gpa, io, data);
         } else {
-            prior_result = try timedFresh(OldReplayCache, workload, gpa, io, data);
-            current_result = try timedFresh(replay.ReplayCache, workload, gpa, io, data);
+            prior_result = try timedFresh(OldFileDiagnosticsCache, workload, gpa, io, data);
+            current_result = try timedFresh(file_diagnostics_cache.FileDiagnosticsCache, workload, gpa, io, data);
         }
         current_elapsed[sample] = current_result.elapsed_ns;
         prior_elapsed[sample] = prior_result.elapsed_ns;

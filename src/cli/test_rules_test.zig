@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const harness = @import("harness.zig");
+const test_rules = @import("test_rules.zig");
 const test_fixture = @import("../test_fixture.zig");
 
 const Exit = @import("exit.zig").Exit;
@@ -62,11 +62,11 @@ const Setup = struct {
     }
 
     fn run(self: *Setup) anyerror!Exit {
-        return harness.execute(self.t.env(), .{ .rules_dir = self.rules_dir });
+        return test_rules.execute(self.t.env(), .{ .rules_dir = self.rules_dir });
     }
 };
 
-test "harness: fixture with satisfied expectations passes" {
+test "test rules: fixture with satisfied expectations passes" {
     const io = std.testing.io;
     var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
         "const x = foo as any;\n" ++
@@ -79,7 +79,7 @@ test "harness: fixture with satisfied expectations passes" {
     try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
-test "harness: interleaved rules satisfy expectations regardless of order" {
+test "test rules: interleaved rules satisfy expectations regardless of order" {
     const io = std.testing.io;
     const aaa_const_rule =
         \\rule aaa-const {
@@ -110,7 +110,7 @@ test "harness: interleaved rules satisfy expectations regardless of order" {
     try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
-test "harness: expected rule that never fires reports missing" {
+test "test rules: expected rule that never fires reports missing" {
     const io = std.testing.io;
     var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
         "const ok: string = \"1\";\n");
@@ -127,7 +127,7 @@ test "harness: expected rule that never fires reports missing" {
     try std.testing.expectEqualStrings(expected, s.t.out.written());
 }
 
-test "harness: diagnostic on an unannotated line reports unexpected" {
+test "test rules: diagnostic on an unannotated line reports unexpected" {
     const io = std.testing.io;
     var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "const x = foo as any;\n");
     defer s.deinit();
@@ -143,17 +143,17 @@ test "harness: diagnostic on an unannotated line reports unexpected" {
     try std.testing.expectEqualStrings(expected, s.t.out.written());
 }
 
-test "harness: missing rules dir is invalid" {
+test "test rules: missing rules dir is invalid" {
     var t: TestEnv = .init("");
     defer t.deinit();
 
-    const outcome = harness.execute(t.env(), .{ .rules_dir = "no-such-dir" });
+    const outcome = test_rules.execute(t.env(), .{ .rules_dir = "no-such-dir" });
 
     try std.testing.expectError(error.InternalReported, outcome);
     try std.testing.expectEqualStrings("kata test: cannot load rules from \"no-such-dir\": RulesDirMissing\n", t.err.written());
 }
 
-test "harness: rule that fails to compile is invalid" {
+test "test rules: rule that fails to compile is invalid" {
     const io = std.testing.io;
     var s = try Setup.init(io, "broken.kata",
         \\rule broken {
@@ -174,7 +174,7 @@ test "harness: rule that fails to compile is invalid" {
     );
 }
 
-test "harness: combined language dir runs fixtures for each extension" {
+test "test rules: combined language dir runs fixtures for each extension" {
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -190,13 +190,13 @@ test "harness: combined language dir runs fixtures for each extension" {
     const rel = try test_fixture.relativeTmpPath(&rel_buf, &tmp.sub_path);
     const rules_dir = try std.fmt.allocPrint(t.arena.allocator(), "{s}/rules", .{rel});
 
-    const outcome = harness.execute(t.env(), .{ .rules_dir = rules_dir });
+    const outcome = test_rules.execute(t.env(), .{ .rules_dir = rules_dir });
 
     try std.testing.expectEqual(Exit.clean, try outcome);
     try std.testing.expectEqualStrings("tested 2 fixtures, 0 failures\n", t.out.written());
 }
 
-test "harness: annotation lines are exempt from diagnostics" {
+test "test rules: annotation lines are exempt from diagnostics" {
     const io = std.testing.io;
     var s = try Setup.init(io, "no-comments.kata", no_comments_rule, "sample.ts", "// kata-expect: no-comments\n" ++
         "// a forbidden comment\n");
@@ -208,7 +208,7 @@ test "harness: annotation lines are exempt from diagnostics" {
     try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
-test "harness: duplicate expectations cover duplicate diagnostics on one line" {
+test "test rules: duplicate expectations cover duplicate diagnostics on one line" {
     const io = std.testing.io;
     var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any, flag-any\n" ++
         "const pair = [foo as any, bar as any];\n");
@@ -220,7 +220,7 @@ test "harness: duplicate expectations cover duplicate diagnostics on one line" {
     try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
-test "harness: stacked annotations bind to the next code line" {
+test "test rules: stacked annotations bind to the next code line" {
     const io = std.testing.io;
     var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
         "// kata-expect: flag-any\n" ++
@@ -233,7 +233,7 @@ test "harness: stacked annotations bind to the next code line" {
     try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
-test "harness: annotation on the last line reports dangling" {
+test "test rules: annotation on the last line reports dangling" {
     const io = std.testing.io;
     var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "const ok: string = \"1\";\n" ++
         "// kata-expect: flag-any\n");
@@ -245,7 +245,7 @@ test "harness: annotation on the last line reports dangling" {
     try s.expectOutput("{s}/sample.ts:2 dangling kata-expect annotation\ntested 1 fixtures, 1 failures\n");
 }
 
-test "harness: annotation without rule ids reports a failure" {
+test "test rules: annotation without rule ids reports a failure" {
     const io = std.testing.io;
     var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect:\n" ++
         "const ok: string = \"1\";\n");
@@ -257,7 +257,7 @@ test "harness: annotation without rule ids reports a failure" {
     try s.expectOutput("{s}/sample.ts:1 empty kata-expect annotation\ntested 1 fixtures, 1 failures\n");
 }
 
-test "harness: tab-separated annotation ids are recognized" {
+test "test rules: tab-separated annotation ids are recognized" {
     const io = std.testing.io;
     var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect:\tflag-any\n" ++
         "const x = foo as any;\n");
@@ -268,7 +268,7 @@ test "harness: tab-separated annotation ids are recognized" {
     try std.testing.expectEqual(Exit.clean, try outcome);
 }
 
-test "harness: a single expectation does not cover two diagnostics" {
+test "test rules: a single expectation does not cover two diagnostics" {
     const io = std.testing.io;
     var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
         "const pair = [foo as any, bar as any];\n");
@@ -280,7 +280,7 @@ test "harness: a single expectation does not cover two diagnostics" {
     try s.expectOutput("{s}/sample.ts:2 unexpected [flag-any]\ntested 1 fixtures, 1 failures\n");
 }
 
-test "harness: kata rule with invalid syntax is invalid" {
+test "test rules: kata rule with invalid syntax is invalid" {
     const io = std.testing.io;
     var s = try Setup.init(io, "broken.kata", "rule broken {\n  lang ts\n", "sample.ts", "const ok = 1;\n");
     defer s.deinit();
@@ -307,7 +307,7 @@ const kata_composition_rule =
     \\}
 ;
 
-test "harness: composition rule fixtures run through the same harness" {
+test "test rules: composition rule fixtures run through the same fixture runner" {
     const io = std.testing.io;
     var s = try Setup.init(io, "no-empty-catch.kata", kata_composition_rule, "sample.ts", "// kata-expect: no-empty-catch\n" ++
         "try { a(); } catch (e) {}\n" ++
@@ -348,7 +348,7 @@ const delete_call_rule =
     \\}
 ;
 
-test "harness: matching kata-expect-fix passes" {
+test "test rules: matching kata-expect-fix passes" {
     const io = std.testing.io;
     var s = try Setup.init(io, "prefer-number-parseint.kata", parseint_fix_rule, "sample.ts", "// kata-expect: prefer-number-parseint\n" ++
         "// kata-expect-fix: Number.parseInt\n" ++
@@ -361,7 +361,7 @@ test "harness: matching kata-expect-fix passes" {
     try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
-test "harness: wrong fix replacement fails printing got and want" {
+test "test rules: wrong fix replacement fails printing got and want" {
     const io = std.testing.io;
     var s = try Setup.init(io, "prefer-number-parseint.kata", parseint_fix_rule, "sample.ts", "// kata-expect: prefer-number-parseint\n" ++
         "// kata-expect-fix: Number.parse\n" ++
@@ -374,7 +374,7 @@ test "harness: wrong fix replacement fails printing got and want" {
     try s.expectOutput("{s}/sample.ts:3 wrong fix \"Number.parseInt\" (expected \"Number.parse\")\ntested 1 fixtures, 1 failures\n");
 }
 
-test "harness: kata-expect-fix without a fix reports missing fix" {
+test "test rules: kata-expect-fix without a fix reports missing fix" {
     const io = std.testing.io;
     var s = try Setup.init(io, "flag-any.kata", flag_any_rule, "sample.ts", "// kata-expect: flag-any\n" ++
         "// kata-expect-fix: unknown\n" ++
@@ -387,7 +387,7 @@ test "harness: kata-expect-fix without a fix reports missing fix" {
     try s.expectOutput("{s}/sample.ts:3 missing fix\ntested 1 fixtures, 1 failures\n");
 }
 
-test "harness: empty kata-expect-fix matches a deletion fix" {
+test "test rules: empty kata-expect-fix matches a deletion fix" {
     const io = std.testing.io;
     var s = try Setup.init(io, "no-parseint.kata", delete_call_rule, "sample.ts", "// kata-expect: no-parseint\n" ++
         "// kata-expect-fix:\n" ++
@@ -400,7 +400,7 @@ test "harness: empty kata-expect-fix matches a deletion fix" {
     try std.testing.expectEqualStrings("tested 1 fixtures, 0 failures\n", s.t.out.written());
 }
 
-test "harness: dangling kata-expect-fix annotation fails" {
+test "test rules: dangling kata-expect-fix annotation fails" {
     const io = std.testing.io;
     var s = try Setup.init(io, "prefer-number-parseint.kata", parseint_fix_rule, "sample.ts", "const n = parseInt(y);\n" ++
         "// kata-expect-fix: Number.parseInt\n");
@@ -443,7 +443,7 @@ const identity_fix_rule =
     \\}
 ;
 
-test "harness: a fix that breaks parsing fails naming the rule" {
+test "test rules: a fix that breaks parsing fails naming the rule" {
     const io = std.testing.io;
     var s = try Setup.init(io, "prefer-number-parseint.kata", broken_fix_rule, "sample.ts", "// kata-expect: prefer-number-parseint\n" ++
         "// kata-expect-fix: )(\n" ++
@@ -456,7 +456,7 @@ test "harness: a fix that breaks parsing fails naming the rule" {
     try s.expectOutput("{s}/sample.ts fix introduces a syntax error [prefer-number-parseint]\ntested 1 fixtures, 1 failures\n");
 }
 
-test "harness: a fix that never converges fails naming the rule" {
+test "test rules: a fix that never converges fails naming the rule" {
     const io = std.testing.io;
     var s = try Setup.init(io, "prefer-number-parseint.kata", identity_fix_rule, "sample.ts", "// kata-expect: prefer-number-parseint\n" ++
         "// kata-expect-fix: parseInt\n" ++
@@ -469,7 +469,7 @@ test "harness: a fix that never converges fails naming the rule" {
     try s.expectOutput("{s}/sample.ts fixes do not converge [prefer-number-parseint]\ntested 1 fixtures, 1 failures\n");
 }
 
-test "harness: a fix rule without any kata-expect-fix warns without failing" {
+test "test rules: a fix rule without any kata-expect-fix warns without failing" {
     const io = std.testing.io;
     var s = try Setup.init(io, "prefer-number-parseint.kata", parseint_fix_rule, "sample.ts", "// kata-expect: prefer-number-parseint\n" ++
         "const n = parseInt(x);\n");

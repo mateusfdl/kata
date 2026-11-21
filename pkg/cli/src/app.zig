@@ -14,9 +14,12 @@ pub fn app(comptime Result: type, comptime spec: anytype) type {
 
     return struct {
         const usage = blk: {
-            var text: []const u8 = "";
-            for (spec.commands) |cmd| text = text ++ usageLine(cmd);
-            text = text ++ usageLine(spec.root);
+            var text: []const u8 = if (spec.default.name.len > 0)
+                "usage: " ++ spec.name ++ "  (same as " ++ spec.name ++ " " ++ spec.default.name ++ ")\n"
+            else
+                "";
+            for (spec.commands) |cmd| text = text ++ cmd.usage(spec.name);
+            text = text ++ spec.root.usage(spec.name);
             for (leading_flags) |flag| text = text ++ "usage: " ++ spec.name ++ " --" ++ flag.name ++ "\n";
 
             break :blk text ++ "usage: " ++ spec.name ++ " " ++ names.help ++ "\n";
@@ -42,7 +45,7 @@ pub fn app(comptime Result: type, comptime spec: anytype) type {
 
         fn invoke(comptime cmd: type, context: anytype, stdout: *std.Io.Writer, stderr: *std.Io.Writer, argv: []const [:0]const u8) !Result {
             for (argv) |arg| {
-                if (std.mem.eql(u8, arg, names.help)) return printHelp(stdout, usageLine(cmd));
+                if (std.mem.eql(u8, arg, names.help)) return printHelp(stdout, cmd.usage(spec.name));
             }
 
             const invalid = switch (cmd.parse(argv)) {
@@ -52,10 +55,10 @@ pub fn app(comptime Result: type, comptime spec: anytype) type {
 
             const label = if (cmd.name.len == 0) spec.name else spec.name ++ " " ++ cmd.name;
             return switch (invalid) {
-                .unexpected => |arg| usageError(stderr, label ++ ": unexpected argument \"{s}\"\n" ++ usageLine(cmd), .{arg}),
-                .missing_value => |flag| usageError(stderr, label ++ ": \"{s}\" requires a value\n" ++ usageLine(cmd), .{flag}),
+                .unexpected => |arg| usageError(stderr, label ++ ": unexpected argument \"{s}\"\n" ++ cmd.usage(spec.name), .{arg}),
+                .missing_value => |flag| usageError(stderr, label ++ ": \"{s}\" requires a value\n" ++ cmd.usage(spec.name), .{flag}),
                 .missing_flag => |message| usageError(stderr, label ++ ": {s}\n", .{message}),
-                .missing_positional => usageError(stderr, usageLine(cmd), .{}),
+                .missing_positional => usageError(stderr, cmd.usage(spec.name), .{}),
             };
         }
 
@@ -63,10 +66,6 @@ pub fn app(comptime Result: type, comptime spec: anytype) type {
             try stdout.writeAll(text);
             try stdout.flush();
             return spec.help_result;
-        }
-
-        fn usageLine(comptime cmd: type) []const u8 {
-            return "usage: " ++ spec.name ++ cmd.synopsis ++ "\n";
         }
     };
 }

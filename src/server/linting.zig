@@ -3,7 +3,7 @@ const std = @import("std");
 const fs = @import("../fs.zig");
 const lint = @import("engine");
 const context_cache = @import("context_cache.zig");
-const replay = @import("replay.zig");
+const file_diagnostics_cache = @import("file_diagnostics_cache.zig");
 const Policy = @import("../sources.zig").context.Policy;
 
 const diagnostic = lint.diagnostic;
@@ -22,7 +22,7 @@ pub const Error = error{
     ProjectConfigurationFailed,
     LintFailed,
     FingerprintFailed,
-    RatchetFailed,
+    DiskBaselineComparisonFailed,
     ProjectAnalysisFailed,
     CapsFailed,
 };
@@ -34,7 +34,7 @@ pub fn failureMessage(err: Error) []const u8 {
         error.ProjectConfigurationFailed => "project configuration failed",
         error.LintFailed => "lint failed",
         error.FingerprintFailed => "fingerprint failed",
-        error.RatchetFailed => "ratchet baseline failed",
+        error.DiskBaselineComparisonFailed => "failed to compare diagnostics with the file on disk",
         error.ProjectAnalysisFailed => "project analysis failed",
         error.CapsFailed => "caps failed",
     };
@@ -45,24 +45,24 @@ pub const Context = struct {
     io: std.Io,
     project: ?*lint.Project = null,
     cache: ?*context_cache.Cache = null,
-    replay: ?*replay.ReplayCache = null,
+    diagnostics_cache: ?*file_diagnostics_cache.FileDiagnosticsCache = null,
     cache_dir: ?[]const u8 = null,
 
     fn select(self: Context, arena: std.mem.Allocator, filename: ?[]const u8) Error!Selection {
         if (self.cache) |cache| {
             // An index uses its root's policy for every file, including files
             // beneath a nested .kata directory. File-only requests select by path.
-            const anchor = if (self.project != null) self.policy.root else filename;
-            const entry = cache.acquire(arena, anchor) catch return error.ProjectContextFailed;
-            if (entry) |p| return .{ .policy = p.ctx.policy(), .replay = &p.replay };
+            const start_path = if (self.project != null) self.policy.root else filename;
+            const entry = cache.acquire(arena, start_path) catch return error.ProjectContextFailed;
+            if (entry) |p| return .{ .policy = p.ctx.policy(), .diagnostics_cache = &p.diagnostics_cache };
         }
-        return .{ .policy = self.policy, .replay = self.replay };
+        return .{ .policy = self.policy, .diagnostics_cache = self.diagnostics_cache };
     }
 };
 
 const Selection = struct {
     policy: Policy,
-    replay: ?*replay.ReplayCache,
+    diagnostics_cache: ?*file_diagnostics_cache.FileDiagnosticsCache,
 };
 
 pub fn run(
@@ -101,7 +101,7 @@ pub fn run(
         project.configure(engine, policy.project_rules) catch return error.ProjectConfigurationFailed;
     }
 
-    const replay_generation: u64 = if (ctx.project) |p|
+    const cache_generation: u64 = if (ctx.project) |p|
         (if (p.hasCrossFileRules()) p.indexGeneration() else 0)
     else
         0;
@@ -109,14 +109,14 @@ pub fn run(
     var content_hash: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(source, &content_hash, .{});
 
-    const diagnostics = replayed: {
-        if (selected.replay) |rc| {
+    const diagnostics = lookup: {
+        if (selected.diagnostics_cache) |cache| {
             if (input.filename) |path| {
                 // A generation-matched hit proves the index has not changed
                 // since the entry was stored, so the file's facts are already
                 // indexed for this exact content and re-indexing is redundant.
-                if (rc.get(path, lang, content_hash, replay_generation)) |cached| {
-                    break :replayed arena.dupe(diagnostic.Diagnostic, cached) catch
+                if (cache.get(path, lang, content_hash, cache_generation)) |cached| {
+                    break :lookup arena.dupe(diagnostic.Diagnostic, cached) catch
                         return error.LintFailed;
                 }
             }
@@ -124,7 +124,7 @@ pub fn run(
 
         if (disk_cache) |cache| {
             if (cache.isClean(ctx.io))
-                break :replayed arena.alloc(diagnostic.Diagnostic, 0) catch
+                break :lookup arena.alloc(diagnostic.Diagnostic, 0) catch
                     return error.LintFailed;
         }
 
@@ -139,25 +139,25 @@ pub fn run(
         lint.fingerprint.assign(arena, input.filename orelse "", source, fresh) catch
             return error.FingerprintFailed;
 
-        if (selected.replay) |rc| {
-            // Replay is an optimization. Allocation failure must not turn a
+        if (selected.diagnostics_cache) |cache| {
+            // Caching is an optimization. Allocation failure must not turn a
             // successful lint into a failed request.
             const post_lint_generation: u64 = if (ctx.project) |p|
                 (if (p.hasCrossFileRules()) p.indexGeneration() else 0)
             else
                 0;
-            if (input.filename) |path| rc.put(path, lang, content_hash, post_lint_generation, fresh) catch {};
+            if (input.filename) |path| cache.put(path, lang, content_hash, post_lint_generation, fresh) catch {};
         }
 
         if (disk_cache) |cache| {
             if (fresh.len == 0) cache.markClean(ctx.io);
         }
 
-        break :replayed fresh;
+        break :lookup fresh;
     };
 
-    applyRatchet(ctx, engine, policy.ratchet, arena, lang, input.filename, source, diagnostics) catch
-        return error.RatchetFailed;
+    demoteErrorsMatchingDisk(ctx, engine, policy.warn_on_existing_errors, arena, lang, input.filename, source, diagnostics) catch
+        return error.DiskBaselineComparisonFailed;
 
     const all = appendProjectDiagnostics(ctx, arena, input.filename, diagnostics) catch
         return error.ProjectAnalysisFailed;
@@ -175,17 +175,17 @@ pub fn run(
     };
 }
 
-fn applyRatchet(
+fn demoteErrorsMatchingDisk(
     ctx: Context,
     engine: *Engine,
-    ratchet: bool,
+    warn_on_existing_errors: bool,
     arena: std.mem.Allocator,
     lang: language.Name,
     filename: ?[]const u8,
     source: []const u8,
     diagnostics: []diagnostic.Diagnostic,
 ) !void {
-    if (!ratchet) return;
+    if (!warn_on_existing_errors) return;
 
     const io = ctx.io;
     const path = filename orelse return;
