@@ -1,4 +1,4 @@
-const args = @import("args.zig");
+const cli = @import("cli");
 const endpoint = @import("daemon_endpoint.zig");
 const output = @import("output.zig");
 const server = @import("../server.zig");
@@ -6,12 +6,12 @@ const server = @import("../server.zig");
 const Env = @import("env.zig").Env;
 const Exit = @import("exit.zig").Exit;
 
-pub const name = "stop";
-pub const synopsis = "stop";
-
 pub const Args = struct {};
 
-pub const grammar = args.grammar(Args, .{ .flags = .{}, .positionals = .{} });
+pub const command = cli.command(Args, .{
+    .name = "stop",
+    .run = execute,
+});
 
 pub fn execute(env: Env, _: Args) !Exit {
     const socket_path = endpoint.socketPath(env) catch |err|

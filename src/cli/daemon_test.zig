@@ -38,12 +38,12 @@ test "daemon: KATA_SOCKET overrides the stamped socket path" {
 
 test "daemon: grammar accepts both forms of --root" {
     try std.testing.expectEqualDeep(
-        daemon.grammar.Result{ .ok = .{ .root = "src" } },
-        daemon.grammar.parse(&.{ "--root", "src" }),
+        daemon.command.Result{ .ok = .{ .root = "src" } },
+        daemon.command.parse(&.{ "--root", "src" }),
     );
     try std.testing.expectEqualDeep(
-        daemon.grammar.Result{ .ok = .{ .root = "src" } },
-        daemon.grammar.parse(&.{"--root=src"}),
+        daemon.command.Result{ .ok = .{ .root = "src" } },
+        daemon.command.parse(&.{"--root=src"}),
     );
-    try std.testing.expectEqualDeep(daemon.grammar.Result{ .ok = .{} }, daemon.grammar.parse(&.{}));
+    try std.testing.expectEqualDeep(daemon.command.Result{ .ok = .{} }, daemon.command.parse(&.{}));
 }

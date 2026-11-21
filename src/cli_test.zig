@@ -12,10 +12,31 @@ const usage_check = "usage: kata check [path] [--json|--text|--sarif] [--fix|--f
 const usage_daemon = "usage: kata daemon [--root <dir>]\n";
 const usage_facts = "usage: kata facts <file>\n";
 const usage_test = "usage: kata test <rules-dir>\n";
-const usage_query = "usage: kata query '<kata rule>' [path] --lang=<ts|tsx|go|zig>\n";
+const usage_query = "usage: kata query '<kata rule>' [path] --lang <ts|tsx|go|zig> [--json|--text|--sarif]\n";
 const usage_stop = "usage: kata stop\n";
 const usage_new_rule = "usage: kata new-rule <ts|tsx|go|zig> <rule-id>\n";
-const usage_one_shot = "usage: kata --lang=<ts|tsx|go|zig> [--filename=<path>] < source\n";
+const usage_one_shot = "usage: kata [--lang <ts|tsx|go|zig>] [--filename <path>] < source\n";
+
+const usage_all = usage_daemon ++ usage_check ++ usage_facts ++ usage_test ++ usage_query ++
+    usage_stop ++ usage_new_rule ++ usage_one_shot ++ "usage: kata --version\nusage: kata --help\n";
+
+test "dispatch: help prints usage on stdout before validation or execution" {
+    const Case = struct { argv: []const [:0]const u8, usage: []const u8 };
+    for ([_]Case{
+        .{ .argv = &.{"--help"}, .usage = usage_all },
+        .{ .argv = &.{ "check", "--help" }, .usage = usage_check },
+        .{ .argv = &.{ "query", "--help" }, .usage = usage_query },
+        .{ .argv = &.{ "daemon", "--root", "missing", "--help" }, .usage = usage_daemon },
+        .{ .argv = &.{ "--lang=go", "--help" }, .usage = usage_one_shot },
+    }) |case| {
+        var t: TestEnv = .init("");
+        defer t.deinit();
+
+        try std.testing.expectEqual(Exit.clean, try cli.dispatch(t.env(), case.argv));
+        try std.testing.expectEqualStrings(case.usage, t.out.written());
+        try std.testing.expectEqualStrings("", t.err.written());
+    }
+}
 
 fn expectUsageError(expected_stderr: []const u8, argv: []const [:0]const u8) !void {
     var t: TestEnv = .init("");
@@ -34,10 +55,21 @@ test "dispatch: --version prints the build version" {
     try std.testing.expectEqualStrings(build_options.version ++ "\n", t.out.written());
 }
 
+test "dispatch: only a leading --version takes precedence over the other arguments" {
+    var t: TestEnv = .init("");
+    defer t.deinit();
+
+    try std.testing.expectEqual(Exit.clean, try cli.dispatch(t.env(), &.{ "--version", "check", "--unknown" }));
+    try std.testing.expectEqualStrings(build_options.version ++ "\n", t.out.written());
+    try std.testing.expectEqualStrings("", t.err.written());
+
+    try expectUsageError("kata check: unexpected argument \"--version\"\n" ++ usage_check, &.{ "check", "--version" });
+    try expectUsageError("kata: unexpected argument \"--version\"\n" ++ usage_one_shot, &.{ "--lang=go", "--version" });
+}
+
 test "dispatch: an unknown subcommand lists the usage of every command" {
     try expectUsageError(
-        "unknown subcommand: \"bogus\"\n" ++ usage_daemon ++ usage_check ++ usage_facts ++ usage_test ++
-            usage_query ++ usage_stop ++ usage_new_rule ++ usage_one_shot,
+        "unknown subcommand: \"bogus\"\n" ++ usage_all,
         &.{"bogus"},
     );
 }

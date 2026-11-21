@@ -17,7 +17,7 @@ const grammar = args.grammar(Options, .{
         .{ .name = "json", .field = .format, .value = .json },
         .{ .name = "text", .field = .format, .value = .text },
     },
-    .positionals = .{ .text, .target },
+    .positionals = .{ .{ .field = .text }, .{ .field = .target } },
 });
 
 fn expectParse(expected: grammar.Result, argv: []const [:0]const u8) !void {

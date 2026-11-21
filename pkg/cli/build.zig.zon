@@ -1,0 +1,7 @@
+.{
+    .name = .cli,
+    .fingerprint = 0x48f6513cbae72318,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src", "tests" },
+}

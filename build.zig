@@ -109,6 +109,9 @@ pub fn build(b: *std.Build) void {
     });
     wireDslModule(dsl_module, engine_module, shared_module, mvzr_module, node_kinds_module);
 
+    const cli_dep = b.dependency("cli", .{ .target = target, .optimize = optimize });
+    const cli_module = cli_dep.module("cli");
+
     const exe_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -116,6 +119,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .strip = strip,
     });
+    exe_module.addImport("cli", cli_module);
     wireKataModule(exe_module, engine_module, dsl_module, shared_module, path_module, git_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
     const exe = b.addExecutable(.{
         .name = "kata",
@@ -129,6 +133,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    test_module.addImport("cli", cli_module);
     wireKataModule(test_module, engine_module, dsl_module, shared_module, path_module, git_module, mvzr_module, embedded_rules_zig, node_kinds_module, build_options_module);
     // Test artifacts share one install directory. Distinct names keep each
     // debugger target addressable without replacing another test binary.
@@ -141,6 +146,7 @@ pub fn build(b: *std.Build) void {
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run all unit tests");
     test_step.dependOn(&run_unit_tests.step);
+    test_step.dependOn(&cli_dep.builder.top_level_steps.get("test").?.step);
 
     // Project tests need this build graph for named modules and linked grammars.
     // Install stable debugger paths separately so the normal test step stays run-only.

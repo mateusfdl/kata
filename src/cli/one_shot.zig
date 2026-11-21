@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const args = @import("args.zig");
+const cli = @import("cli");
 const endpoint = @import("daemon_endpoint.zig");
 const lint = @import("engine");
 const output = @import("output.zig");
@@ -13,19 +13,19 @@ const Exit = @import("exit.zig").Exit;
 const language = lint.language;
 const linting = server.linting;
 
-pub const synopsis = "--lang=<" ++ language.pipe_list ++ "> [--filename=<path>] < source";
-
 pub const Args = struct {
     lang: ?[]const u8 = null,
     filename: ?[]const u8 = null,
 };
 
-pub const grammar = args.grammar(Args, .{
+pub const command = cli.command(Args, .{
+    .name = "",
     .flags = .{
-        .{ .name = "lang", .field = .lang },
-        .{ .name = "filename", .field = .filename },
+        .{ .name = "lang", .field = .lang, .label = "<" ++ language.pipe_list ++ ">" },
+        .{ .name = "filename", .field = .filename, .label = "<path>" },
     },
-    .positionals = .{},
+    .stdin = "source",
+    .run = execute,
 });
 
 pub fn execute(env: Env, parsed: Args) !Exit {

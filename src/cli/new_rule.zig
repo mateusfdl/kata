@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const args = @import("args.zig");
+const cli = @import("cli");
 const fs = @import("../fs.zig");
 const lint = @import("engine");
 const output = @import("output.zig");
@@ -11,15 +11,19 @@ const Exit = @import("exit.zig").Exit;
 const language = lint.language;
 const rule = lint.rule;
 
-pub const name = "new-rule";
-pub const synopsis = "new-rule <" ++ language.pipe_list ++ "> <rule-id>";
-
 pub const Args = struct {
     lang: []const u8,
     id: []const u8,
 };
 
-pub const grammar = args.grammar(Args, .{ .flags = .{}, .positionals = .{ .lang, .id } });
+pub const command = cli.command(Args, .{
+    .name = "new-rule",
+    .positionals = .{
+        .{ .field = .lang, .label = "<" ++ language.pipe_list ++ ">" },
+        .{ .field = .id, .label = "<rule-id>" },
+    },
+    .run = execute,
+});
 
 pub fn execute(env: Env, parsed: Args) !Exit {
     const arena = env.arena;

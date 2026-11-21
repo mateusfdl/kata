@@ -6,6 +6,7 @@ package with its own `build.zig` and `build.zig.zon`, consumed by the root
 
 | Package | Produces | Notes |
 | --- | --- | --- |
+| `cli` | `cli` Zig module | Command declarations, argument parsing, dispatch, and usage text. |
 | `gen-embedded-rules` | `gen_embedded_rules` host executable | Build-time codegen: turns the `rules/` tree into `embedded_rules.zig`. |
 | `tree-sitter-typescript` | `ts_typescript`, `ts_tsx` static libs | Compiles the upstream TypeScript and TSX grammars. |
 | `tree-sitter-go` | `ts_go` static lib | Compiles the upstream Go grammar. |

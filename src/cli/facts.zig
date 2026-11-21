@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const args = @import("args.zig");
+const cli = @import("cli");
 const fs = @import("../fs.zig");
 const lint = @import("engine");
 const output = @import("output.zig");
@@ -11,14 +11,17 @@ const Exit = @import("exit.zig").Exit;
 
 const fact_schema = lint.fact_schema;
 
-pub const name = "facts";
-pub const synopsis = "facts <file>";
-
 pub const Args = struct {
     target: []const u8,
 };
 
-pub const grammar = args.grammar(Args, .{ .flags = .{}, .positionals = .{.target} });
+pub const command = cli.command(Args, .{
+    .name = "facts",
+    .positionals = .{
+        .{ .field = .target, .label = "<file>" },
+    },
+    .run = execute,
+});
 
 pub fn execute(env: Env, parsed: Args) !Exit {
     const target = parsed.target;

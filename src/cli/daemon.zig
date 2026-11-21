@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const args = @import("args.zig");
+const cli = @import("cli");
 const endpoint = @import("daemon_endpoint.zig");
 const lint = @import("engine");
 const output = @import("output.zig");
@@ -11,16 +11,16 @@ const Workspace = @import("workspace.zig").Workspace;
 const Env = @import("env.zig").Env;
 const Exit = @import("exit.zig").Exit;
 
-pub const name = endpoint.command;
-pub const synopsis = "daemon [--root <dir>]";
-
 pub const Args = struct {
     root: ?[]const u8 = null,
 };
 
-pub const grammar = args.grammar(Args, .{
-    .flags = .{.{ .name = "root", .field = .root }},
-    .positionals = .{},
+pub const command = cli.command(Args, .{
+    .name = endpoint.command,
+    .flags = .{
+        .{ .name = "root", .field = .root, .label = "<dir>" },
+    },
+    .run = execute,
 });
 
 pub fn execute(env: Env, parsed: Args) !Exit {

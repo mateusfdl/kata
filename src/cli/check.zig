@@ -1,10 +1,11 @@
 const std = @import("std");
 
 const analysis = @import("analysis.zig");
-const args = @import("args.zig");
+const cli = @import("cli");
 const fs = @import("../fs.zig");
 const lint = @import("engine");
 const output = @import("output.zig");
+const report_flags = @import("report_flags.zig");
 const reports = @import("../reports.zig");
 const sources = @import("../sources.zig");
 
@@ -16,9 +17,6 @@ const Engine = lint.Engine;
 
 const Baseline = @import("baseline.zig").Baseline;
 
-pub const name = "check";
-pub const synopsis = "check [path] [--json|--text|--sarif] [--fix|--fix-unsafe] [--baseline <ref>]";
-
 const env_baseline = "KATA_BASELINE";
 
 pub const Args = struct {
@@ -28,16 +26,17 @@ pub const Args = struct {
     fix: ?Engine.FixPolicy = null,
 };
 
-pub const grammar = args.grammar(Args, .{
-    .flags = .{
-        .{ .name = "baseline", .field = .baseline },
-        .{ .name = "json", .field = .format, .value = .json },
-        .{ .name = "text", .field = .format, .value = .text },
-        .{ .name = "sarif", .field = .format, .value = .sarif },
+pub const command = cli.command(Args, .{
+    .name = "check",
+    .positionals = .{
+        .{ .field = .target, .label = "path" },
+    },
+    .flags = report_flags.format ++ .{
         .{ .name = "fix", .field = .fix, .value = .safe },
         .{ .name = "fix-unsafe", .field = .fix, .value = .unsafe },
+        .{ .name = "baseline", .field = .baseline, .label = "<ref>" },
     },
-    .positionals = .{.target},
+    .run = execute,
 });
 
 pub fn execute(env: Env, parsed: Args) !Exit {
@@ -47,7 +46,7 @@ pub fn execute(env: Env, parsed: Args) !Exit {
 
     const baseline_ref = parsed.baseline orelse env.environ.get(env_baseline);
 
-    return analysis.report(env, &ctx.engine, .{ .name = name, .rules_failure = error.InternalReported }, .{
+    return analysis.report(env, &ctx.engine, .{ .name = command.name, .rules_failure = error.InternalReported }, .{
         .target = parsed.target,
         .project_rules = ctx.resolved.project_rules,
         .max_matches = ctx.resolved.max_matches_per_file,

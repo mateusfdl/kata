@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const annotations = @import("annotations.zig");
-const args = @import("args.zig");
+const cli = @import("cli");
 const dsl = @import("dsl");
 const fs = @import("../fs.zig");
 const lint = @import("engine");
@@ -17,14 +17,17 @@ const loader = sources.loader;
 
 const Annotations = annotations.Annotations;
 
-pub const name = "test";
-pub const synopsis = "test <rules-dir>";
-
 pub const Args = struct {
     rules_dir: []const u8,
 };
 
-pub const grammar = args.grammar(Args, .{ .flags = .{}, .positionals = .{.rules_dir} });
+pub const command = cli.command(Args, .{
+    .name = "test",
+    .positionals = .{
+        .{ .field = .rules_dir, .label = "<rules-dir>" },
+    },
+    .run = execute,
+});
 
 pub fn execute(env: Env, parsed: Args) !Exit {
     const rules_dir = parsed.rules_dir;

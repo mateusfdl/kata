@@ -4,16 +4,7 @@
 
 const std = @import("std");
 
-pub fn usage(
-    stderr: *std.Io.Writer,
-    comptime fmt: []const u8,
-    values: anytype,
-) (std.Io.Writer.Error || error{UsageReported}) {
-    stderr.print(fmt, values) catch |err| return err;
-    stderr.flush() catch |err| return err;
-
-    return error.UsageReported;
-}
+pub const usage = @import("cli").usageError;
 
 pub fn failure(
     stderr: *std.Io.Writer,

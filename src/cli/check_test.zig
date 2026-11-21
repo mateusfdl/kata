@@ -79,21 +79,21 @@ test "check: baseline rule files retain their language scope, including combined
 }
 
 test "check: grammar defaults to the current directory, pretty output, and no fix" {
-    try std.testing.expectEqualDeep(check.grammar.Result{ .ok = .{} }, check.grammar.parse(&.{}));
+    try std.testing.expectEqualDeep(check.command.Result{ .ok = .{} }, check.command.parse(&.{}));
 }
 
 test "check: grammar maps every flag to its option" {
     try std.testing.expectEqualDeep(
-        check.grammar.Result{ .ok = .{ .target = "src/", .format = .sarif, .baseline = "main", .fix = .unsafe } },
-        check.grammar.parse(&.{ "--baseline", "main", "src/", "--sarif", "--fix-unsafe" }),
+        check.command.Result{ .ok = .{ .target = "src/", .format = .sarif, .baseline = "main", .fix = .unsafe } },
+        check.command.parse(&.{ "--baseline", "main", "src/", "--sarif", "--fix-unsafe" }),
     );
     try std.testing.expectEqualDeep(
-        check.grammar.Result{ .ok = .{ .format = .json, .baseline = "HEAD~1", .fix = .safe } },
-        check.grammar.parse(&.{ "--json", "--fix", "--baseline=HEAD~1" }),
+        check.command.Result{ .ok = .{ .format = .json, .baseline = "HEAD~1", .fix = .safe } },
+        check.command.parse(&.{ "--json", "--fix", "--baseline=HEAD~1" }),
     );
     try std.testing.expectEqualDeep(
-        check.grammar.Result{ .ok = .{ .format = .text } },
-        check.grammar.parse(&.{"--text"}),
+        check.command.Result{ .ok = .{ .format = .text } },
+        check.command.parse(&.{"--text"}),
     );
 }
 

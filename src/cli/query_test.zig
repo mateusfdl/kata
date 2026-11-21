@@ -55,16 +55,16 @@ fn runQuery(allocator: std.mem.Allocator, parsed: query.Args) !Result {
 
 test "query: grammar maps every flag to its option" {
     try std.testing.expectEqualDeep(
-        query.grammar.Result{ .ok = .{ .text = "rule", .target = "src", .lang = "ts,tsx", .format = .json } },
-        query.grammar.parse(&.{ "--lang", "ts,tsx", "rule", "src", "--json" }),
+        query.command.Result{ .ok = .{ .text = "rule", .target = "src", .lang = "ts,tsx", .format = .json } },
+        query.command.parse(&.{ "--lang", "ts,tsx", "rule", "src", "--json" }),
     );
     try std.testing.expectEqualDeep(
-        query.grammar.Result{ .ok = .{ .text = "rule", .lang = "go", .format = .sarif } },
-        query.grammar.parse(&.{ "rule", "--lang=go", "--sarif" }),
+        query.command.Result{ .ok = .{ .text = "rule", .lang = "go", .format = .sarif } },
+        query.command.parse(&.{ "rule", "--lang=go", "--sarif" }),
     );
     try std.testing.expectEqualDeep(
-        query.grammar.Result{ .ok = .{ .text = "rule", .format = .text } },
-        query.grammar.parse(&.{ "rule", "--text" }),
+        query.command.Result{ .ok = .{ .text = "rule", .lang = "go", .format = .text } },
+        query.command.parse(&.{ "rule", "--text", "--lang=go" }),
     );
 }
 
@@ -203,13 +203,10 @@ test "query: unsupported language in a list is usage" {
 }
 
 test "query: missing --lang is usage" {
-    const gpa = std.testing.allocator;
-
-    const r = try runQuery(gpa, .{ .text = as_any_query, .target = "." });
-    defer r.deinit(gpa);
-
-    try std.testing.expectError(error.UsageReported, r.outcome);
-    try std.testing.expectEqualStrings("kata query: --lang is required (expected ts, tsx, go, or zig)\n", r.stderr);
+    try std.testing.expectEqualDeep(
+        query.command.Result{ .invalid = .{ .missing_flag = "--lang is required (expected ts, tsx, go, or zig)" } },
+        query.command.parse(&.{"rule"}),
+    );
 }
 
 test "query: file errors identify the query command" {

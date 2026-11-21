@@ -22,7 +22,6 @@ comptime {
     _ = @import("reports/pretty_test.zig");
     _ = @import("cli/query_test.zig");
     _ = @import("cli_test.zig");
-    _ = @import("cli/args_test.zig");
     _ = @import("cli/annotations_test.zig");
     _ = @import("cli/render_budget_test.zig");
     _ = @import("cli/daemon_test.zig");

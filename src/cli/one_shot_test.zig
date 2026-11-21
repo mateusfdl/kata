@@ -92,8 +92,8 @@ const Report = struct {
 
 test "one-shot: grammar maps every flag to its option" {
     try std.testing.expectEqualDeep(
-        one_shot.grammar.Result{ .ok = .{ .lang = "ts", .filename = "src/a.ts" } },
-        one_shot.grammar.parse(&.{ "--lang=ts", "--filename", "src/a.ts" }),
+        one_shot.command.Result{ .ok = .{ .lang = "ts", .filename = "src/a.ts" } },
+        one_shot.command.parse(&.{ "--lang=ts", "--filename", "src/a.ts" }),
     );
 }
 
