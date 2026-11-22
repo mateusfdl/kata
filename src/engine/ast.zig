@@ -1,18 +1,20 @@
 const std = @import("std");
 
 const family_mod = @import("family/family.zig");
-const line_index = @import("line_index.zig");
+const LineIndex = @import("line_index.zig").LineIndex;
+const src_location = @import("source_location.zig");
 
 pub const NodeIndex = u32;
 
 /// parent link of the root: no node reports this index.
 pub const no_parent: NodeIndex = std.math.maxInt(NodeIndex);
 
-pub const Point = line_index.Point;
+pub const Position = src_location.Position;
 
 pub const Flags = packed struct(u8) {
     named: bool,
     extra: bool,
+    // brainless
     _pad: u6 = 0,
 };
 
@@ -31,7 +33,7 @@ pub const StoredNode = struct {
 };
 
 /// kata's own syntax tree: a flat clone of a parsed CST that outlives the
-/// tree-sitter tree it was built from. Points are not stored per node; they are
+/// tree-sitter tree it was built from. Positions are not stored per node; they are
 /// derived on demand from byte offsets against `line_starts`.
 pub const Ast = struct {
     family: family_mod.Family,
@@ -48,7 +50,7 @@ pub const Ast = struct {
         return 0;
     }
 
-    pub fn pointAt(self: Ast, byte: u32) Point {
-        return line_index.LineIndex.borrow(self.line_starts).pointAt(byte);
+    pub fn positionAt(self: Ast, byte: u32) Position {
+        return LineIndex.borrow(self.line_starts).positionAt(byte);
     }
 };

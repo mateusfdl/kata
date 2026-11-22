@@ -27,8 +27,8 @@ test "node: field child, points, parent identity" {
     const name = declarator.childByFieldName("name").?;
     try std.testing.expectEqualStrings("identifier", name.kind());
     try std.testing.expectEqualStrings("x", name.text(src).?);
-    try std.testing.expectEqual(@as(u32, 0), name.startPoint().row);
-    try std.testing.expectEqual(@as(u32, 6), name.startPoint().column);
+    try std.testing.expectEqual(@as(u32, 0), name.startPosition().line);
+    try std.testing.expectEqual(@as(u32, 6), name.startPosition().column);
 
     const value = declarator.childByFieldName("value").?;
     try std.testing.expectEqualStrings("42", value.text(src).?);

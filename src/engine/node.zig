@@ -1,10 +1,10 @@
 const std = @import("std");
 
 const ast = @import("ast.zig");
-const diagnostic = @import("diagnostic.zig");
+const src_location = @import("source_location.zig");
 const family = @import("family/family.zig");
 
-pub const Point = ast.Point;
+pub const Position = src_location.Position;
 
 pub const PreorderIterator = struct {
     tree: *const ast.Ast,
@@ -68,21 +68,18 @@ pub const Node = struct {
         return self.stored().end_byte;
     }
 
-    pub fn startPoint(self: Node) Point {
-        return self.tree.pointAt(self.stored().start_byte);
+    pub fn startPosition(self: Node) Position {
+        return self.tree.positionAt(self.stored().start_byte);
     }
 
-    pub fn endPoint(self: Node) Point {
-        return self.tree.pointAt(self.stored().end_byte);
+    pub fn endPosition(self: Node) Position {
+        return self.tree.positionAt(self.stored().end_byte);
     }
 
-    pub fn range(self: Node) diagnostic.Range {
-        const start = self.startPoint();
-        const end = self.endPoint();
-
+    pub fn range(self: Node) src_location.Range {
         return .{
-            .start = .{ .line = start.row, .column = start.column },
-            .end = .{ .line = end.row, .column = end.column },
+            .start = self.startPosition(),
+            .end = self.endPosition(),
         };
     }
 

@@ -9,8 +9,8 @@ pub const DiagnosticAdapter = struct {
     default_cap: u32,
 
     pub const GroupKey = struct {
-        // Scope is part of identity because project and language rules can use
-        // the same ID but resolve different policies.
+        // scope is part of identity because project and language rules can use
+        // the same id but resolve different policies.
         rule_scope: diagnostic.RuleScope,
         language: []const u8,
         rule_id: []const u8,
@@ -37,8 +37,8 @@ pub const DiagnosticAdapter = struct {
     pub fn key(_: DiagnosticAdapter, item: diagnostic.Diagnostic) GroupKey {
         return .{
             .rule_scope = item.rule_scope,
-            // Project rules aggregate facts from all languages and therefore
-            // share one cap. Language rule caps are independent per language.
+            // project rules aggregate facts from all languages and therefore
+            // share one cap. language rule caps are independent per language.
             .language = if (item.rule_scope == .language) item.language else "",
             .rule_id = item.rule_id,
         };
@@ -51,6 +51,7 @@ pub const DiagnosticAdapter = struct {
             .language => .{ .language = language.Name.fromString(key_value.language) orelse return self.default_cap },
             .project => .project,
         };
+
         return rule.resolvePolicy(self.settings, scope, key_value.rule_id, null).max_matches orelse self.default_cap;
     }
 

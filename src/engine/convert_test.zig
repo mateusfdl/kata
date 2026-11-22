@@ -35,8 +35,8 @@ const Walker = struct {
         try std.testing.expectEqual(tsn.endByte(), stored.end_byte);
         try std.testing.expectEqual(tsn.isNamed(), stored.flags.named);
         try std.testing.expectEqual(tsn.isExtra(), stored.flags.extra);
-        try expectPoint(tsn.startPoint(), self.tree.pointAt(stored.start_byte));
-        try expectPoint(tsn.endPoint(), self.tree.pointAt(stored.end_byte));
+        try expectPosition(tsn.startPoint(), self.tree.positionAt(stored.start_byte));
+        try expectPosition(tsn.endPoint(), self.tree.positionAt(stored.end_byte));
         try std.testing.expectEqual(expected_parent, stored.parent);
 
         var c: u32 = 0;
@@ -51,8 +51,8 @@ const Walker = struct {
     }
 };
 
-fn expectPoint(expected: ts.Point, actual: ast.Point) !void {
-    try std.testing.expectEqual(expected.row, actual.row);
+fn expectPosition(expected: ts.Point, actual: ast.Position) !void {
+    try std.testing.expectEqual(expected.row, actual.line);
     try std.testing.expectEqual(expected.column, actual.column);
 }
 

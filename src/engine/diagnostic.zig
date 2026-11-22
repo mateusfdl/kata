@@ -1,14 +1,9 @@
 const std = @import("std");
 
-pub const Position = struct {
-    line: u32,
-    column: u32,
-};
+const source_location = @import("source_location.zig");
 
-pub const Range = struct {
-    start: Position,
-    end: Position,
-};
+pub const Position = source_location.Position;
+pub const Range = source_location.Range;
 
 pub const Severity = enum {
     @"error",

@@ -25,6 +25,7 @@ pub const MatchWorkspace = struct {
     pub fn reset(self: *MatchWorkspace, capture_count: usize) std.mem.Allocator.Error!void {
         try self.ensureCapacity(capture_count);
         self.active_len = capture_count;
+
         @memset(self.bindings[0..capture_count], null);
     }
 

@@ -1,19 +1,15 @@
 const std = @import("std");
 
-const diagnostic = @import("diagnostic.zig");
+const location = @import("source_location.zig");
 
-pub const Point = struct {
-    row: u32,
-    column: u32,
-};
+pub const Position = location.Position;
 
 pub const ByteRange = struct {
     start: usize,
     end: usize,
 };
 
-pub const Position = diagnostic.Position;
-pub const Range = diagnostic.Range;
+pub const Range = location.Range;
 
 pub const LineIndex = struct {
     line_starts: []const u32,
@@ -45,7 +41,7 @@ pub const LineIndex = struct {
     }
 
     pub fn deinit(self: *LineIndex, gpa: std.mem.Allocator) void {
-        // Borrowed indexes point into parsed AST storage. Free only arrays built
+        // borrowed indexes point into parsed ast storage. free only arrays built
         // by init, then leave a valid empty borrowed index for repeat cleanup.
         if (self.ownership == .owned) gpa.free(self.line_starts);
         self.* = .{ .line_starts = &.{0}, .ownership = .borrowed };
@@ -55,12 +51,14 @@ pub const LineIndex = struct {
         std.debug.assert(self.ownership == .owned);
         const line_starts = self.line_starts;
         self.* = .{ .line_starts = &.{0}, .ownership = .borrowed };
+
         return line_starts;
     }
 
-    pub fn pointAt(self: LineIndex, byte: u32) Point {
-        const row = self.rowForByte(byte);
-        return .{ .row = row, .column = byte - self.line_starts[row] };
+    pub fn positionAt(self: LineIndex, byte: u32) Position {
+        const line = self.lineForByte(byte);
+
+        return .{ .line = line, .column = byte - self.line_starts[line] };
     }
 
     pub fn byteAt(self: LineIndex, source_len: usize, position: Position) usize {
@@ -69,16 +67,18 @@ pub const LineIndex = struct {
         const start = @min(@as(usize, self.line_starts[position.line]), source_len);
         const end = self.lineEnd(source_len, position.line, start);
         const column = @min(@as(usize, position.column), end - start);
+
         return start + column;
     }
 
     pub fn byteRange(self: LineIndex, source_len: usize, range: Range) ByteRange {
         const start = self.byteAt(source_len, range.start);
         const end = self.byteAt(source_len, range.end);
+
         return .{ .start = start, .end = @max(start, end) };
     }
 
-    fn rowForByte(self: LineIndex, byte: u32) u32 {
+    fn lineForByte(self: LineIndex, byte: u32) u32 {
         var low: usize = 0;
         var high = self.line_starts.len;
         while (low < high) {
@@ -93,10 +93,11 @@ pub const LineIndex = struct {
         const next_line = @as(usize, line) + 1;
         if (next_line >= self.line_starts.len) return source_len;
 
-        // Positions use content columns. Clamp before the newline byte so an
+        // positions use content columns. clamp before the newline byte so an
         // oversized column cannot cross into the next line.
         const next_start = @min(@as(usize, self.line_starts[next_line]), source_len);
         if (next_start <= start) return start;
+
         return next_start - 1;
     }
 };

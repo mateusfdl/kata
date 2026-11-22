@@ -193,7 +193,7 @@ pub fn siblingsOf(node: Node) ?u32 {
 }
 
 pub fn lengthOf(node: Node) u32 {
-    return node.endPoint().row - node.startPoint().row + 1;
+    return node.endPosition().line - node.startPosition().line + 1;
 }
 
 pub fn paramsOf(node: Node, fam: family_mod.Family) ?u32 {

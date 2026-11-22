@@ -2,14 +2,14 @@ const std = @import("std");
 
 const line_index = @import("line_index.zig");
 
-test "line index: builds starts and maps bytes to points" {
+test "line index: builds starts and maps bytes to positions" {
     var index = try line_index.LineIndex.init(std.testing.allocator, "ab\ncdef\nz");
     defer index.deinit(std.testing.allocator);
 
     try std.testing.expectEqualSlices(u32, &.{ 0, 3, 8 }, index.line_starts);
-    try std.testing.expectEqual(line_index.Point{ .row = 0, .column = 2 }, index.pointAt(2));
-    try std.testing.expectEqual(line_index.Point{ .row = 1, .column = 0 }, index.pointAt(3));
-    try std.testing.expectEqual(line_index.Point{ .row = 2, .column = 1 }, index.pointAt(9));
+    try std.testing.expectEqual(line_index.Position{ .line = 0, .column = 2 }, index.positionAt(2));
+    try std.testing.expectEqual(line_index.Position{ .line = 1, .column = 0 }, index.positionAt(3));
+    try std.testing.expectEqual(line_index.Position{ .line = 2, .column = 1 }, index.positionAt(9));
 }
 
 test "line index: borrowed starts are not freed by deinit" {
