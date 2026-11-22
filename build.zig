@@ -246,11 +246,11 @@ pub fn build(b: *std.Build) void {
     cache_bench_module.addImport("engine", cache_engine_module);
     cache_bench_module.addImport("shared", cache_shared_module);
     const cache_bench_exe = b.addExecutable(.{
-        .name = "replay-bench",
+        .name = "file-diagnostics-cache-bench",
         .root_module = cache_bench_module,
     });
     const run_cache_bench = b.addRunArtifact(cache_bench_exe);
-    const cache_bench_step = b.step("replay-bench", "Run file diagnostics cache benchmarks");
+    const cache_bench_step = b.step("file-diagnostics-cache-bench", "Run file diagnostics cache benchmarks");
     cache_bench_step.dependOn(&run_cache_bench.step);
 }
 

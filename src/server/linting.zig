@@ -88,12 +88,12 @@ pub fn run(
     const engine = selected.policy.engine;
     const policy = selected.policy.resolved;
 
-    const disk_cache: ?fs.result_cache.Entry = handle: {
+    const disk_cache: ?fs.clean_file_cache.Entry = handle: {
         if (!policy.cache) break :handle null;
         if (ctx.project != null) break :handle null;
         const dir = ctx.cache_dir orelse break :handle null;
         const path = input.filename orelse break :handle null;
-        const cache: fs.result_cache.Handle = .{ .dir = dir, .rules_hash = selected.policy.rules_hash };
+        const cache: fs.clean_file_cache.Handle = .{ .dir = dir, .rules_hash = selected.policy.rules_hash };
         break :handle cache.entry(.{ .language = lang, .source = source, .path = path });
     };
 

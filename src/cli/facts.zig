@@ -5,7 +5,7 @@ const fs = @import("../fs.zig");
 const lint = @import("engine");
 const output = @import("output.zig");
 
-const Workspace = @import("workspace.zig").Workspace;
+const LintSetup = @import("lint_setup.zig").LintSetup;
 const Env = @import("env.zig").Env;
 const Exit = @import("exit.zig").Exit;
 
@@ -28,9 +28,9 @@ pub fn execute(env: Env, parsed: Args) !Exit {
     const lang = fs.source.languageOf(target) orelse
         return output.usage(env.stderr, "cannot infer language from \"{s}\"\n", .{target});
 
-    var workspace = try Workspace.open(env, target);
-    defer workspace.deinit();
-    const ctx = workspace.ctx;
+    var lint_setup = try LintSetup.load(env, target);
+    defer lint_setup.deinit();
+    const ctx = lint_setup.ctx;
 
     const source = fs.source.read(env.io, env.gpa, target) catch |err|
         return output.internal(env.stderr, "read file", err);

@@ -9,7 +9,7 @@ const report_flags = @import("report_flags.zig");
 const reports = @import("../reports.zig");
 const sources = @import("../sources.zig");
 
-const Workspace = @import("workspace.zig").Workspace;
+const LintSetup = @import("lint_setup.zig").LintSetup;
 const Env = @import("env.zig").Env;
 const Exit = @import("exit.zig").Exit;
 
@@ -40,9 +40,9 @@ pub const command = cli.command(Args, .{
 });
 
 pub fn execute(env: Env, parsed: Args) !Exit {
-    var workspace = try Workspace.open(env, parsed.target);
-    defer workspace.deinit();
-    const ctx = workspace.ctx;
+    var lint_setup = try LintSetup.load(env, parsed.target);
+    defer lint_setup.deinit();
+    const ctx = lint_setup.ctx;
 
     const baseline_ref = parsed.baseline orelse env.environ.get(env_baseline);
 
@@ -66,10 +66,10 @@ fn openBaseline(env: Env, ctx: *const sources.context.Context, target: []const u
 
 /// null when the configuration disables the cache or the environment names
 /// no cache directory.
-fn cacheHandle(env: Env, ctx: *const sources.context.Context) !?fs.result_cache.Handle {
+fn cacheHandle(env: Env, ctx: *const sources.context.Context) !?fs.clean_file_cache.Handle {
     if (!ctx.resolved.cache) return null;
 
-    const dir = (try fs.result_cache.dir(env.arena, env.environ)) orelse return null;
+    const dir = (try fs.clean_file_cache.dir(env.arena, env.environ)) orelse return null;
 
     return .{ .dir = dir, .rules_hash = ctx.rules_hash };
 }

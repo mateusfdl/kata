@@ -717,11 +717,11 @@ test "daemon: an indexed project keeps its root policy for files in nested proje
 
     var env = @import("../cli/test_env.zig").TestEnv.init("");
     defer env.deinit();
-    var workspace = try @import("../cli/workspace.zig").Workspace.open(env.env(), try h.path("proj"));
-    defer workspace.deinit();
-    var state = try lint.Project.init(gpa, &workspace.ctx.engine, workspace.ctx.resolved.project_rules);
+    var lint_setup = try @import("../cli/lint_setup.zig").LintSetup.load(env.env(), try h.path("proj"));
+    defer lint_setup.deinit();
+    var state = try lint.Project.init(gpa, &lint_setup.ctx.engine, lint_setup.ctx.resolved.project_rules);
     defer state.deinit();
-    var ctx = try workspace.lintContext(env.env());
+    var ctx = try lint_setup.lintContext(env.env());
     ctx.project = &state;
     ctx.cache = &h.cache;
 
@@ -747,12 +747,12 @@ test "daemon: reloading an indexed root replaces its YAML project rules with its
 
     var env = @import("../cli/test_env.zig").TestEnv.init("");
     defer env.deinit();
-    var workspace = try @import("../cli/workspace.zig").Workspace.open(env.env(), try h.path("proj"));
-    defer workspace.deinit();
-    var state = try lint.Project.init(gpa, &workspace.ctx.engine, workspace.ctx.resolved.project_rules);
+    var lint_setup = try @import("../cli/lint_setup.zig").LintSetup.load(env.env(), try h.path("proj"));
+    defer lint_setup.deinit();
+    var state = try lint.Project.init(gpa, &lint_setup.ctx.engine, lint_setup.ctx.resolved.project_rules);
     defer state.deinit();
     try state.replace(user_repository_src, .ts, try h.path("proj/user-repository.ts"));
-    var ctx = try workspace.lintContext(env.env());
+    var ctx = try lint_setup.lintContext(env.env());
     ctx.project = &state;
     ctx.cache = &h.cache;
     const request: protocol.Request = .{
@@ -1394,7 +1394,7 @@ test "daemon: a violating buffer is never marked clean" {
     const source = "const x = (foo[0] as any).bar;";
     _ = daemon.handle(ctx, a, .{ .language = "ts", .filename = "/proj/a.ts", .source = source });
 
-    const h: fs.result_cache.Handle = .{ .dir = ctx.cache_dir.?, .rules_hash = ctx.policy.rules_hash };
+    const h: fs.clean_file_cache.Handle = .{ .dir = ctx.cache_dir.?, .rules_hash = ctx.policy.rules_hash };
 
     try std.testing.expectEqual(false, h.entry(.{ .language = .ts, .source = source, .path = "/proj/a.ts" }).isClean(io));
 }
@@ -1418,7 +1418,7 @@ test "daemon: the disk cache stays untouched when it is disabled" {
     const source = "const x: string = \"ok\";";
     _ = daemon.handle(ctx, a, .{ .language = "ts", .filename = "/proj/a.ts", .source = source });
 
-    const h: fs.result_cache.Handle = .{ .dir = ctx.cache_dir.?, .rules_hash = ctx.policy.rules_hash };
+    const h: fs.clean_file_cache.Handle = .{ .dir = ctx.cache_dir.?, .rules_hash = ctx.policy.rules_hash };
 
     try std.testing.expectEqual(false, h.entry(.{ .language = .ts, .source = source, .path = "/proj/a.ts" }).isClean(io));
 }

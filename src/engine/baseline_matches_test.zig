@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const staged_matcher = @import("staged_matcher.zig");
+const baseline_matches = @import("baseline_matches.zig");
 
 const Finding = struct {
     rule: []const u8,
@@ -25,7 +25,7 @@ test "staged matcher gives an earlier stage priority" {
         .{ .rule = "a", .fingerprint = "exact", .span = "same" },
         .{ .rule = "a", .fingerprint = "other", .span = "same" },
     };
-    var state = try staged_matcher.State.init(std.testing.allocator, current.len, baseline.len);
+    var state = try baseline_matches.BaselineMatches.init(std.testing.allocator, current.len, baseline.len);
     defer state.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), state.applyStage(&current, &baseline, {}, sameFingerprint));
@@ -45,7 +45,7 @@ test "staged matcher is ordered and one-to-one" {
         .{ .rule = "a", .fingerprint = "", .span = "same" },
     };
 
-    var state = try staged_matcher.State.init(std.testing.allocator, current.len, baseline.len);
+    var state = try baseline_matches.BaselineMatches.init(std.testing.allocator, current.len, baseline.len);
     defer state.deinit();
 
     try std.testing.expectEqual(@as(usize, 2), state.applyStage(&current, &baseline, {}, sameSpan));

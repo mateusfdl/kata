@@ -10,14 +10,14 @@ const Env = @import("env.zig").Env;
 const config = sources.config;
 const context = sources.context;
 
-/// The rules that apply to one invocation: the global config, and the context
+/// the rules that apply to one invocation: the global config, and the context
 /// of the project that owns `start_path`.
-pub const Workspace = struct {
+pub const LintSetup = struct {
     global: ?*config.Config,
     resolver: context.Resolver,
     ctx: *context.Context,
 
-    pub fn open(env: Env, start_path: ?[]const u8) !Workspace {
+    pub fn load(env: Env, start_path: ?[]const u8) !LintSetup {
         const global = try loadGlobal(env);
         errdefer if (global) |g| g.deinit();
 
@@ -42,24 +42,24 @@ pub const Workspace = struct {
         return .{ .global = global, .resolver = resolver, .ctx = ctx };
     }
 
-    pub fn deinit(self: *Workspace) void {
+    pub fn deinit(self: *LintSetup) void {
         self.ctx.deinit();
         if (self.global) |global| global.deinit();
     }
 
-    /// Resolves the cache location independently of global enablement: a daemon
+    /// resolves the cache location independently of global enablement: a daemon
     /// request can select a project whose configuration enables caching.
-    pub fn lintContext(self: *Workspace, env: Env) !server.linting.Context {
+    pub fn lintContext(self: *LintSetup, env: Env) !server.linting.Context {
         return .{
             .policy = self.ctx.policy(),
             .io = env.io,
-            .cache_dir = try fs.result_cache.dir(env.arena, env.environ),
+            .cache_dir = try fs.clean_file_cache.dir(env.arena, env.environ),
         };
     }
 };
 
-// The resolver keeps a pointer to the global config, so the config lives in
-// the arena and the workspace can move.
+// the resolver keeps a pointer to the global config, so the config lives in
+// the arena and the lint setup can move.
 fn loadGlobal(env: Env) !?*config.Config {
     var diag: config.Diagnostic = .{};
     var loaded = config.loadFromDisk(env.gpa, env.io, env.environ, &diag) catch |err| {

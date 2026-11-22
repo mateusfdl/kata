@@ -7,7 +7,7 @@ const output = @import("output.zig");
 const server = @import("../server.zig");
 const sources = @import("../sources.zig");
 
-const Workspace = @import("workspace.zig").Workspace;
+const LintSetup = @import("lint_setup.zig").LintSetup;
 const Env = @import("env.zig").Env;
 const Exit = @import("exit.zig").Exit;
 
@@ -24,10 +24,10 @@ pub const command = cli.command(Args, .{
 });
 
 pub fn execute(env: Env, parsed: Args) !Exit {
-    var workspace = try Workspace.open(env, parsed.root);
-    defer workspace.deinit();
+    var lint_setup = try LintSetup.load(env, parsed.root);
+    defer lint_setup.deinit();
 
-    const ctx = workspace.ctx;
+    const ctx = lint_setup.ctx;
 
     if (!try ctx.engine.prewarmOrReport("kata", env.stderr)) {
         return error.InternalReported;
@@ -40,7 +40,7 @@ pub fn execute(env: Env, parsed: Args) !Exit {
     var project: ?lint.Project = if (parsed.root) |root| try indexProject(env, ctx, root) else null;
     defer if (project) |*p| p.deinit();
 
-    var cache = server.context_cache.Cache.init(env.gpa, &workspace.resolver);
+    var cache = server.context_cache.Cache.init(env.gpa, &lint_setup.resolver);
     defer cache.deinit();
 
     var diagnostics_cache = server.file_diagnostics_cache.FileDiagnosticsCache.init(env.gpa, server.file_diagnostics_cache.default_capacity) catch |err| {
@@ -49,7 +49,7 @@ pub fn execute(env: Env, parsed: Args) !Exit {
 
     defer diagnostics_cache.deinit();
 
-    var lint_context = try workspace.lintContext(env);
+    var lint_context = try lint_setup.lintContext(env);
 
     lint_context.project = if (project) |*p| p else null;
     lint_context.cache = &cache;

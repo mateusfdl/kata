@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const State = struct {
+pub const BaselineMatches = struct {
     // state persists across stages. a match removes both sides from every weaker
     // stage and makes the full operation one-to-one.
     matched: []bool,
@@ -11,7 +11,7 @@ pub const State = struct {
         allocator: std.mem.Allocator,
         current_count: usize,
         candidate_count: usize,
-    ) std.mem.Allocator.Error!State {
+    ) std.mem.Allocator.Error!BaselineMatches {
         const matched = try allocator.alloc(bool, current_count);
         errdefer allocator.free(matched);
         const used = try allocator.alloc(bool, candidate_count);
@@ -22,14 +22,14 @@ pub const State = struct {
         return .{ .matched = matched, .used = used, .allocator = allocator };
     }
 
-    pub fn deinit(self: *State) void {
+    pub fn deinit(self: *BaselineMatches) void {
         self.allocator.free(self.matched);
         self.allocator.free(self.used);
         self.* = undefined;
     }
 
     pub fn applyStage(
-        self: *State,
+        self: *BaselineMatches,
         current: anytype,
         candidates: anytype,
         context: anytype,
@@ -64,7 +64,7 @@ pub const State = struct {
     }
 
     pub fn applyExactGroups(
-        self: *State,
+        self: *BaselineMatches,
         current_keys: anytype,
         candidate_groups: anytype,
     ) usize {
@@ -95,7 +95,7 @@ pub const State = struct {
     }
 
     pub fn applyUniqueGroups(
-        self: *State,
+        self: *BaselineMatches,
         current_keys: anytype,
         current_groups: anytype,
         candidate_groups: anytype,
@@ -131,7 +131,7 @@ pub const State = struct {
         return count;
     }
 
-    pub fn matchAt(self: *State, current_index: usize, candidate_index: usize) void {
+    pub fn matchAt(self: *BaselineMatches, current_index: usize, candidate_index: usize) void {
         std.debug.assert(current_index < self.matched.len);
         std.debug.assert(candidate_index < self.used.len);
         std.debug.assert(!self.matched[current_index]);
@@ -141,7 +141,7 @@ pub const State = struct {
         self.used[candidate_index] = true;
     }
 
-    pub fn assertExactUse(self: State) void {
+    pub fn assertExactUse(self: BaselineMatches) void {
         var matched_count: usize = 0;
         for (self.matched) |matched| matched_count += @intFromBool(matched);
 

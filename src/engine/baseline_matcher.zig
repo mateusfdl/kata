@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const group_index = @import("shared").group_index;
-const staged_matcher = @import("shared").staged_matcher;
+const baseline_matches = @import("baseline_matches.zig");
 
 pub fn Keys(comptime Key: type, comptime Context: type) type {
     return struct {
@@ -31,7 +31,7 @@ pub fn Keys(comptime Key: type, comptime Context: type) type {
         fn remainingCurrentGroups(
             self: Self,
             arena: std.mem.Allocator,
-            state: *const staged_matcher.State,
+            state: *const baseline_matches.BaselineMatches,
         ) !Groups {
             return self.groups(arena, self.current, state.matched);
         }
@@ -39,7 +39,7 @@ pub fn Keys(comptime Key: type, comptime Context: type) type {
         fn remainingCandidateGroups(
             self: Self,
             arena: std.mem.Allocator,
-            state: *const staged_matcher.State,
+            state: *const baseline_matches.BaselineMatches,
         ) !Groups {
             return self.groups(arena, self.candidates, state.used);
         }
@@ -75,13 +75,13 @@ pub fn match(
     fingerprints: anytype,
     spans: anytype,
     blocks: anytype,
-) !staged_matcher.State {
+) !baseline_matches.BaselineMatches {
     std.debug.assert(fingerprints.current.len == spans.current.len);
     std.debug.assert(fingerprints.current.len == blocks.current.len);
     std.debug.assert(fingerprints.candidates.len == spans.candidates.len);
     std.debug.assert(fingerprints.candidates.len == blocks.candidates.len);
 
-    var state = try staged_matcher.State.init(
+    var state = try baseline_matches.BaselineMatches.init(
         allocator,
         fingerprints.current.len,
         fingerprints.candidates.len,

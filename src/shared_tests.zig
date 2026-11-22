@@ -8,7 +8,6 @@ comptime {
     _ = @import("shared.zig");
     _ = @import("containing_interval_test.zig");
     _ = @import("dense_multi_map_test.zig");
-    _ = @import("edit_planner_test.zig");
     _ = @import("group_cap_test.zig");
     _ = @import("group_index_test.zig");
     _ = @import("interval_test.zig");
@@ -18,7 +17,6 @@ comptime {
     _ = @import("reusable_arena_test.zig");
     _ = @import("sorted_slice_test.zig");
     _ = @import("stack_test.zig");
-    _ = @import("staged_matcher_test.zig");
     _ = @import("static_allocator_test.zig");
     _ = @import("table_memory_test.zig");
 }

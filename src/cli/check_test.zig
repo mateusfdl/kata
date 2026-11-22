@@ -963,7 +963,7 @@ test "check: a flooding rule renders three findings plus a capped summary and st
     try std.testing.expectEqual(@as(usize, 4), std.mem.count(u8, written, "\"rule_id\":\"no-as-any\""));
 }
 
-fn cacheHandle(arena: std.mem.Allocator, tmp: *std.testing.TmpDir) !fs.result_cache.Handle {
+fn cacheHandle(arena: std.mem.Allocator, tmp: *std.testing.TmpDir) !fs.clean_file_cache.Handle {
     var buf: [256]u8 = undefined;
     const dir = try test_fixture.relativeTmpPath(&buf, &tmp.sub_path);
 
@@ -981,7 +981,7 @@ const never_matches_rule =
     \\}
 ;
 
-fn recordCleanVerdict(gpa: std.mem.Allocator, io: std.Io, target: []const u8, cache: fs.result_cache.Handle) !void {
+fn recordCleanVerdict(gpa: std.mem.Allocator, io: std.Io, target: []const u8, cache: fs.clean_file_cache.Handle) !void {
     var lenient = try test_fixture.Fixture.init(gpa, &.{.ts}, "no-debugger", never_matches_rule);
     defer lenient.deinit();
 

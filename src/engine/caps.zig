@@ -26,7 +26,6 @@ pub fn apply(
     }, 3);
 }
 
-
 pub fn collapse(
     arena: std.mem.Allocator,
     diagnostics: []const diagnostic.Diagnostic,

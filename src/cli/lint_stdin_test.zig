@@ -13,7 +13,7 @@ fn newFixture(gpa: std.mem.Allocator) !*test_fixture.Fixture {
     return test_fixture.Fixture.init(gpa, &.{ .ts, .tsx }, "no-as-any", test_fixture.no_as_any_rule);
 }
 
-fn oneShotContext(f: *test_fixture.Fixture) daemon.Context {
+fn lintStdinContext(f: *test_fixture.Fixture) daemon.Context {
     return .{ .policy = .{ .engine = &f.engine }, .io = std.testing.io };
 }
 
@@ -103,7 +103,7 @@ test "lint stdin: clean source reports clean" {
     defer f.deinit();
 
     const args: lint_stdin.Args = .{ .lang = "ts" };
-    const r = try runCli(gpa, oneShotContext(f), args, "const x: string = \"ok\";");
+    const r = try runCli(gpa, lintStdinContext(f), args, "const x: string = \"ok\";");
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(Exit.clean, try r.outcome);
@@ -122,7 +122,7 @@ test "lint stdin: violation reports violations" {
     defer f.deinit();
 
     const args: lint_stdin.Args = .{ .lang = "ts" };
-    const r = try runCli(gpa, oneShotContext(f), args, "const x = (foo[0] as any).bar;");
+    const r = try runCli(gpa, lintStdinContext(f), args, "const x = (foo[0] as any).bar;");
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(Exit.violations, try r.outcome);
@@ -145,7 +145,7 @@ test "lint stdin: --filename infers language" {
     defer f.deinit();
 
     const args: lint_stdin.Args = .{ .filename = "/tmp/foo.tsx" };
-    const r = try runCli(gpa, oneShotContext(f), args, "const x = foo as any;");
+    const r = try runCli(gpa, lintStdinContext(f), args, "const x = foo as any;");
     defer r.deinit(gpa);
 
     try std.testing.expectEqual(Exit.violations, try r.outcome);
@@ -161,7 +161,7 @@ test "lint stdin: missing --lang is a usage error" {
     defer f.deinit();
 
     const args: lint_stdin.Args = .{};
-    const r = try runCli(gpa, oneShotContext(f), args, "x");
+    const r = try runCli(gpa, lintStdinContext(f), args, "x");
     defer r.deinit(gpa);
 
     try std.testing.expectError(error.UsageReported, r.outcome);
@@ -174,7 +174,7 @@ test "lint stdin: unsupported --lang is an internal error" {
     defer f.deinit();
 
     const args: lint_stdin.Args = .{ .lang = "python" };
-    const r = try runCli(gpa, oneShotContext(f), args, "print('hi')");
+    const r = try runCli(gpa, lintStdinContext(f), args, "print('hi')");
     defer r.deinit(gpa);
 
     try std.testing.expectError(error.InternalReported, r.outcome);
@@ -187,7 +187,7 @@ test "lint stdin: unknown extension is a usage error" {
     defer f.deinit();
 
     const args: lint_stdin.Args = .{ .filename = "foo.rs" };
-    const r = try runCli(gpa, oneShotContext(f), args, "fn main() {}");
+    const r = try runCli(gpa, lintStdinContext(f), args, "fn main() {}");
     defer r.deinit(gpa);
 
     try std.testing.expectError(error.UsageReported, r.outcome);
@@ -199,7 +199,7 @@ test "lint stdin: caps a flooding rule and stays unclean" {
     var f = try newFixture(gpa);
     defer f.deinit();
 
-    var ctx = oneShotContext(f);
+    var ctx = lintStdinContext(f);
     ctx.policy.resolved.max_matches_per_file = 1;
 
     const args: lint_stdin.Args = .{ .lang = "ts" };
@@ -240,7 +240,7 @@ test "lint stdin: demotes an error matching the file on disk to warn" {
     const filename = try std.fmt.allocPrint(gpa, "{s}/a.ts", .{dir});
     defer gpa.free(filename);
 
-    var ctx = oneShotContext(f);
+    var ctx = lintStdinContext(f);
     ctx.policy.resolved.warn_on_existing_errors = true;
 
     const args: lint_stdin.Args = .{ .filename = filename };

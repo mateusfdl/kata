@@ -373,8 +373,8 @@ pub const Engine = struct {
             }
 
             const list = try edits.fromFixes(allocator, current, applicable.fixes);
-            const plan = try edits.plan(allocator, list);
-            const applied = try plan.apply(allocator, current);
+            const selection = try edits.selectNonOverlapping(allocator, list);
+            const applied = try selection.apply(allocator, current);
             var parsed = try self.parseSource(applied, lang);
             defer parsed.deinit();
             if (parsed.has_error) {

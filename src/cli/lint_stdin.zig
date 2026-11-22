@@ -6,7 +6,7 @@ const lint = @import("engine");
 const output = @import("output.zig");
 const server = @import("../server.zig");
 
-const Workspace = @import("workspace.zig").Workspace;
+const LintSetup = @import("lint_setup.zig").LintSetup;
 const Env = @import("env.zig").Env;
 const Exit = @import("exit.zig").Exit;
 
@@ -36,13 +36,13 @@ pub fn execute(env: Env, parsed: Args) !Exit {
 
     if (daemonReport(env, input)) |rendered| return report(env, rendered);
 
-    var workspace = try Workspace.open(env, input.filename);
-    defer workspace.deinit();
-    const ctx = workspace.ctx;
+    var lint_setup = try LintSetup.load(env, input.filename);
+    defer lint_setup.deinit();
+    const ctx = lint_setup.ctx;
 
     if (ctx.resolved.daemon_autostart) endpoint.autostart(env);
 
-    return lintLocally(env, try workspace.lintContext(env), input);
+    return lintLocally(env, try lint_setup.lintContext(env), input);
 }
 
 pub fn readInput(env: Env, parsed: Args) !linting.Input {

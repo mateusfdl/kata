@@ -3,7 +3,7 @@ const std = @import("std");
 const fs = @import("../fs.zig");
 const lint = @import("engine");
 const output = @import("output.zig");
-const presentation = @import("presentation.zig");
+const check_report = @import("check_report.zig");
 const reports = @import("../reports.zig");
 const sources = @import("../sources.zig");
 
@@ -13,7 +13,7 @@ const Exit = @import("exit.zig").Exit;
 const FileDiagnostics = @import("file_diagnostics.zig").FileDiagnostics;
 const Engine = lint.Engine;
 const language = lint.language;
-const Presentation = presentation.Presentation;
+const CheckReport = check_report.CheckReport;
 const Diagnostic = lint.diagnostic.Diagnostic;
 
 /// What differs between the commands that report on a target.
@@ -40,7 +40,7 @@ pub const Options = struct {
     max_matches: u32 = (sources.config.Resolved{}).max_matches_per_file,
     baseline: ?Baseline = null,
     fixing: ?Fixing = null,
-    cache: ?fs.result_cache.Handle = null,
+    cache: ?fs.clean_file_cache.Handle = null,
 };
 
 pub const Fixing = struct {
@@ -89,7 +89,7 @@ pub fn run(
     var project = try lint.Project.init(gpa, engine, opts.project_rules);
     defer project.deinit();
 
-    var shown: Presentation = .init(gpa, reporter, engine.settings, opts.max_matches);
+    var shown: CheckReport = .init(gpa, reporter, engine.settings, opts.max_matches);
     defer shown.deinit();
 
     const files: FileCheck = .{
@@ -117,7 +117,7 @@ pub fn run(
 const Operation = union(enum) {
     /// The handle remembers which file contents had no diagnostics, so that a
     /// later run can skip them.
-    inspect: ?fs.result_cache.Handle,
+    inspect: ?fs.clean_file_cache.Handle,
     fix: Fixing,
 
     /// A clean verdict holds for one file alone. A run that rewrites files or
@@ -158,14 +158,14 @@ const Operation = union(enum) {
     }
 };
 
-/// Lints one file at a time and hands the result to the presentation.
+/// Lints one file at a time and hands the result to the check report.
 const FileCheck = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
     project: *lint.Project,
     baseline: ?Baseline,
     operation: Operation,
-    shown: *Presentation,
+    shown: *CheckReport,
 
     fn checkPath(files: FileCheck, path: []const u8) !void {
         const lang = fs.source.languageOf(path) orelse return error.UnsupportedTarget;
@@ -191,11 +191,11 @@ const FileCheck = struct {
 
 /// The violations of the project rules, one entry per file, each with the
 /// fingerprints of its diagnostics.
-fn projectFiles(arena: std.mem.Allocator, io: std.Io, project: *const lint.Project) ![]const presentation.ProjectFile {
+fn projectFiles(arena: std.mem.Allocator, io: std.Io, project: *const lint.Project) ![]const check_report.ProjectFileViolations {
     // the engine returns the violations ordered by path.
     var rest: []const lint.project_rule.Violation = try project.diagnostics(arena, null);
 
-    var files: std.ArrayList(presentation.ProjectFile) = .empty;
+    var files: std.ArrayList(check_report.ProjectFileViolations) = .empty;
     while (rest.len > 0) {
         const path = rest[0].path;
 

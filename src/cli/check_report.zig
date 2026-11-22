@@ -9,14 +9,14 @@ const FileDiagnostics = @import("file_diagnostics.zig").FileDiagnostics;
 const Diagnostic = lint.diagnostic.Diagnostic;
 const Violation = lint.project_rule.Violation;
 
-/// What a check shows and what it counts. The caps, the collapse and the
-/// per-rule output limit change what is printed. They never change the totals, so the
+/// what a check shows and what it counts. the caps, the collapse and the
+/// per-rule output limit change what is printed. they never change the totals, so the
 /// exit code does not depend on them.
-pub const Presentation = struct {
+pub const CheckReport = struct {
     reporter: *reports.Reporter,
     settings: []const lint.rule.RuleSetting,
     max_matches: u32,
-    // One limit covers the complete run. Files consume it in walk order;
+    // one limit covers the complete run. files consume it in walk order;
     // project violations consume what remains after indexing finishes.
     output_limit: PerRuleOutputLimit,
     counts: reports.Counts = .{},
@@ -26,7 +26,7 @@ pub const Presentation = struct {
         reporter: *reports.Reporter,
         settings: []const lint.rule.RuleSetting,
         max_matches: u32,
-    ) Presentation {
+    ) CheckReport {
         return .{
             .reporter = reporter,
             .settings = settings,
@@ -35,12 +35,12 @@ pub const Presentation = struct {
         };
     }
 
-    pub fn deinit(self: *Presentation) void {
+    pub fn deinit(self: *CheckReport) void {
         self.output_limit.deinit();
     }
 
     pub fn file(
-        self: *Presentation,
+        self: *CheckReport,
         arena: std.mem.Allocator,
         result: FileDiagnostics,
     ) !void {
@@ -53,7 +53,7 @@ pub const Presentation = struct {
         try self.reporter.file(result.path, result.source, try self.output_limit.filterFile(arena, result.path, collapsed));
     }
 
-    fn project(self: *Presentation, arena: std.mem.Allocator, files: []const ProjectFile) !void {
+    fn project(self: *CheckReport, arena: std.mem.Allocator, files: []const ProjectFileViolations) !void {
         var shown: std.ArrayList(Violation) = .empty;
 
         for (files) |project_file| {
@@ -68,17 +68,17 @@ pub const Presentation = struct {
         try self.reporter.project(shown.items);
     }
 
-    /// Call once, after the last file. Project violations are known only when
-    /// every file is indexed. Returns true when the run found a violation that
+    /// call once, after the last file. project violations are known only when
+    /// every file is indexed. returns true when the run found a violation that
     /// has error severity.
-    pub fn finish(self: *Presentation, arena: std.mem.Allocator, project_files: []const ProjectFile) !bool {
+    pub fn finish(self: *CheckReport, arena: std.mem.Allocator, project_files: []const ProjectFileViolations) !bool {
         try self.project(arena, project_files);
         try self.reporter.finish(self.counts, try self.output_limit.overflow(arena));
 
         return self.counts.violations > 0;
     }
 
-    fn count(self: *Presentation, diagnostics: []const Diagnostic) void {
+    fn count(self: *CheckReport, diagnostics: []const Diagnostic) void {
         for (diagnostics) |d| {
             switch (d.severity) {
                 .@"error" => self.counts.violations += 1,
@@ -88,8 +88,8 @@ pub const Presentation = struct {
     }
 };
 
-/// The violations that project rules found in one file.
-pub const ProjectFile = struct {
+/// the violations that project rules found in one file.
+pub const ProjectFileViolations = struct {
     path: []const u8,
     diagnostics: []const Diagnostic,
 };
