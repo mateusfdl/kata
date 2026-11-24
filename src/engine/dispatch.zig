@@ -23,6 +23,7 @@ pub const PatternIndex = struct {
     ) Error!PatternIndex {
         var memory = TableMemory.init(arena, allocator);
         defer memory.deinit();
+
         return buildWithMemory(&memory, patterns, kind_count);
     }
 
@@ -36,9 +37,11 @@ pub const PatternIndex = struct {
         for (patterns, 0..) |*pattern, pattern_index| {
             std.debug.assert(pattern_index < patterns.len);
             const kinds = try root_kind_set.derive(scratch, pattern);
+
             for (kinds) |kind| {
                 if (kind >= kind_count) return error.KeyOutOfRange;
                 std.debug.assert(kind < kind_count);
+
                 try entries.append(scratch, .{
                     .key = kind,
                     .value = pattern_index,

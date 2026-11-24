@@ -92,10 +92,21 @@ pub fn hasErrors(diagnostics: []const Diagnostic) bool {
 }
 
 pub fn lessThan(_: void, a: Diagnostic, b: Diagnostic) bool {
-    if (a.range.start.line != b.range.start.line) return a.range.start.line < b.range.start.line;
-    if (a.range.start.column != b.range.start.column) return a.range.start.column < b.range.start.column;
-    if (a.range.end.line != b.range.end.line) return a.range.end.line > b.range.end.line;
-    if (a.range.end.column != b.range.end.column) return a.range.end.column > b.range.end.column;
+    if (a.range.start.line != b.range.start.line) {
+        return a.range.start.line < b.range.start.line;
+    }
+
+    if (a.range.start.column != b.range.start.column) {
+        return a.range.start.column < b.range.start.column;
+    }
+
+    if (a.range.end.line != b.range.end.line) {
+        return a.range.end.line > b.range.end.line;
+    }
+
+    if (a.range.end.column != b.range.end.column) {
+        return a.range.end.column > b.range.end.column;
+    }
 
     switch (std.mem.order(u8, a.rule_id, b.rule_id)) {
         .lt => return true,

@@ -36,6 +36,7 @@ pub fn build(
 
     outer: while (true) {
         const n = cursor.node();
+
         std.debug.assert(nodes.items.len < descendant_count);
         std.debug.assert(n.startByte() <= n.endByte());
         std.debug.assert(n.endByte() <= source.len);
@@ -70,6 +71,7 @@ pub fn build(
         nodes.items[index].subtree_end = @intCast(nodes.items.len);
         while (!cursor.gotoNextSibling()) {
             if (!cursor.gotoParent()) break :outer;
+
             const done = parents.pop();
 
             std.debug.assert(done < nodes.items.len);

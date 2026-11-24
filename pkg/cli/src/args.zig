@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const flag_prefix = "--";
+const flag_spec = @import("flag_spec.zig");
 
 pub const Invalid = union(enum) {
     unexpected: []const u8,
@@ -9,27 +9,15 @@ pub const Invalid = union(enum) {
     missing_flag: []const u8,
 };
 
-pub fn isFlag(value: []const u8) bool {
-    return std.mem.startsWith(u8, value, flag_prefix);
+pub fn isRequired(comptime Options: type, comptime field: std.meta.FieldEnum(Options)) bool {
+    return std.meta.fieldInfo(Options, field).default_value_ptr == null;
 }
 
 pub fn grammar(comptime Options: type, comptime spec: anytype) type {
-    comptime {
-        for (@typeInfo(Options).@"struct".fields) |field| {
-            if (field.default_value_ptr != null) continue;
-
-            for (spec.positionals) |pos| {
-                if (std.mem.eql(u8, @tagName(pos.field), field.name)) break;
-            } else {
-                for (spec.flags) |flag| {
-                    if (std.mem.eql(u8, @tagName(flag.field), field.name)) break;
-                } else @compileError("no argument supplies field '" ++ field.name ++ "'");
-            }
-        }
-    }
+    comptime requireSourceForEveryField(Options, spec);
 
     return struct {
-        const Supplied = [@typeInfo(Options).@"struct".fields.len]bool;
+        const Field = std.meta.FieldEnum(Options);
 
         pub const Result = union(enum) {
             ok: Options,
@@ -37,82 +25,127 @@ pub fn grammar(comptime Options: type, comptime spec: anytype) type {
         };
 
         pub fn parse(argv: []const [:0]const u8) Result {
-            var options: Options = undefined;
+            var parser: Parser = .{ .options = defaults(), .remaining = argv };
 
-            inline for (@typeInfo(Options).@"struct".fields) |field| {
-                if (field.defaultValue()) |default| {
-                    @field(options, field.name) = default;
-                }
-            }
-
-            var supplied: Supplied = @splat(false);
-            var positionals_seen: usize = 0;
-            var i: usize = 0;
-            while (i < argv.len) : (i += 1) {
-                const invalid = if (isFlag(argv[i]))
-                    applyFlag(&options, argv, &i, &supplied)
-                else
-                    applyPositional(&options, argv[i], &positionals_seen);
-
+            while (parser.next()) |arg| {
+                const invalid = if (flag_spec.isFlag(arg)) parser.applyFlag(arg) else parser.applyPositional(arg);
                 if (invalid) |problem| return .{ .invalid = problem };
             }
 
-            inline for (spec.positionals, 0..) |pos, index| {
-                const required = comptime std.meta.fieldInfo(Options, pos.field).default_value_ptr == null;
-                if (required and index >= positionals_seen) return .{ .invalid = .missing_positional };
-            }
+            if (parser.missingArgument()) |problem| return .{ .invalid = problem };
 
-            inline for (spec.flags) |flag| {
-                if (comptime std.meta.fieldInfo(Options, flag.field).default_value_ptr == null) {
-                    const index = comptime std.meta.fieldIndex(Options, @tagName(flag.field)).?;
-                    const hint = if (@hasField(@TypeOf(flag), "hint")) flag.hint else "";
-                    if (!supplied[index]) return .{ .invalid = .{ .missing_flag = "--" ++ flag.name ++ " is required" ++ hint } };
-                }
-            }
-
-            return .{ .ok = options };
+            return .{ .ok = parser.options };
         }
 
-        fn applyPositional(options: *Options, arg: []const u8, seen: *usize) ?Invalid {
-            inline for (spec.positionals, 0..) |pos, index| {
-                if (index == seen.*) {
-                    @field(options, @tagName(pos.field)) = arg;
-                    seen.* += 1;
-
-                    return null;
-                }
+        fn defaults() Options {
+            var options: Options = undefined;
+            inline for (std.meta.fields(Options)) |field| {
+                if (field.defaultValue()) |default| @field(options, field.name) = default;
             }
 
-            return .{ .unexpected = arg };
+            return options;
         }
 
-        /// `i` is the index of the flag. A flag that takes the next argument
-        /// as its value moves `i` to that argument.
-        fn applyFlag(options: *Options, argv: []const [:0]const u8, i: *usize, supplied: *Supplied) ?Invalid {
-            const arg = argv[i.*];
+        const Parser = struct {
+            options: Options,
+            remaining: []const [:0]const u8,
+            supplied: [std.meta.fields(Options).len]bool = @splat(false),
+            positionals_seen: usize = 0,
 
-            inline for (spec.flags) |flag| match: {
-                const text = flag_prefix ++ flag.name;
-                const field = @tagName(flag.field);
-                const index = comptime std.meta.fieldIndex(Options, field).?;
+            fn next(parser: *Parser) ?[]const u8 {
+                if (parser.remaining.len == 0) return null;
+                defer parser.remaining = parser.remaining[1..];
 
-                if (@hasField(@TypeOf(flag), "value")) {
-                    if (!std.mem.eql(u8, arg, text)) break :match;
-                    @field(options, field) = flag.value;
-                } else if (std.mem.eql(u8, arg, text)) {
-                    if (i.* + 1 >= argv.len or isFlag(argv[i.* + 1])) return .{ .missing_value = arg };
+                return parser.remaining[0];
+            }
 
-                    i.* += 1;
-                    @field(options, field) = argv[i.*];
-                } else if (std.mem.startsWith(u8, arg, text ++ "=")) {
-                    @field(options, field) = arg[text.len + 1 ..];
-                } else break :match;
+            fn nextValue(parser: *Parser) ?[]const u8 {
+                if (parser.remaining.len == 0 or flag_spec.isFlag(parser.remaining[0])) return null;
 
-                supplied[index] = true;
+                return parser.next();
+            }
+
+            fn set(parser: *Parser, comptime field: Field, value: @FieldType(Options, @tagName(field))) void {
+                @field(parser.options, @tagName(field)) = value;
+                parser.supplied[@intFromEnum(field)] = true;
+            }
+
+            fn applyPositional(parser: *Parser, arg: []const u8) ?Invalid {
+                inline for (spec.positionals, 0..) |positional, index| {
+                    if (index == parser.positionals_seen) {
+                        parser.set(positional.field, arg);
+                        parser.positionals_seen += 1;
+
+                        return null;
+                    }
+                }
+
+                return .{ .unexpected = arg };
+            }
+
+            fn applyFlag(parser: *Parser, arg: []const u8) ?Invalid {
+                const separator = std.mem.indexOfScalar(u8, arg, '=');
+                const name = arg[0 .. separator orelse arg.len];
+                const attached: ?[]const u8 = if (separator) |index| arg[index + 1 ..] else null;
+
+                inline for (spec.flags) |flag| {
+                    if (std.mem.eql(u8, name, comptime flag_spec.text(flag))) {
+                        return if (comptime flag_spec.isConstant(flag))
+                            parser.applyConstantFlag(flag, arg, attached)
+                        else
+                            parser.applyValueFlag(flag, arg, attached);
+                    }
+                }
+
+                return .{ .unexpected = arg };
+            }
+
+            fn applyConstantFlag(parser: *Parser, comptime flag: anytype, arg: []const u8, attached: ?[]const u8) ?Invalid {
+                if (attached != null) return .{ .unexpected = arg };
+
+                parser.set(flag.field, flag.value);
                 return null;
             }
 
-            return .{ .unexpected = arg };
-        }
+            fn applyValueFlag(parser: *Parser, comptime flag: anytype, arg: []const u8, attached: ?[]const u8) ?Invalid {
+                const value = attached orelse parser.nextValue() orelse return .{ .missing_value = arg };
+
+                parser.set(flag.field, value);
+                return null;
+            }
+
+            fn missingArgument(parser: *const Parser) ?Invalid {
+                inline for (spec.positionals, 0..) |positional, index| {
+                    const required = comptime isRequired(Options, positional.field);
+                    if (required and index >= parser.positionals_seen) return .missing_positional;
+                }
+
+                inline for (spec.flags) |flag| {
+                    const required = comptime isRequired(Options, flag.field);
+                    if (required and !parser.supplied[@intFromEnum(@as(Field, flag.field))]) {
+                        return .{ .missing_flag = comptime flag_spec.text(flag) ++ " is required" ++ flag_spec.hint(flag) };
+                    }
+                }
+
+                return null;
+            }
+        };
     };
+}
+
+fn requireSourceForEveryField(comptime Options: type, comptime spec: anytype) void {
+    for (std.meta.fields(Options)) |field| {
+        if (field.default_value_ptr != null) continue;
+        if (targets(spec.positionals, field.name) or targets(spec.flags, field.name)) continue;
+
+        @compileError("no argument supplies field '" ++ field.name ++ "'");
+    }
+}
+
+fn targets(comptime entries: anytype, comptime field_name: []const u8) bool {
+    for (entries) |entry| {
+        if (std.mem.eql(u8, @tagName(entry.field), field_name)) return true;
+    }
+
+    return false;
 }

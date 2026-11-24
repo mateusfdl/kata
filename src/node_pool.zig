@@ -75,8 +75,8 @@ pub fn NodePoolType(comptime node_size_value: usize, comptime alignment_value: u
             std.debug.assert(address >= start);
             std.debug.assert(address <= end - node_size_value);
 
-            // Membership and stride checks reject foreign and interior pointers.
-            // An unset bit also rejects a double release.
+            // membership and stride checks reject foreign and interior pointers.
+            // an unset bit also rejects a double release.
             const offset = address - start;
             std.debug.assert(offset % node_size_value == 0);
 
