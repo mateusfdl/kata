@@ -5,7 +5,7 @@ test {
 }
 
 comptime {
-    _ = @import("engine.zig");
+    _ = @import("root.zig");
     _ = @import("baseline_matcher_test.zig");
     _ = @import("baseline_matches_test.zig");
     _ = @import("convert_test.zig");

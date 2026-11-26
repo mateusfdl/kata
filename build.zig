@@ -94,7 +94,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const engine_module = b.createModule(.{
-        .root_source_file = b.path("src/engine/engine.zig"),
+        .root_source_file = b.path("src/engine/root.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
@@ -230,7 +230,7 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseFast,
     });
     const cache_engine_module = b.createModule(.{
-        .root_source_file = b.path("src/engine/engine.zig"),
+        .root_source_file = b.path("src/engine/root.zig"),
         .target = target,
         .optimize = .ReleaseFast,
         .link_libc = true,
